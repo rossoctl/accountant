@@ -280,10 +280,10 @@ func (c *calcState) forwardPositions() {
 			if sp.before.Bytes == 0 {
 				// Content the operator added: its position is in forwarded space, and the client body has
 				// nothing there. It ends only when the client edited what precedes it (§4.3).
-				if c.s.PrevPrint != nil && c.clientFD < c.insertionPoint(sp.from) {
+				if c.clientEdited(c.insertionPoint(sp.from) - 1) {
 					it.ended = true
 				}
-			} else if i, ok := c.client.flat(sp.from); !ok || (c.s.PrevPrint != nil && c.clientFD <= i) {
+			} else if i, ok := c.client.flat(sp.from); !ok || c.clientEdited(i) {
 				it.ended = true // the client edited at or before it, or compacted (§4.3)
 			}
 			fp, ok := c.toFwd(k, sp.from)
@@ -294,6 +294,15 @@ func (c *calcState) forwardPositions() {
 			}
 		}
 	}
+}
+
+// clientEdited says whether the client changed something at or before flat position i, compared with
+// the previous request's client body. Content the client only appended is not an edit: it matters when
+// the previous fingerprint is older than the change, because a request between them never reached
+// Compute (§4.6).
+func (c *calcState) clientEdited(i int) bool {
+	p := c.s.PrevPrint
+	return p != nil && c.clientFD < len(p.Client.Pos) && c.clientFD <= i
 }
 
 // restored says whether the operator stopped applying a change that edited an item in place: the
@@ -876,10 +885,9 @@ func (c *calcState) checks(res *Result) {
 	}
 }
 
-// nextState is the state after this request: the applied rewrite and setting operations in client
-// space, this request's fingerprint, and what it left cached (§4.6, §6.1).
-func (c *calcState) nextState() ThreadState {
-	next := ThreadState{Version: c.s.Version}
+// activeOps is the rewrite and setting operations that are still applied, in client space (§4.3).
+func (c *calcState) activeOps() []Operation {
+	var out []Operation
 	for _, it := range c.items {
 		if it.ended || it.bad != "" || it.op.ChangeID == "" || (it.op.Kind != KindRewrite && it.op.Kind != KindSetting) {
 			continue
@@ -892,8 +900,15 @@ func (c *calcState) nextState() ThreadState {
 				op.Spans[i] = Span{Section: sp.from.Section, From: sp.from.Index, To: sp.to.Index, SizeBefore: sp.before, SizeAfter: sp.after}
 			}
 		}
-		next.Active = append(next.Active, op)
+		out = append(out, op)
 	}
+	return out
+}
+
+// nextState is the state after this request: the applied rewrite and setting operations in client
+// space, this request's fingerprint, and what it left cached (§4.6, §6.1).
+func (c *calcState) nextState() ThreadState {
+	next := ThreadState{Version: c.s.Version, Active: c.activeOps()}
 	fp := &Fingerprint{Thread: c.r.Thread.ID, Model: c.r.Meta.Model, At: c.r.Meta.At, Client: c.client, Forwarded: c.fwd,
 		ClientBreakpoints: c.r.ClientBreakpoints, ForwardedBreakpoints: c.r.Breakpoints}
 	for _, it := range c.items {
