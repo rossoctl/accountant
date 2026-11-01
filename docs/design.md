@@ -513,7 +513,8 @@ the context operator does not report it again. So `EndRequest` stores the report
 `setting` operations in the `ThreadState` as active, with a `Version` bump, and `Compute` does not
 store them again. **Not implemented in v0:** today only `Compute` stores them, so a request that never
 reaches `Compute` loses its change. A host must call `Compute` (with a zero `Usage` if there is no
-response) for every request that ended. Storing in `EndRequest` changes the `Version` rules of R53, so
+response) for every request that ended. A zero-usage `Compute` stores the fingerprint and sets the cache
+state to `unknown`, so the next request has `penalty_unknown`: its figure is lower, the safe direction. Storing in `EndRequest` changes the `Version` rules of R53, so
 it needs its own decision. The fingerprint and the cache state still change only in `Compute`, because they need
 the usage. A request with no usage therefore advances the active list and nothing else.
 

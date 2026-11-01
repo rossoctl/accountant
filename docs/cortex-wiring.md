@@ -292,7 +292,7 @@ would misattribute it. Keying by thread gives the right baseline for every rule 
   again. They grow with the number of live changes, not with the number of requests, and a change that
   ends is removed. That bound holds only if the end rule finds the end (design §11, question 12). If it
   does not, the list can grow without limit.
-- **A failed request:** the reported changes are stored at `EndRequest` (design §4.6), so a request that never reaches `Compute` does not lose them.
+- **A failed request:** in v0 only `Compute` stores the reported changes (design §4.6 says `EndRequest` should; that is not built). So a host calls `Compute` for every request that ended, with a zero `Usage` when there is no response. The side effect: the thread's cache state becomes `unknown`, so the next request has `penalty_unknown` and a lower, safe figure.
 - **Restart:** the whole `ThreadState` is lost. The fingerprint heals on the next request: only that
   request gets `penalty_unknown`. The active context operations do not heal: the context operators
   do not report them again, so every later request of the thread misses their saving and fails the
