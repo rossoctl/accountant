@@ -69,6 +69,11 @@ and §6 the `R` numbers are written bare, to keep the comments short; they are t
 
 ### 4.1 Types
 
+**Public and internal.** The listing shows the whole model. In the code, package `cost` (`cost.go`)
+re-exports only what a host needs to call it. `Tracker`, `ThreadState`, `ThreadKey`, `Fingerprint`,
+`PosHash` and `CacheState` are in `internal/engine` and are not part of the API. A host cannot save or
+load a `ThreadState` (Q13); making it public is a decision for when Q13 is settled.
+
 ```go
 package cost // github.com/rossoctl/cost
 

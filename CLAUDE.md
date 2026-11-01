@@ -8,6 +8,9 @@ operations in tokens per billing tier. See [README.md](README.md) and [docs/](do
 - Go 1.26, module `github.com/rossoctl/cost`, package `cost`. **The module imports only the standard
   library** (R3). `boundary_test.go` fails on any other import. Hosts (context-guru, Cortex) import
   `cost`, never the reverse. Do not add host code, host names or host paths to Go files.
+- The public API is `cost.go` only: type aliases for `internal/engine`. A new exported name in the engine
+  must be added there, or listed as hidden in `api_test.go`, or that test fails. Hosts import `cost`
+  and `cost/test/cases`, never `internal/engine`.
 - `Compute` is deterministic and does no I/O (R26). The one exception is a `log/slog` warning for each
   failed check.
 - Cases in `test/cases/*.json` are generated. Edit `test/gen/gen_cases.py`, then run

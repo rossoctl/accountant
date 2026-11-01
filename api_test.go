@@ -1,70 +1,76 @@
 package cost
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"testing"
-	"time"
 )
 
-func TestRequestRecordsTheCallsInOrder(t *testing.T) {
-	ts := NewTrackers()
-	r := ts.BeginRequest(RequestMeta{RequestID: "r1", Session: "s1", At: time.Unix(0, 0)},
-		NewBody(nil, [][]byte{[]byte("sys")}, [][]byte{[]byte("hello")}), nil)
-	r.Add(Operation{ID: "a", Kind: KindRewrite, Operator: "mask"})
-	r.Add(Operation{ID: "b", Kind: KindSetting, Operator: "router"})
-	r.EndRequest(Thread{ID: "main"}, Body{}, []Breakpoint{{TTL: "5m"}}, EntryFacts{})
-
-	if len(r.Ops) != 2 || r.Ops[0].ID != "a" || r.Ops[1].ID != "b" {
-		t.Fatalf("Ops = %+v, want a then b", r.Ops)
-	}
-	if !r.ended || len(r.Breakpoints) != 1 || r.Thread.ID != "main" {
-		t.Fatalf("EndRequest did not record: %+v", r)
-	}
+// hidden are exported names of internal/engine that a host never needs. Every other exported name
+// of the engine must be re-exported by cost.go, or a host cannot name a type it reads.
+var hidden = map[string]bool{
+	"Tracker": true, "ThreadState": true, "ThreadKey": true,
+	"Fingerprint": true, "PosHash": true, "CacheState": true,
 }
 
-func TestComputeWithNoUsagePricesNothing(t *testing.T) {
-	ts := NewTrackers()
-	r := ts.BeginRequest(RequestMeta{Session: "s1"}, Body{}, nil)
-	r.Add(Operation{ID: "a", Kind: KindRewrite})
-	r.EndRequest(Thread{ID: "main"}, Body{}, nil, EntryFacts{})
-
-	res := r.Compute(Usage{})
-	if len(res.Ops) != 1 || !hasUnpriced(res, ReasonNoUsage) {
-		t.Fatalf("result = %+v, want the op unpriced with no_usage", res)
+func exported(t *testing.T, dir string, skipTests bool) map[string]bool {
+	t.Helper()
+	fset := token.NewFileSet()
+	pkgs, err := parser.ParseDir(fset, dir, nil, 0)
+	if err != nil {
+		t.Fatal(err)
 	}
+	out := map[string]bool{}
+	for _, pkg := range pkgs {
+		for name, f := range pkg.Files {
+			if skipTests && len(name) > 8 && name[len(name)-8:] == "_test.go" {
+				continue
+			}
+			for _, d := range f.Decls {
+				switch d := d.(type) {
+				case *ast.FuncDecl:
+					if d.Recv == nil && d.Name.IsExported() {
+						out[d.Name.Name] = true
+					}
+				case *ast.GenDecl:
+					for _, s := range d.Specs {
+						switch s := s.(type) {
+						case *ast.TypeSpec:
+							if s.Name.IsExported() {
+								out[s.Name.Name] = true
+							}
+						case *ast.ValueSpec:
+							for _, n := range s.Names {
+								if n.IsExported() {
+									out[n.Name] = true
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	return out
 }
 
-func TestComputeWithoutEndRequestPricesNothing(t *testing.T) {
-	ts := NewTrackers()
-	r := ts.BeginRequest(RequestMeta{Session: "s1"}, Body{}, nil)
-	r.Add(Operation{ID: "a", Kind: KindRewrite})
-	res := r.Compute(Usage{Input: 10})
-	if !hasUnpriced(res, ReasonEndRequestMissing) {
-		t.Fatalf("result = %+v, want end_request_missing", res)
+// TestEveryEngineNameIsReExportedOrHidden keeps cost.go in step with the engine: a new exported
+// name must be added there, or listed in hidden on purpose.
+func TestEveryEngineNameIsReExportedOrHidden(t *testing.T) {
+	engine := exported(t, "internal/engine", true)
+	root := exported(t, ".", true)
+	for name := range engine {
+		if !root[name] && !hidden[name] {
+			t.Errorf("engine.%s is not re-exported by cost.go; add it, or list it in hidden", name)
+		}
 	}
-}
-
-func TestEndRequestCopiesTheState(t *testing.T) {
-	ts := NewTrackers()
-	tr := ts.tracker(ThreadKey("s1", Thread{ID: "main"}))
-	tr.state.Active = []Operation{{ID: "x"}}
-	r := ts.BeginRequest(RequestMeta{Session: "s1"}, Body{}, nil)
-	r.EndRequest(Thread{ID: "main"}, Body{}, nil, EntryFacts{})
-	r.start.Active[0].ID = "changed"
-	if tr.state.Active[0].ID != "x" {
-		t.Fatal("the record shares the Tracker's Active slice")
-	}
-}
-
-func TestNewBodyHashesThePrefix(t *testing.T) {
-	a := NewBody(nil, [][]byte{[]byte("s")}, [][]byte{[]byte("m0"), []byte("m1")})
-	b := NewBody(nil, [][]byte{[]byte("s")}, [][]byte{[]byte("m0"), []byte("mX")})
-	if a.Pos[0] != b.Pos[0] || a.Pos[1] != b.Pos[1] {
-		t.Fatal("equal prefixes must have equal hashes")
-	}
-	if a.Pos[2].Hash == b.Pos[2].Hash {
-		t.Fatal("a different position must change the hash")
-	}
-	if a.Start != [3]int{0, 0, 1} {
-		t.Fatalf("Start = %v", a.Start)
+	for name := range hidden {
+		if root[name] {
+			t.Errorf("%s is listed as hidden but cost.go exports it", name)
+		}
+		if !engine[name] {
+			t.Errorf("%s is listed as hidden but the engine has no such name", name)
+		}
 	}
 }

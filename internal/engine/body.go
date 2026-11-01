@@ -1,4 +1,4 @@
-package cost
+package engine
 
 // Helpers on Body positions. Inside the library a position is a flat index into Body.Pos, because
 // the flat order is the provider's hash order (§4.3). -1 means "before the first position".

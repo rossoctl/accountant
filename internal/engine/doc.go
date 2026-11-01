@@ -1,11 +1,11 @@
-// Package cost prices context operations in tokens for each billing tier.
+// Package engine is the implementation of package cost, which re-exports its public names. It prices
+// context operations in tokens for each billing tier.
 //
 // Context operators report what they changed as facts (RequestOps, Operation). Compute turns
 // those facts and the provider's cache state into tokens. The host turns tokens into money.
 //
-// The package is a standalone module. It imports only the standard library, so context-guru,
-// Cortex and any other AI framework can use it (docs/spec.md R3, docs/design.md D7).
-// boundary_test.go enforces that rule.
+// The module imports only the standard library, so context-guru, Cortex and any other AI framework
+// can use it (docs/spec.md R3, docs/design.md D7). boundary_test.go in the module root enforces that.
 //
 // # Implementation decisions
 //
@@ -76,4 +76,4 @@
 //   - The minimum cacheable length and the 20-block lookback (§5.1), and the long-context tier.
 //   - MessageSplice moves message positions only. A rewrite that removes or adds whole tools or
 //     system blocks moves no later position in its section (§4.3 gives no splice for them).
-package cost
+package engine

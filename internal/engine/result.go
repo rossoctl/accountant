@@ -1,4 +1,4 @@
-package cost
+package engine
 
 // Result is the output of Compute (§6.3).
 type Result struct {

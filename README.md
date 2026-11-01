@@ -41,6 +41,16 @@ into `Result.Checks` and is logged as a warning, and pricing goes on.
 
 The module imports only the standard library, so any host can use it. `boundary_test.go` enforces that.
 
+## Layout
+
+| Path | What it holds |
+|---|---|
+| `cost.go`, `doc.go` | The whole public API: type aliases, constants and three functions |
+| `internal/engine/` | The implementation and its unit tests. Not importable by hosts |
+| `test/cases/` | The 63 JSON cases and the loader (`import "github.com/rossoctl/cost/test/cases"`) |
+| `test/gen/` | The Python generator that writes the cases |
+| `docs/` | Specification, design, examples |
+
 ## Documents
 
 | Document | What it holds |
