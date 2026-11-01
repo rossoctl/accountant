@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Writes cases/*.json: the eight worked examples of docs/examples.md as test cases.
+"""Writes test/cases/*.json: the eight worked examples of docs/examples.md as test cases.
 
-Run `go generate ./...` in this directory after editing. Bodies use 4 bytes a token, and a body
+Run `go generate ./test` from the repo root after editing. Bodies use 4 bytes a token, and a body
 hash is cumulative over the content ids, so two bodies with an equal prefix have equal hashes
-there (design.md §5.1). Every figure is checked twice: opscases_test.go checks conservation and the
+there (design.md §5.1). Every figure is checked twice: cases_test.go checks conservation and the
 billed tokens against the bodies. A host can also play each case through its own saving code and
 compare (context-guru does, in dash/cost_play_test.go).
 """
@@ -11,7 +11,7 @@ import json
 import os
 from datetime import datetime, timedelta, timezone
 
-OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cases")
+OUT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cases")
 T0 = datetime(2026, 3, 2, 9, 0, 0, tzinfo=timezone.utc)
 MASK = (1 << 64) - 1
 
@@ -930,7 +930,7 @@ def c11():
     write_issue("conservation/client-size-from-result", 555,
                 "Three operators remove 22,000 of the 38,000 tokens the client sent, so the provider bills 16,000. The "
                 "fill a size gate wants (38,000) is not billed, but it follows from the result with no new field: billed "
-                "+ sum of Saved - sum of Caused = 16,000 + 22,000 - 0. opscases_test.go pins that identity for every case.",
+                "+ sum of Saved - sum of Caused = 16,000 + 22,000 - 0. cases_test.go pins that identity for every case.",
                 DIMS("rewrite", "afterBStar", "miss", operations="3"), [s],
                 open_=["new: whether Result should expose the client-side token total (issue 555) or leave the sum to the "
                        "trigger. The identity holds either way"])

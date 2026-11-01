@@ -1,4 +1,4 @@
-package opscases
+package cases
 
 import (
 	"slices"

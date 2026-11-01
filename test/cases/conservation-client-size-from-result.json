@@ -1,6 +1,6 @@
 {
  "id": "conservation/client-size-from-result",
- "description": "Three operators remove 22,000 of the 38,000 tokens the client sent, so the provider bills 16,000. The fill a size gate wants (38,000) is not billed, but it follows from the result with no new field: billed + sum of Saved - sum of Caused = 16,000 + 22,000 - 0. opscases_test.go pins that identity for every case.",
+ "description": "Three operators remove 22,000 of the 38,000 tokens the client sent, so the provider bills 16,000. The fill a size gate wants (38,000) is not billed, but it follows from the result with no new field: billed + sum of Saved - sum of Caused = 16,000 + 22,000 - 0. cases_test.go pins that identity for every case.",
  "source": "issue_cases.md#555",
  "dims": {
   "kind": "rewrite",

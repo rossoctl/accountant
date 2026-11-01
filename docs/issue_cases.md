@@ -8,7 +8,7 @@
 #230, #214, #232, #47, #45, #324, #696, #586, #481, #584, #501. I read each issue body. I did not read the
 code they cite and I ran nothing.
 
-**The JSON cases in `opscases/cases/` are the source of truth.** They were written after this
+**The JSON cases in `test/cases/` are the source of truth.** They were written after this
 plan and reviewed by three models. Where a figure here differs from the JSON, the JSON is right. The known
 differences: the searchfold case (3) uses 33,000 read and a 14,500-token break; breaks the client made (cases 4,
 15 second variant, 17) move no tokens, because B\* is at or before the client's first change (§5.1, §6.2); case 6

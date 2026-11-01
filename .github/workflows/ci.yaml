@@ -26,5 +26,5 @@ jobs:
         run: go mod tidy -diff
       - name: Generated cases are current
         run: |
-          go generate ./opscases
-          git diff --exit-code -- opscases/cases
+          go generate ./test
+          git diff --exit-code -- test/cases

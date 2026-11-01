@@ -1,11 +1,11 @@
-// Package opscases is the exhaustive list of test cases the implementation must meet
+// Package cases is the exhaustive list of test cases the implementation must meet
 // (testing.md §10). A case holds only what the spec decides: the input and the expected result.
 // It never holds the current code's figure; the agreement test computes that each time it runs.
 //
-// The JSON files in cases/ are written by gen_cases.py, which computes the body hashes.
-package opscases
+// The JSON files in cases/ are written by gen/gen_cases.py, which computes the body hashes.
+package cases
 
-//go:generate python3 gen_cases.py
+//go:generate python3 gen/gen_cases.py
 
 import (
 	"embed"
@@ -79,7 +79,7 @@ type Facts struct {
 func (f Facts) EntryFacts() cost.EntryFacts {
 	ttl, err := time.ParseDuration(f.TTL)
 	if err != nil {
-		panic(fmt.Sprintf("opscases: facts ttl %q: %v", f.TTL, err))
+		panic(fmt.Sprintf("cases: facts ttl %q: %v", f.TTL, err))
 	}
 	return cost.EntryFacts{TTL: ttl, Lifetime: f.Lifetime, LastPing: f.LastPing, PingRead: f.PingRead, PingWindow: f.PingWindow}
 }
@@ -260,7 +260,7 @@ func All() []Case {
 		}
 		var c Case
 		if err := json.Unmarshal(b, &c); err != nil {
-			panic(fmt.Sprintf("opscases: %s: %v", f, err))
+			panic(fmt.Sprintf("cases: %s: %v", f, err))
 		}
 		out = append(out, c)
 	}

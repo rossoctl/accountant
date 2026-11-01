@@ -39,7 +39,7 @@ runs in Cortex (§10.4).
 
 ### 10.2 One case
 
-Each case is a JSON file in `opscases/cases/`. The package embeds them and exports `All() []Case`,
+Each case is a JSON file in `test/cases/`. The package embeds them and exports `All() []Case`,
 so a test in Cortex can run the same list. A case holds only what the specification and the design decide: the input and
 the expected result. It does not hold the current code's figure, nor a judgement about it.
 
