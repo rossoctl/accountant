@@ -15,7 +15,6 @@ operations in tokens per billing tier. See [README.md](README.md) and [docs/](do
   failed check.
 - Cases in `test/cases/*.json` are generated. Edit `test/gen/gen_cases.py`, then run
   `go generate ./test`. Never edit a JSON case by hand.
-- The word "counterfactual" is the idea (the bill without the change), not the name of the package.
 - Before a push: `gofmt -l .`, `go vet ./...`, `go test ./...`.
 - **Commits: DCO sign-off is mandatory** (`git commit -s`). AI attribution uses `Assisted-By:`; never
   `Co-Authored-By` or a "Generated with" line. Conventional-commit titles.
