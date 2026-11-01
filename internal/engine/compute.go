@@ -46,7 +46,7 @@ func (r *Request) Compute(usage Usage) Result {
 // output of the package. Detail holds numbers only, so no content is logged.
 func (r *Request) warnChecks(res Result) {
 	for _, f := range res.Checks {
-		slog.Warn("cost check failed", "check", f.Check, "operator", f.Operator,
+		slog.Warn("accountant check failed", "check", f.Check, "operator", f.Operator,
 			"detail", f.Detail, "request", r.Meta.RequestID, "session", r.Meta.Session, "thread", r.Thread.ID)
 	}
 }

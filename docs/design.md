@@ -47,10 +47,10 @@ and §6 the `R` numbers are written bare, to keep the comments short; they are t
 | <a id="d1"></a>D1 | Does the library need to know that a change is applied for the first time? | **No.** The tier comes from the position and the cache state (§6.2). A report finds the first application as the first event with that `ChangeID`. A context operator reports a change once, and `Compute` applies it again on later requests (D14, §4.6). |
 | <a id="d2"></a>D2 | Where is the savings logic? | **In one standalone library,** shared by context-guru and Cortex, and open to other AI frameworks. Hosts call it and keep no operator-specific pricing rules. |
 | <a id="d3"></a>D3 | What does the library return? | **Tokens for each tier**, not dollars. Cortex prices them with its own rates (discounts, overrides, long-context tiers), so a saving and the request's spend use the same rates. |
-| <a id="d4"></a>D4 | How is cg's own spend recorded? | **As context operations, in the same report as the savings.** A `spend` context operation carries the provider's billed usage of the call (`Call`). The host prices it with the savings, in one path. There is no second record and no `CostRecorder` (wiring document). `cost.Compute` does not price the call; it returns `Call.Usage` for the host to price (D3). |
+| <a id="d4"></a>D4 | How is cg's own spend recorded? | **As context operations, in the same report as the savings.** A `spend` context operation carries the provider's billed usage of the call (`Call`). The host prices it with the savings, in one path. There is no second record and no `CostRecorder` (wiring document). `accountant.Compute` does not price the call; it returns `Call.Usage` for the host to price (D3). |
 | <a id="d5"></a>D5 | Shape | **One typed context operation for each change unit**, in-process only. The recorded summary (`event.Saving`/`ChangeSaving`) has the aggregate fallback above a limit, not the context operation list itself ([R20](spec.md#r20); the recorded form is in the wiring document). |
 | <a id="d6"></a>D6 | How is a saving across requests counted? | **Realized on each request, not projected.** Each request is priced from its own cache result. A context operator reports a change once, on its first request. The Tracker remembers the active changes of the thread, and `Compute` applies them again on each later request (D14, §4.6). **The risk:** a remembered change can be wrong, because the Tracker cannot see the content. The sum check (§6.5) can catch it, but a lost state does not heal by itself (§4.6, §11 question 13). |
-| <a id="d7"></a>D7 | Where do the types live? | **A standalone module with no dependency on context-guru, on Cortex, or on any framework.** context-guru and Cortex are two users of it, and other frameworks can be too. The module is `github.com/rossoctl/cost` (package `cost`, "context optimization saving tracker"), in its own repository. |
+| <a id="d7"></a>D7 | Where do the types live? | **A standalone module with no dependency on context-guru, on Cortex, or on any framework.** context-guru and Cortex are two users of it, and other frameworks can be too. The module is `github.com/rossoctl/accountant` (package `accountant`, "context optimization saving tracker"), in its own repository. |
 | <a id="d8"></a>D8 | Which hosts compute dollars from context operations? | **Both: Cortex and the context-guru proxy.** The proxy stops using its own saving rules (`dash/event.go`) when it switches. The comparison of request fingerprints (§5) is inside `Compute`, so the proxy does not need Cortex to find B\*. |
 | <a id="d9"></a>D9 | How is the implementation validated? | **Against an exhaustive list of test cases made with the current computation** ([§10](testing.md#10-test-cases)), before any host switches. |
 | <a id="d10"></a>D10 | How is the cache state used? | **As an input to every price.** The tier of a content change depends on the state (§6.2). A change in how the provider bills content that is already there (a cache effect, §4.4) is priced as the difference between two states. |
@@ -69,13 +69,13 @@ and §6 the `R` numbers are written bare, to keep the comments short; they are t
 
 ### 4.1 Types
 
-**Public and internal.** The listing shows the whole model. In the code, package `cost` (`cost.go`)
+**Public and internal.** The listing shows the whole model. In the code, package `accountant` (`accountant.go`)
 re-exports only what a host needs to call it. `Tracker`, `ThreadState`, `ThreadKey`, `Fingerprint`,
 `PosHash` and `CacheState` are in `internal/engine` and are not part of the API. A host cannot save or
 load a `ThreadState` (Q13); making it public is a decision for when Q13 is settled.
 
 ```go
-package cost // github.com/rossoctl/cost
+package accountant // github.com/rossoctl/accountant
 
 // RequestOps is the operations of one request, or of one call made outside a request.
 type RequestOps struct {
@@ -88,7 +88,7 @@ type RequestOps struct {
     At        time.Time
     // Billing prices every operation of the request, a `spend` included (R41, R42, §7.1).
     Billing Billing
-    // Ops is in-process only: input to cost.Compute for this request, never recorded (R20).
+    // Ops is in-process only: input to accountant.Compute for this request, never recorded (R20).
     Ops []Operation // in pipeline order
 }
 
@@ -557,7 +557,7 @@ a break that carries tool-prune's `ChangeID` (§5.2). That is the real cost of t
 
 ## 5. Comparing requests
 
-The comparison is **internal to the library**. It is not part of the public API. `cost.Compute` runs it
+The comparison is **internal to the library**. It is not part of the public API. `accountant.Compute` runs it
 first: it compares this thread's previous request with the current one, and finds B\*, a break and
 the cache state. Then it prices with them. The host does not call it and cannot pass in a B\* or a
 phase of its own, so every host derives them by the same rule. The host keeps the fingerprints,
@@ -1032,7 +1032,7 @@ one. It shows the gross saving, and marks the net as `Estimated`.
 ### 6.5 Checks
 
 The library reports failed checks in `Result.Checks`. A failure does not stop pricing. `Compute` also
-logs each failure at warning level with `log/slog` (message `cost check failed`, with the
+logs each failure at warning level with `log/slog` (message `accountant check failed`, with the
 check, the operator, the detail, and the request, session and thread IDs). `Preview` logs nothing.
 
 1. **Sum:** for each section, the context operations that are applied, and not `DryRun` —
@@ -1056,7 +1056,7 @@ or thread are in the wiring document (W7.1 to W7.3).
 
 ### 7.1 Billing plans
 
-`cost.Compute` returns the same tokens for each tier for an API user and for a subscription user. The
+`accountant.Compute` returns the same tokens for each tier for an API user and for a subscription user. The
 host converts them to a value by the request's `Billing.Mode`:
 
 | `Billing.Mode` | Value of a saving | Value of a spend | Shown as |
@@ -1076,8 +1076,8 @@ not money. The keep-alive window still adds up (§4.4), in usage-limit units.
 
 **Detection.** The host reads `Billing.Mode` from the credential type on the request: an API key
 means `api`; an OAuth token from a subscription login means `subscription`. If it cannot tell, it
-uses `unknown`. Cortex and the proxy must use one rule, so the rule is a function in `cost`:
-`cost.BillingFrom(headers)`. It reads only the credential type and returns no part of the credential
+uses `unknown`. Cortex and the proxy must use one rule, so the rule is a function in `accountant`:
+`accountant.BillingFrom(headers)`. It reads only the credential type and returns no part of the credential
 ([R2](spec.md#r2)). Both hosts must call it on the **client's** upstream credential header (`x-api-key` or
 `Authorization`) before anything rewrites it — not on the proxy's control-plane login
 (`proxy/authmode.go`), which is a different credential. A contract test in each host feeds the same
@@ -1095,7 +1095,7 @@ missing, report too little and say why.
 
 | Situation | Result |
 |---|---|
-| `cost.Compute` panics | The host recovers, writes no saving for the request, and increments `ops_price_panics`. The request and its spend record are unchanged. |
+| `accountant.Compute` panics | The host recovers, writes no saving for the request, and increments `ops_price_panics`. The request and its spend record are unchanged. |
 | A malformed context operation (unknown kind, negative size) | Goes to `Unpriced` with a reason. The other context operations are priced. |
 | A `spend` whose `Call` has no usage (a ping that timed out: the host sent it and read no response) | `Unpriced` with `ping_result_unknown`. The cost is missing, not zero, so the window must not show its rescue as a net gain. The rescue is still credited from the read on the request that follows (§4.4) |
 | Sum check fails | Pricing goes on. A warning is logged. The failure is counted for each plugin on `/v1/pipeline`. |
@@ -1131,8 +1131,8 @@ Where a question has test cases, a host that compares them with its own code mar
    time. Recalculation should be async and buffered. A newer request for the same key replaces the
    queued one and keeps its queue position, so nothing starves. The queue design is not written.
 
-- <a id="q7"></a>**Q7. Where the library lives.** Decided: its own repository, `github.com/rossoctl/cost`, package
-   `cost` (D7).
+- <a id="q7"></a>**Q7. Where the library lives.** Decided: its own repository, `github.com/rossoctl/accountant`, package
+   `accountant` (D7).
 
 - <a id="q8"></a>**Q8. Names in Cortex.** `pctx.ReportOps` and the Cortex name for the component that writes to the
    cost ledger have no chosen name (wiring document).

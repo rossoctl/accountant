@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rossoctl/cost"
+	"github.com/rossoctl/accountant"
 )
 
 // computeImplemented flips to true when Compute prices. Until then the cases are specifications
@@ -48,25 +48,25 @@ func checkStep(t *testing.T, c Case, i int, s Step) {
 		checkOp(at, op)
 	}
 	for _, e := range s.Expected.Ops {
-		for _, tt := range []cost.TierTokens{e.Saved, e.Caused} {
+		for _, tt := range []accountant.TierTokens{e.Saved, e.Caused} {
 			if tt.Input < 0 || tt.CacheRead < 0 || tt.CacheWrite5m < 0 || tt.CacheWrite1h < 0 {
 				at("negative tokens for %q (§6.3)", e.ChangeID)
 			}
 		}
 	}
 	for _, e := range s.Expected.Effects {
-		for _, tt := range []cost.TierTokens{e.Saved, e.Caused} {
+		for _, tt := range []accountant.TierTokens{e.Saved, e.Caused} {
 			if tt.Input < 0 || tt.CacheRead < 0 || tt.CacheWrite5m < 0 || tt.CacheWrite1h < 0 {
 				at("negative tokens for %s effect %q (§6.3)", e.Kind, e.ChangeID)
 			}
 		}
-		if e.Kind == cost.EffectRescue && e.ChangeID == "" {
+		if e.Kind == accountant.EffectRescue && e.ChangeID == "" {
 			at("a rescue has no changeId: it belongs to a keep-alive window")
 		}
 	}
 	if s.IsStandalone() {
 		for _, op := range s.Standalone.Ops {
-			if op.Kind != cost.KindSpend {
+			if op.Kind != accountant.KindSpend {
 				at("a standalone RequestOps holds only spend operations, got %q", op.Kind)
 			}
 		}
@@ -123,8 +123,8 @@ func checkStep(t *testing.T, c Case, i int, s Step) {
 	}
 }
 
-func checkOp(at func(string, ...any), op cost.Operation) {
-	if op.Kind == cost.KindRewrite && op.ChangeID == "" {
+func checkOp(at func(string, ...any), op accountant.Operation) {
+	if op.Kind == accountant.KindRewrite && op.ChangeID == "" {
 		at("rewrite %q has no changeId", op.ID)
 	}
 	if len(op.Spans) > 0 { // §6.5 check 4
@@ -145,11 +145,11 @@ func TestComputeMeetsEveryCase(t *testing.T) {
 	}
 	for _, c := range All() {
 		t.Run(c.ID, func(t *testing.T) {
-			ts := cost.NewTrackers()
+			ts := accountant.NewTrackers()
 			for i, s := range c.Steps {
-				var res cost.Result
+				var res accountant.Result
 				if s.IsStandalone() {
-					res = cost.ComputeStandalone(*s.Standalone)
+					res = accountant.ComputeStandalone(*s.Standalone)
 				} else {
 					r := ts.BeginRequest(s.Begin.Meta, s.Begin.Client, s.Begin.ClientBreakpoints)
 					for _, op := range s.Add {
@@ -164,7 +164,7 @@ func TestComputeMeetsEveryCase(t *testing.T) {
 	}
 }
 
-func compare(t *testing.T, i int, want Expected, got cost.Result) {
+func compare(t *testing.T, i int, want Expected, got accountant.Result) {
 	t.Helper()
 	if want.Phase != "" && got.Phase != want.Phase {
 		t.Errorf("step %d: phase %q, want %q", i, got.Phase, want.Phase)
@@ -172,9 +172,9 @@ func compare(t *testing.T, i int, want Expected, got cost.Result) {
 	if want.Boundary != nil && (got.Boundary == nil || *got.Boundary != *want.Boundary) {
 		t.Errorf("step %d: boundary %v, want %v", i, got.Boundary, *want.Boundary)
 	}
-	var priced []cost.PricedOp
+	var priced []accountant.PricedOp
 	for _, p := range got.Ops {
-		if p.Saved != (cost.TierTokens{}) || p.Caused != (cost.TierTokens{}) || p.Call != nil {
+		if p.Saved != (accountant.TierTokens{}) || p.Caused != (accountant.TierTokens{}) || p.Call != nil {
 			priced = append(priced, p)
 		}
 	}

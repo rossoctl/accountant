@@ -1,4 +1,4 @@
-package cost
+package accountant
 
 import (
 	"go/ast"
@@ -8,7 +8,7 @@ import (
 )
 
 // hidden are exported names of internal/engine that a host never needs. Every other exported name
-// of the engine must be re-exported by cost.go, or a host cannot name a type it reads.
+// of the engine must be re-exported by accountant.go, or a host cannot name a type it reads.
 var hidden = map[string]bool{
 	"Tracker": true, "ThreadState": true, "ThreadKey": true,
 	"Fingerprint": true, "PosHash": true, "CacheState": true,
@@ -55,19 +55,19 @@ func exported(t *testing.T, dir string, skipTests bool) map[string]bool {
 	return out
 }
 
-// TestEveryEngineNameIsReExportedOrHidden keeps cost.go in step with the engine: a new exported
+// TestEveryEngineNameIsReExportedOrHidden keeps accountant.go in step with the engine: a new exported
 // name must be added there, or listed in hidden on purpose.
 func TestEveryEngineNameIsReExportedOrHidden(t *testing.T) {
 	engine := exported(t, "internal/engine", true)
 	root := exported(t, ".", true)
 	for name := range engine {
 		if !root[name] && !hidden[name] {
-			t.Errorf("engine.%s is not re-exported by cost.go; add it, or list it in hidden", name)
+			t.Errorf("engine.%s is not re-exported by accountant.go; add it, or list it in hidden", name)
 		}
 	}
 	for name := range hidden {
 		if root[name] {
-			t.Errorf("%s is listed as hidden but cost.go exports it", name)
+			t.Errorf("%s is listed as hidden but accountant.go exports it", name)
 		}
 		if !engine[name] {
 			t.Errorf("%s is listed as hidden but the engine has no such name", name)

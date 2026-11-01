@@ -15,7 +15,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/rossoctl/cost"
+	"github.com/rossoctl/accountant"
 )
 
 //go:embed cases/*.json
@@ -39,12 +39,12 @@ type Case struct {
 // Step is the calls of one request and the Result its Compute must return, or one standalone
 // RequestOps (a keep-alive ping) priced with ComputeStandalone.
 type Step struct {
-	Standalone *cost.RequestOps `json:"standalone,omitempty"`
-	Begin      *Begin           `json:"begin,omitempty"`
-	Add        []cost.Operation `json:"add,omitempty"` // as the operators reported them; replays are not repeated (§4.6)
-	End        *End             `json:"end,omitempty"`
-	Usage      cost.Usage       `json:"usage"`
-	Expected   Expected         `json:"expected"`
+	Standalone *accountant.RequestOps `json:"standalone,omitempty"`
+	Begin      *Begin                 `json:"begin,omitempty"`
+	Add        []accountant.Operation `json:"add,omitempty"` // as the operators reported them; replays are not repeated (§4.6)
+	End        *End                   `json:"end,omitempty"`
+	Usage      accountant.Usage       `json:"usage"`
+	Expected   Expected               `json:"expected"`
 }
 
 // IsStandalone reports whether the step is a RequestOps with no request record.
@@ -52,47 +52,47 @@ func (s Step) IsStandalone() bool { return s.Standalone != nil }
 
 // Begin is the argument of Trackers.BeginRequest.
 type Begin struct {
-	Meta              cost.RequestMeta  `json:"meta"`
-	Client            cost.Body         `json:"client"`
-	ClientBreakpoints []cost.Breakpoint `json:"clientBreakpoints"`
+	Meta              accountant.RequestMeta  `json:"meta"`
+	Client            accountant.Body         `json:"client"`
+	ClientBreakpoints []accountant.Breakpoint `json:"clientBreakpoints"`
 }
 
 // End is the argument of Request.EndRequest.
 type End struct {
-	Thread      cost.Thread       `json:"thread"`
-	Forwarded   cost.Body         `json:"forwarded"`
-	Breakpoints []cost.Breakpoint `json:"breakpoints"`
-	Facts       Facts             `json:"facts"`
+	Thread      accountant.Thread       `json:"thread"`
+	Forwarded   accountant.Body         `json:"forwarded"`
+	Breakpoints []accountant.Breakpoint `json:"breakpoints"`
+	Facts       Facts                   `json:"facts"`
 }
 
-// Facts is cost.EntryFacts with a readable TTL ("5m").
+// Facts is accountant.EntryFacts with a readable TTL ("5m").
 type Facts struct {
-	TTL        string            `json:"ttl"`
-	Lifetime   cost.LifetimeKind `json:"lifetime"`
-	LastPing   time.Time         `json:"lastPing,omitzero"`
-	PingRead   *cost.Position    `json:"pingRead,omitempty"`
-	PingWindow string            `json:"pingWindow,omitempty"`
+	TTL        string                  `json:"ttl"`
+	Lifetime   accountant.LifetimeKind `json:"lifetime"`
+	LastPing   time.Time               `json:"lastPing,omitzero"`
+	PingRead   *accountant.Position    `json:"pingRead,omitempty"`
+	PingWindow string                  `json:"pingWindow,omitempty"`
 }
 
 // EntryFacts converts the facts to the library's type. It panics on a malformed TTL, which is a
 // bug in the case file.
-func (f Facts) EntryFacts() cost.EntryFacts {
+func (f Facts) EntryFacts() accountant.EntryFacts {
 	ttl, err := time.ParseDuration(f.TTL)
 	if err != nil {
 		panic(fmt.Sprintf("cases: facts ttl %q: %v", f.TTL, err))
 	}
-	return cost.EntryFacts{TTL: ttl, Lifetime: f.Lifetime, LastPing: f.LastPing, PingRead: f.PingRead, PingWindow: f.PingWindow}
+	return accountant.EntryFacts{TTL: ttl, Lifetime: f.Lifetime, LastPing: f.LastPing, PingRead: f.PingRead, PingWindow: f.PingWindow}
 }
 
 // Expected is what Compute must return for one step, in tokens for each tier.
 type Expected struct {
-	Phase cost.CachePhase `json:"phase,omitempty"`
+	Phase accountant.CachePhase `json:"phase,omitempty"`
 	// Boundary is asserted only when present. A cold request has B* = 0 and no position to name.
-	Boundary *cost.Position `json:"boundary,omitempty"`
+	Boundary *accountant.Position `json:"boundary,omitempty"`
 	// BaselineUsage is what the provider would have billed for the client body with no context
 	// operation at all (§6.3 conservation). The step's Usage is what it billed with them. Their
 	// price difference is the sum of Saved minus Caused over Ops. Absent on a standalone step.
-	BaselineUsage *cost.Usage `json:"baselineUsage,omitempty"`
+	BaselineUsage *accountant.Usage `json:"baselineUsage,omitempty"`
 	// Ops are the priced operations that save or cost something, or carry a Call, in the order
 	// Compute returns them: reported, then active ones applied again. Operations that price to
 	// nothing are not listed.
@@ -107,11 +107,11 @@ type Expected struct {
 
 // ExpectedOp is one priced operation.
 type ExpectedOp struct {
-	Note     string          `json:"note,omitempty"` // for the reader: replay, break, rescue; never asserted
-	ChangeID string          `json:"changeId"`
-	Saved    cost.TierTokens `json:"saved"`
-	Caused   cost.TierTokens `json:"caused"`
-	Call     *cost.ModelCall `json:"call,omitempty"` // a spend: the host prices it
+	Note     string                `json:"note,omitempty"` // for the reader: replay, break, rescue; never asserted
+	ChangeID string                `json:"changeId"`
+	Saved    accountant.TierTokens `json:"saved"`
+	Caused   accountant.TierTokens `json:"caused"`
+	Call     *accountant.ModelCall `json:"call,omitempty"` // a spend: the host prices it
 	// Estimated is asserted both ways. Every rewrite is converted from bytes (§4.2 rule 7), so it must be
 	// marked; a spend is priced by the host from the call's own usage, so it must not.
 	Estimated bool `json:"estimated,omitempty"`
@@ -119,15 +119,15 @@ type ExpectedOp struct {
 
 // ExpectedEffect is one cache effect. Its range is asserted only when present.
 type ExpectedEffect struct {
-	Note     string                `json:"note,omitempty"` // for the reader; never asserted
-	Kind     cost.CacheEffectKind  `json:"kind"`
-	ChangeID string                `json:"changeId"`
-	From     *cost.Position        `json:"from,omitempty"`
-	To       *cost.Position        `json:"to,omitempty"`
-	TTL      string                `json:"ttl,omitempty"`
-	Saved    cost.TierTokens       `json:"saved"`
-	Caused   cost.TierTokens       `json:"caused"`
-	Cause    cost.CacheEffectCause `json:"cause,omitempty"`
+	Note     string                      `json:"note,omitempty"` // for the reader; never asserted
+	Kind     accountant.CacheEffectKind  `json:"kind"`
+	ChangeID string                      `json:"changeId"`
+	From     *accountant.Position        `json:"from,omitempty"`
+	To       *accountant.Position        `json:"to,omitempty"`
+	TTL      string                      `json:"ttl,omitempty"`
+	Saved    accountant.TierTokens       `json:"saved"`
+	Caused   accountant.TierTokens       `json:"caused"`
+	Cause    accountant.CacheEffectCause `json:"cause,omitempty"`
 	// InBaseline marks a break that the client body would have had too (an entry lost early, a client
 	// edit): it is on the record but cancels out of conservation. A break that an operator left behind
 	// (its change ended) is not in the baseline, so it counts.
@@ -180,19 +180,19 @@ func (c Case) StepRate(s Step) Rate {
 
 // Picos prices tokens in pico-dollars (1e-12 USD): tokens × (µ$ per million tokens) is exact, so no
 // figure is rounded until it is shown (testing.md §10.2, "Rounding").
-func (r Rate) Picos(t cost.TierTokens) int64 {
+func (r Rate) Picos(t accountant.TierTokens) int64 {
 	return int64(t.Input)*r.Input + int64(t.CacheWrite5m)*r.CacheWrite5m +
 		int64(t.CacheWrite1h)*r.CacheWrite1h + int64(t.CacheRead)*r.CacheRead
 }
 
 // UsagePicos prices a billed prompt usage. CacheWrite1h is a part of CacheWrite.
-func (r Rate) UsagePicos(u cost.Usage) int64 {
-	return r.Picos(cost.TierTokens{Input: u.Input, CacheRead: u.CacheRead,
+func (r Rate) UsagePicos(u accountant.Usage) int64 {
+	return r.Picos(accountant.TierTokens{Input: u.Input, CacheRead: u.CacheRead,
 		CacheWrite5m: u.CacheWrite - u.CacheWrite1h, CacheWrite1h: u.CacheWrite1h})
 }
 
 // CallPicos prices everything a call's response bills, output included.
-func (r Rate) CallPicos(u cost.CallUsage) int64 {
+func (r Rate) CallPicos(u accountant.CallUsage) int64 {
 	return r.UsagePicos(u.Usage) + int64(u.Output)*r.Output
 }
 
@@ -227,7 +227,7 @@ func (c Case) StepPicos(s Step) (net int64) {
 func (c Case) RateTable() Rate { return Rates[c.Rates] }
 
 // SectionTokens returns the tokens of each section of a body. The fixtures use 4 bytes a token.
-func SectionTokens(b cost.Body) (tools, system, messages int) {
+func SectionTokens(b accountant.Body) (tools, system, messages int) {
 	for i, p := range b.Pos {
 		t := int(p.Bytes) / 4
 		switch {
@@ -243,7 +243,7 @@ func SectionTokens(b cost.Body) (tools, system, messages int) {
 }
 
 // Tokens returns the tokens of a whole body.
-func Tokens(b cost.Body) int { t, s, m := SectionTokens(b); return t + s + m }
+func Tokens(b accountant.Body) int { t, s, m := SectionTokens(b); return t + s + m }
 
 // All returns every case, sorted by ID. It panics on a malformed file, because the list is data
 // the package ships and a bad file is a bug in the package.

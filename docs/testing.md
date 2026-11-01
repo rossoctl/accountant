@@ -58,13 +58,13 @@ return. A step can also be a standalone `RequestOps` (a ping), priced with `Comp
      "add":   [{"...": "the operations reported on this request"}],
      "end":   {"...": "thread, forwarded Body, breakpoints, EntryFacts"},
      "usage": {"...": "Usage"},
-     "expected": {"...": "the cost.Result, tokens for each tier"}},
+     "expected": {"...": "the accountant.Result, tokens for each tier"}},
     {"...": "the next request of the thread"}
   ]
 }
 ```
 
-- `expected` is what `cost.Compute` must return on that step, by [the specification](spec.md) and [the design](design.md).
+- `expected` is what `accountant.Compute` must return on that step, by [the specification](spec.md) and [the design](design.md).
 - `rates` names a fixed rate table in the package. `fixture-v1` is: input $3.00/M, cache write 5m
   $3.75/M, cache write 1h $6.00/M, cache read $0.30/M. With one table, `expected` and the current
   code's figure can be compared in dollars.
@@ -159,14 +159,14 @@ drops the combinations that cannot occur, and states the reason for each drop in
 28. Two tenants with one session ID: the host's key prefix keeps the `ThreadState`s apart ([§6.1](design.md#61-call)).
 
 **C. Cases from real traffic.** For each difference that a shadow step ([`cortex-wiring.md`](cortex-wiring.md), migration steps 5 and 8) logs and
-no case matches, add a case. Then decide: it is a bug in `cost`, or a new `differs` entry with a
+no case matches, add a case. Then decide: it is a bug in `accountant`, or a new `differs` entry with a
 reason.
 
 ### 10.4 How the list validates the implementation
 
 | Test | Where | Passes when |
 |---|---|---|
-| `cost` unit test | context-guru | `cost.Compute` returns `expected` for every case, including the expected `Boundary`, `Phase` and break for every cache case ([§5.2](design.md#52-classifying-a-break)). The internal comparison has its own unit tests. |
+| `accountant` unit test | context-guru | `accountant.Compute` returns `expected` for every case, including the expected `Boundary`, `Phase` and break for every cache case ([§5.2](design.md#52-classifying-a-break)). The internal comparison has its own unit tests. |
 | Agreement with the current code | context-guru | The test runs `dash.Event.Price` on each case's input. Each case not in `differences.json` equals `expected` within one micro-dollar. Each `differs` entry really differs, so a stale entry fails. |
 | Agreement with the Cortex rules | Cortex, until step 10 | The same test with `pruneDraft`, `compactionDraft` and `rewritePenalty`, for the tool-prune and rewrite-penalty cases. It is removed with those rules. |
 | Review of the differences | PR review | Every `differs` entry cites a spec or design section, and a reviewer approves `differences.json`. |
@@ -176,7 +176,7 @@ reason.
 
 ### 10.5 Other tests
 
-1. **Property tests in `cost`:** `Saved` and `Caused` are never negative; an empty list gives an
+1. **Property tests in `accountant`:** `Saved` and `Caused` are never negative; an empty list gives an
    empty result; reordering context operations of different context operators does not change each one's price,
    except for break attribution.
 2. **End-to-end:** the LiteLLM integration test (`06c712cb` on `feat/contextguru-keepalive`) runs a request

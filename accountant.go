@@ -1,5 +1,5 @@
-// Package cost is the context optimization saving tracker. It prices the changes that a context
-// optimizer makes to an LLM request, in tokens for each billing tier.
+// Package accountant is the context accountant: it tracks what a context optimizer saves. It prices
+// the changes that the optimizer makes to an LLM request, in tokens for each billing tier.
 //
 // A host calls it in four steps for each request. [Trackers.BeginRequest] takes the body the client
 // sent. [Request.Add] records each change an operator reported. [Request.EndRequest] takes the body
@@ -12,9 +12,9 @@
 //
 // This file is the whole public API. The implementation is in internal/engine, with the state it
 // keeps for each thread; none of that is part of the API.
-package cost
+package accountant
 
-import "github.com/rossoctl/cost/internal/engine"
+import "github.com/rossoctl/accountant/internal/engine"
 
 // Entry points.
 type (

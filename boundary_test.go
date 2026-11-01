@@ -1,4 +1,4 @@
-package cost
+package accountant
 
 import (
 	"os/exec"
@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-const module = "github.com/rossoctl/cost"
+const module = "github.com/rossoctl/accountant"
 
 // TestImportsStandardLibraryOnly pins R3: the module must not import context-guru, Cortex or any
 // framework, so a third party can use it.

@@ -1,6 +1,6 @@
-# Review a cost pull request
+# Review an accountant pull request
 
-You review one pull request in the `cost` repo. Another reviewer reviews the same PR
+You review one pull request in the `accountant` repo. Another reviewer reviews the same PR
 at the same time.
 
 - **Round 1:** review on your own. Do not read other reviews or comments on the PR until you
@@ -32,7 +32,7 @@ cannot read something, say so in the review and use `Verdict: blocking`.
 
 ## Rules
 
-- **The module imports only the standard library** (R3). The public API is `cost.go` only.
+- **The module imports only the standard library** (R3). The public API is `accountant.go` only.
   The docs in `docs/` must describe the code: a change to `Compute` without a doc change is a defect.
 - Report real defects: wrong pricing, a wrong cache effect, a check that misses an error, a
   missing test for new behavior, a doc that disagrees with the code.

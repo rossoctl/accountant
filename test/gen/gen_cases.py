@@ -5,7 +5,7 @@ Run `go generate ./test` from the repo root after editing. Bodies use 4 bytes a 
 hash is cumulative over the content ids, so two bodies with an equal prefix have equal hashes
 there (design.md §5.1). Every figure is checked twice: cases_test.go checks conservation and the
 billed tokens against the bodies. A host can also play each case through its own saving code and
-compare (context-guru does, in dash/cost_play_test.go).
+compare (context-guru does, in dash/accountant_play_test.go).
 """
 import json
 import os

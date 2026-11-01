@@ -96,9 +96,9 @@ In both cases the cost and the benefit land on different requests. This is why a
 separate kind of context operation, and why we add up over the session.
 
 **The packages.** Context operators report context operations to a host. Cortex is the host today. The
-context operators and the host import the `cost` library. The library imports none of them (R3).
+context operators and the host import the `accountant` library. The library imports none of them (R3).
 
-![The cost library, Cortex as its consumer, and the context operators that report context operations](packages.svg)
+![The accountant library, Cortex as its consumer, and the context operators that report context operations](packages.svg)
 
 **Read next.** The basic example in
 [`examples.md`](examples.md) shows the idea
@@ -185,7 +185,7 @@ write price, reporting, granularity). It grows as each provider is read.
 - **Each host** converts tokens to dollars with its own rates, and records them. There are two
   hosts: **Cortex** (`pricing.Resolver`) and the **context-guru proxy** (`internal/modelinfo`).
   For the same request, both get the same tokens for each tier.
-- **What is centralized is the logic, not the rates.** The `cost` library decides which tier every
+- **What is centralized is the logic, not the rates.** The `accountant` library decides which tier every
   token falls in, in one place. The dollar rate for each tier stays in each host's own rate table,
   by design: Cortex has discounts, overrides and long-context tiers that the proxy does not. So the
   two hosts report the same tokens and can report different dollars for the same request, when
@@ -357,7 +357,7 @@ numbers are not used: those requirements were dropped.
   request. Examples of params: `effort`, `thinking` (the thinking budget), `max_output`,
   `service_tier`. The library does not fix the list. A key it does not know is kept and passed on,
   and it is never dropped (R19).
-- <a id="r46"></a>**R46.** Each recorded saving names the version of the `cost` rules that computed it
+- <a id="r46"></a>**R46.** Each recorded saving names the version of the `accountant` rules that computed it
   (`Saving.OpsVersion`). A context operator can then trace a figure to the rules and the case list that
   define it. A change to the rules changes the version, so figures from two versions are not
   compared as if they were the same.
@@ -366,7 +366,7 @@ numbers are not used: those requirements were dropped.
   document).
 - <a id="r19"></a>**R19.** The model is versioned. An unknown `Kind` is kept and reported as unpriced, never
   dropped.
-- <a id="r20"></a>**R20.** `RequestOps`/`Operation` is request-scoped and in-process only: input to `cost.Compute`,
+- <a id="r20"></a>**R20.** `RequestOps`/`Operation` is request-scoped and in-process only: input to `accountant.Compute`,
   discarded once the request's `event.Saving` is written. The context operation list is never recorded
   (R2's `:9094` and archive concern, and the session store's own size history, apply to what IS
   recorded — `event.Saving`, `Saving.Changes`/`ChangeSaving` and `Event.Spends` — not to the raw
@@ -433,7 +433,7 @@ that is rebuilt from `Operation`. This design changes nothing about where it liv
   keep-alive and spend terms as separate, summable fields. Only the advisory/diagnostic detail
   above is out of this design's reach.
 
-If a later design wants to drive any of the surfaces above from `cost`, that is new scope, not an
+If a later design wants to drive any of the surfaces above from `accountant`, that is new scope, not an
 extension of this one.
 
 ## 11. Open questions

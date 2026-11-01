@@ -1,3 +1,3 @@
-module github.com/rossoctl/cost
+module github.com/rossoctl/accountant
 
 go 1.26.4

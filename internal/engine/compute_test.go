@@ -214,7 +214,7 @@ func TestAFailedCheckIsLoggedAsAWarning(t *testing.T) {
 	if len(res.Checks) == 0 {
 		t.Fatal("Compute: no check failed, the scenario is wrong")
 	}
-	if got := strings.Count(buf.String(), "level=WARN msg=\"cost check failed\""); got != len(res.Checks) {
+	if got := strings.Count(buf.String(), "level=WARN msg=\"accountant check failed\""); got != len(res.Checks) {
 		t.Fatalf("%d warnings for %d failed checks:\n%s", got, len(res.Checks), buf.String())
 	}
 }

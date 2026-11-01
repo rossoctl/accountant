@@ -1,16 +1,16 @@
-# cost
+# accountant
 
-**cost** is the context optimization saving tracker: a Go library that says how many tokens a change
-to an LLM request saved or cost, for each billing tier.
+**accountant** is the context accountant: a Go library that keeps the books for a context optimizer. It
+says how many tokens each change to an LLM request saved or caused, for each billing tier.
 
 A tool such as a context optimizer edits a request before it goes to the provider. It may shorten a
-tool output, remove unused tool declarations, or replace old messages with a summary. cost answers one
+tool output, remove unused tool declarations, or replace old messages with a summary. accountant answers one
 question for each change:
 
 > If this change had never been made, how would the provider have billed these tokens on this request?
 
 The answer depends on the provider's prompt cache. A change inside a cached prefix can break the cache
-and cost more than it saves. cost keeps that state for each conversation thread and prices every
+and cost more than it saves. accountant keeps that state for each conversation thread and prices every
 change in tokens for the input, cache write (5-minute and 1-hour) and cache read tiers. The host turns
 tokens into money with its own rates.
 
@@ -24,13 +24,13 @@ The library is stateful, and `Compute` is deterministic. For each request:
 4. `Request.Compute` takes the billed `Usage` and returns a `Result`.
 
 ```go
-ts := cost.NewTrackers()
-r := ts.BeginRequest(cost.RequestMeta{RequestID: "r2", Session: "s1", At: now}, client, clientBreakpoints)
-r.Add(cost.Operation{Kind: cost.KindRewrite, ChangeID: "mask:1", At: at,
-    SizeBefore: cost.Size{Bytes: 8000}, SizeAfter: cost.Size{Bytes: 1000}})
-r.EndRequest(cost.Thread{ID: "main"}, forwarded, forwardedBreakpoints, facts)
-res := r.Compute(cost.Usage{CacheRead: 4000, CacheWrite: 1000})
-// res.Ops[0].Saved is a cost.TierTokens
+ts := accountant.NewTrackers()
+r := ts.BeginRequest(accountant.RequestMeta{RequestID: "r2", Session: "s1", At: now}, client, clientBreakpoints)
+r.Add(accountant.Operation{Kind: accountant.KindRewrite, ChangeID: "mask:1", At: at,
+    SizeBefore: accountant.Size{Bytes: 8000}, SizeAfter: accountant.Size{Bytes: 1000}})
+r.EndRequest(accountant.Thread{ID: "main"}, forwarded, forwardedBreakpoints, facts)
+res := r.Compute(accountant.Usage{CacheRead: 4000, CacheWrite: 1000})
+// res.Ops[0].Saved is a accountant.TierTokens
 ```
 
 [example_test.go](example_test.go) is a complete program that runs under `go test`.
@@ -45,9 +45,9 @@ The module imports only the standard library, so any host can use it. `boundary_
 
 | Path | What it holds |
 |---|---|
-| `cost.go`, `doc.go` | The whole public API: type aliases, constants and three functions |
+| `accountant.go`, `doc.go` | The whole public API: type aliases, constants and three functions |
 | `internal/engine/` | The implementation and its unit tests. Not importable by hosts |
-| `test/cases/` | The 63 JSON cases and the loader (`import "github.com/rossoctl/cost/test/cases"`) |
+| `test/cases/` | The 63 JSON cases and the loader (`import "github.com/rossoctl/accountant/test/cases"`) |
 | `test/gen/` | The Python generator that writes the cases |
 | `docs/` | Specification, design, examples |
 
@@ -59,8 +59,6 @@ The module imports only the standard library, so any host can use it. `boundary_
 | [docs/design.md](docs/design.md) | The design: types, `Compute`, cache effects, checks |
 | [docs/testing.md](docs/testing.md) | How the library is tested, and the exhaustive test-case list |
 | [docs/examples.md](docs/examples.md) | Eight worked examples with figures |
-| [docs/more_examples.md](docs/more_examples.md) | More scenarios, with their case IDs |
-| [docs/issue_cases.md](docs/issue_cases.md) | Cases that come from real issues |
 | [docs/cached-prefix.md](docs/cached-prefix.md) | How providers decide what a cache read covers |
 | [docs/cortex-wiring.md](docs/cortex-wiring.md) | How Cortex and context-guru plug it in |
 

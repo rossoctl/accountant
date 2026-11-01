@@ -1,4 +1,4 @@
-// Package engine is the implementation of package cost, which re-exports its public names. It prices
+// Package engine is the implementation of package accountant, which re-exports its public names. It prices
 // context operations in tokens for each billing tier.
 //
 // Context operators report what they changed as facts (RequestOps, Operation). Compute turns
