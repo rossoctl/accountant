@@ -511,7 +511,10 @@ archive alone cannot rebuild the state.
 client that hangs up), and then `Compute` is never called. The change it reported would be lost, and
 the context operator does not report it again. So `EndRequest` stores the reported `rewrite` and
 `setting` operations in the `ThreadState` as active, with a `Version` bump, and `Compute` does not
-store them again. The fingerprint and the cache state still change only in `Compute`, because they need
+store them again. **Not implemented in v0:** today only `Compute` stores them, so a request that never
+reaches `Compute` loses its change. A host must call `Compute` (with a zero `Usage` if there is no
+response) for every request that ended. Storing in `EndRequest` changes the `Version` rules of R53, so
+it needs its own decision. The fingerprint and the cache state still change only in `Compute`, because they need
 the usage. A request with no usage therefore advances the active list and nothing else.
 
 **What stays in the state after a request.** The Tracker keeps the context operations that are still
@@ -680,7 +683,7 @@ checked in order, and the first match wins.
 | 1 | `fwdFirstDiff` ≤ `prevExtent`, and `fwdFirstDiff` < `clientFirstDiff` | A plugin broke the cache. Add a break with `at: fwdFirstDiff` and the `ChangeID` of the context operation, reported or active, that changed the position `fwdFirstDiff`. |
 | 2 | `clientFirstDiff` ≤ `prevExtent`, and `fwdFirstDiff` ≥ `clientFirstDiff` | The client changed its body inside the cached prefix. Add a break with no `ChangeID`. |
 | 3 | A `setting` context operation changed the model or a param (`effort`, `thinking`) since the previous request, and `Usage.CacheRead` is below the read that the forwarded body and the phase predict | Add a break with the `ChangeID` of the `setting` context operation. The break starts at the earliest `SettingChange.At` of the operation, snapped down to the last breakpoint before it (§6.2), because the bodies are equal there and no hash shows the position. If `At` is nil, the break starts at the read the usage shows and `penalty_unknown` is added (§6.4). If the operation changed several settings, the break names the operation, not one setting: the library cannot say which of them caused it. This is the one cost of a param change that can be measured. |
-| 4 | No diff inside `prevExtent`, the phase is `hot`, but `Usage.CacheRead` is below the read the phase predicts: the end of `prevExtent`, snapped down to the last forwarded breakpoint at or before it | The entry was lost early (eviction, the lookback window, another reason the library cannot see). Add a break with no `ChangeID`. A one-block tolerance absorbs the 128-token rounding of older OpenAI models. |
+| 4 | No diff inside `prevExtent`, the phase is `hot`, but `Usage.CacheRead` is below the read the phase predicts: the end of `prevExtent`, snapped down to the last forwarded breakpoint at or before it. When the request is more than 5 minutes after the previous one, the prediction is cut at the head (the end of the first forwarded breakpoint group that is held at 1h): a 5m part past the head has expired | The entry was lost early (eviction, the lookback window, another reason the library cannot see). Add a break with no `ChangeID`; set `Cause` to `model_changed` when the model differs from the previous request's. A one-block tolerance absorbs the 128-token rounding of older OpenAI models. |
 | 5 | No diff inside `prevExtent`, and the phase is `cold` | The cache expired. Add a break with no `ChangeID`, so the expiry is on the record ([R31](spec.md#r31)). It moves no tokens: B\* = 0 already prices every position as a write (§6.2), so the range from the read extent to B\* is empty, and the expiry is not counted twice. |
 | 6 | No previous fingerprint for this thread | First turn of the thread with no `Inherits`, or a restart: no break is added. B\* is unknown (§6.4). |
 
@@ -689,6 +692,8 @@ The phase is found **before** the rows, from the gaps. It is the **cache state**
 | Case | `CachePhase` | `Extent` |
 |---|---|---|
 | A previous fingerprint exists, and the request gap ≤ TTL | `hot` | `prevExtent` |
+| A previous fingerprint exists, the previous request cached nothing (its cache state was `cold`), and the request gap ≤ TTL | `hot` | empty: nothing can have been lost |
+| A previous fingerprint exists, the previous request cached nothing, the lifetime is `exact`, and the request gap > TTL | `cold` | nil |
 | A previous fingerprint exists, request gap > TTL, entry gap ≤ TTL, `PingRead` is set, and the lifetime is `exact` or `minimum`. The rescue also needs conditions 3 and 4 of §4.4 | `hot`, and the library adds a rescue with `ChangeID = EntryFacts.PingWindow` (§4.4) | `PingRead` |
 | A previous fingerprint exists, request gap > TTL, the lifetime is `exact`, and no ping qualifies (none was sent, one was sent too late, or `PingRead` is unset) | `cold`. A late ping gets no rescue | nil |
 | A previous fingerprint exists, request gap > TTL, no qualifying ping, and the lifetime is `minimum` or `unknown` | `unknown`, unless `Usage.CacheRead` proves a read (below) | nil |
@@ -934,7 +939,9 @@ the safe direction.
 above). Without the ping they would have been priced cold, which is worth more. The difference is
 neither the ping's nor the content changes' alone. The library reports it as
 `Result.Interaction`, attributed to nobody, so the request total still equals the bill without
-the context operations minus the bill with them.
+the context operations minus the bill with them. **Not implemented in v0:** `Interaction` is always
+zero. The content changes of a rescued request are priced in the hot state, and the difference is
+not reported. Conservation (check 6) counts tokens across tiers, so it does not see the difference.
 
 ### 6.3 Output
 
@@ -954,7 +961,8 @@ type Result struct {
 
 type Unpriced struct {
     OpID   string
-    Reason string // "unknown_kind", "negative_size", "penalty_unknown", "ping_result_unknown", ...; the host adds
+    Reason string // "unknown_kind", "negative_size", "penalty_unknown", "ping_result_unknown", "end_request_missing",
+                  // "no_usage", "not_spend", ...; the host adds
                   // "operator_not_allowed" from its own allow-list (wiring document, W5.1)
 }
 
@@ -995,8 +1003,12 @@ type CacheEffect struct {
     Saved     TierTokens
     Caused    TierTokens
     Estimated bool
+    Cause     CacheEffectCause // why a break nobody caused happened, when the library knows; "model_changed" is the only value
 }
 ```
+
+`Cause` is "model_changed" when row 4 (§5.2) finds a loss and the model differs from the previous
+request's: the provider keeps a cache for each model, so the loss is explained. It is empty otherwise.
 
 `Saved` and `Caused` are separate and both non-negative, because the money layer rejects negative
 values (`pricing.MicrosFromUSD`). Cortex prices each side with the existing code.
@@ -1030,6 +1042,9 @@ too high. So a host must not show a net figure from a request with `penalty_unkn
 one. It shows the gross saving, and marks the net as `Estimated`.
 
 ### 6.5 Checks
+
+**Not run in v0:** check 2 (order). Attribution (check 5) holds by construction, because a break takes only
+the `ChangeID` of an operation of the same request.
 
 The library reports failed checks in `Result.Checks`. A failure does not stop pricing. `Compute` also
 logs each failure at warning level with `log/slog` (message `accountant check failed`, with the

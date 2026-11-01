@@ -154,7 +154,7 @@ drops the combinations that cannot occur, and states the reason for each drop in
 25. A subagent's first request that reads the main thread's `tools` and `system`: `hot` from the
     usage, not `unknown` ([§5.2](design.md#52-classifying-a-break)).
 
-26. A request that fails before `Compute`: the reported change is still active on the next request ([§4.6](design.md#46-replays-who-remembers-past-changes)).
+26. A request that fails before `Compute`: the reported change is still active on the next request ([§4.6](design.md#46-replays-who-remembers-past-changes)). **Not covered in v0:** `EndRequest` does not store the change, so the host must call `Compute` for every request that ended. No test pins this case.
 27. Two requests of one thread in flight: the second `Compute` sets `Recomputed` ([R53](spec.md#r53)); `Preview` returns the figure `Compute` returns and stores nothing ([R26](spec.md#r26)).
 28. Two tenants with one session ID: the host's key prefix keeps the `ThreadState`s apart ([§6.1](design.md#61-call)).
 

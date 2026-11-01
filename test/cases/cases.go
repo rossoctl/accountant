@@ -2,10 +2,10 @@
 // (testing.md §10). A case holds only what the spec decides: the input and the expected result.
 // It never holds the current code's figure; the agreement test computes that each time it runs.
 //
-// The JSON files in cases/ are written by gen/gen_cases.py, which computes the body hashes.
+// The JSON files in this directory are written by ../gen/gen_cases.py, which computes the body hashes.
 package cases
 
-//go:generate python3 gen/gen_cases.py
+//go:generate python3 ../gen/gen_cases.py
 
 import (
 	"embed"
@@ -18,7 +18,7 @@ import (
 	"github.com/rossoctl/accountant"
 )
 
-//go:embed cases/*.json
+//go:embed *.json
 var casesFS embed.FS
 
 // Case is one test case (testing.md §10.2): a sequence of steps on a fresh Trackers, because the result of a
@@ -248,7 +248,7 @@ func Tokens(b accountant.Body) int { t, s, m := SectionTokens(b); return t + s +
 // All returns every case, sorted by ID. It panics on a malformed file, because the list is data
 // the package ships and a bad file is a bug in the package.
 func All() []Case {
-	files, err := fs.Glob(casesFS, "cases/*.json")
+	files, err := fs.Glob(casesFS, "*.json")
 	if err != nil {
 		panic(err)
 	}

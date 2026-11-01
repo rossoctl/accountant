@@ -1,6 +1,8 @@
 package engine
 
 import (
+	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -66,5 +68,20 @@ func TestNewBodyHashesThePrefix(t *testing.T) {
 	}
 	if a.Start != [3]int{0, 0, 1} {
 		t.Fatalf("Start = %v", a.Start)
+	}
+}
+
+// The machine-stable reasons are part of the contract with a host that switches on them (design
+// §6.3, Unpriced): each one must be in the design as written.
+func TestEveryUnpricedReasonIsInTheDesign(t *testing.T) {
+	doc, err := os.ReadFile("../../docs/design.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, reason := range []string{ReasonEndRequestMissing, ReasonPingResultUnknown, ReasonUnknownKind,
+		ReasonNegativeSize, ReasonPenaltyUnknown, ReasonNoUsage, ReasonNotSpend} {
+		if !strings.Contains(string(doc), `"`+reason+`"`) && !strings.Contains(string(doc), "`"+reason+"`") {
+			t.Errorf("reason %q is not named in docs/design.md", reason)
+		}
 	}
 }

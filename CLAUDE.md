@@ -14,7 +14,7 @@ operations in tokens per billing tier. See [README.md](README.md) and [docs/](do
 - `Compute` is deterministic and does no I/O (R26). The one exception is a `log/slog` warning for each
   failed check.
 - Cases in `test/cases/*.json` are generated. Edit `test/gen/gen_cases.py`, then run
-  `go generate ./test`. Never edit a JSON case by hand.
+  `go generate ./test/cases`. Never edit a JSON case by hand.
 
 ## Development procedure
 
@@ -24,7 +24,7 @@ operations in tokens per billing tier. See [README.md](README.md) and [docs/](do
    - `go vet ./...`
    - `go test ./...`
 3. If you changed a dependency or removed an import, run `go mod tidy -diff`. CI gates on it.
-4. If you changed `test/gen/gen_cases.py`, run `go generate ./test`. CI fails when the JSON cases are
+4. If you changed `test/gen/gen_cases.py`, run `go generate ./test/cases`. CI fails when the JSON cases are
    out of date.
 5. If you change the behavior of `Compute`, update `docs/` in the same PR. The spec and the design
    are the source of truth. A code change that the docs do not describe is a bug.
