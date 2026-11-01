@@ -39,8 +39,11 @@ Every PR gets two independent reviews before it is offered for merge. Do not wai
 
 - Fix each finding, or reply on the PR with the reason and proof. Reply to every finding.
 - The budget is 2 rounds. Only the user grants more; you may ask.
-- context-guru automates this with its `offload-review` skill (`.claude/skills/offload-review`). That
-  skill is not in this repo yet. Until it is, use the `code-review` skill twice, or ask the user.
+- Run the `offload-review` skill (`.claude/skills/offload-review`, script `scripts/offload-review.sh`).
+  Run it in the main session, not in a subagent. It starts two reviewers, and each posts a review on
+  the PR. After the PR merges or closes, run `scripts/offload-review.sh <pr> --cleanup`.
+- On macOS, set `OFFLOAD_CLAUDE_MODEL` if the reviewer backend must use a given model. Set
+  `OFFLOAD_REVIEW_SCOPE` to limit what the reviewers read (for example, to skip generated JSON cases).
 
 ## How to write for me: ASD-STE100 style
 
