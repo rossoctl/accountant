@@ -15,12 +15,6 @@ operations in tokens per billing tier. See [README.md](README.md) and [docs/](do
   failed check.
 - Cases in `test/cases/*.json` are generated. Edit `test/gen/gen_cases.py`, then run
   `go generate ./test`. Never edit a JSON case by hand.
-- **Fail open.** A failed check goes into `Result.Checks` and is logged. Pricing goes on. A host that
-  wraps `Compute` in a `recover` must leave the request unpriced, never block it.
-- **Metadata only.** The library works from hashes, counts and sizes. It must never store or log
-  request content (text, tool output, bodies). `CheckFailure.Detail` holds numbers only. If a change
-  needs content, say so at the top of the PR and get the repo owner to agree before merge.
-- Match the surrounding code's style. Keep packages small and single-purpose.
 
 ## Development procedure
 
