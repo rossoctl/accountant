@@ -80,7 +80,8 @@ Pre-release. The API follows the design in [docs/design.md](docs/design.md) and 
 first tag.
 
 Not implemented yet: `Result.Interaction` and the order check. Each is marked "Not implemented in v0" in
-the design. A `Tracker` is never evicted, so memory grows with every thread.
+the design. The Trackers hold about 10,000 threads and drop the oldest above that. A dropped thread loses
+its active changes (design §6.1, Memory).
 
 ## License
 

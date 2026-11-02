@@ -378,7 +378,7 @@ func TestASummaryThatSawTheOriginalEndsTheChangeInside(t *testing.T) {
 			t.Fatalf("mask ended under the summary and must not be priced: %+v", p)
 		}
 	}
-	if st := ts.tracker(ThreadKey("s1", Thread{ID: "main"})).snapshot(); len(st.Active) != 1 || st.Active[0].ChangeID != "cg:sum" {
+	if st := ts.tracker(ThreadKey("s1", Thread{ID: "main"}), time.Time{}).snapshot(); len(st.Active) != 1 || st.Active[0].ChangeID != "cg:sum" {
 		t.Fatalf("Active = %+v, want only the summary", st.Active)
 	}
 }
@@ -388,7 +388,7 @@ func TestASummaryAfterTheReducerKeepsItsCredit(t *testing.T) {
 	if p := findOp(t, res, "active:cg:mask"); p.Saved.CacheRead+p.Saved.CacheWrite5m != 1900 {
 		t.Fatalf("mask %+v, want 1900 saved", p.Saved)
 	}
-	if st := ts.tracker(ThreadKey("s1", Thread{ID: "main"})).snapshot(); len(st.Active) != 2 {
+	if st := ts.tracker(ThreadKey("s1", Thread{ID: "main"}), time.Time{}).snapshot(); len(st.Active) != 2 {
 		t.Fatalf("Active = %+v, want mask and the summary", st.Active)
 	}
 }
