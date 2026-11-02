@@ -47,7 +47,7 @@ func TestComputeWithoutEndRequestPricesNothing(t *testing.T) {
 
 func TestEndRequestCopiesTheState(t *testing.T) {
 	ts := NewTrackers()
-	tr := ts.tracker(ThreadKey("s1", Thread{ID: "main"}))
+	tr := ts.tracker(ThreadKey("s1", Thread{ID: "main"}), time.Time{})
 	tr.state.Active = []Operation{{ID: "x"}}
 	r := ts.BeginRequest(RequestMeta{Session: "s1"}, Body{}, nil)
 	r.EndRequest(Thread{ID: "main"}, Body{}, nil, EntryFacts{})

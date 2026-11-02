@@ -7,7 +7,7 @@ import (
 )
 
 func stateOf(ts *Trackers, thread string) ThreadState {
-	return ts.tracker(ThreadKey("s1", Thread{ID: thread})).snapshot()
+	return ts.tracker(ThreadKey("s1", Thread{ID: thread}), time.Time{}).snapshot()
 }
 
 // R53: two requests of one thread in flight. The second Compute finds the state changed since its

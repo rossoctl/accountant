@@ -30,7 +30,7 @@ func (r *Request) Compute(usage Usage) Result {
 	if !r.ended {
 		return r.notEnded()
 	}
-	t := r.trackers.tracker(ThreadKey(r.Meta.Session, r.Thread))
+	t := r.trackers.tracker(ThreadKey(r.Meta.Session, r.Thread), r.Meta.At)
 	for {
 		s := t.snapshot()
 		res, next := r.calc(s, usage)
@@ -56,7 +56,7 @@ func (r *Request) Preview(usage Usage) Result {
 	if !r.ended {
 		return r.notEnded()
 	}
-	res, _ := r.calc(r.trackers.tracker(ThreadKey(r.Meta.Session, r.Thread)).snapshot(), usage)
+	res, _ := r.calc(r.trackers.tracker(ThreadKey(r.Meta.Session, r.Thread), r.Meta.At).snapshot(), usage)
 	return res
 }
 

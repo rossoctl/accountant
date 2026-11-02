@@ -875,6 +875,21 @@ The result depends on the order of the `Compute` calls. It is not the order in w
 reached the provider. When the two orders differ, the cache result of the later `Compute` can be wrong.
 The host can reduce this by calling `Compute` in the order of the responses.
 
+**Memory.** The Trackers bound themselves, and the host calls nothing for it. `BeginRequest` counts its
+calls. On every 1000th call it drops each thread unseen for 2 hours. A thread's age is its
+`PrevPrint.At`, or the `RequestMeta.At` of the request that made it while it has no previous request.
+The clock is the request's time, never the wall clock, so `Compute` stays deterministic ([R26](spec.md#r26)).
+Whenever more than 10,000 threads are held, `BeginRequest` also drops the ones seen longest ago, down to
+9,000. The 2 hours are twice the longest cache TTL (1h). Past the TTL the entry has expired, so the
+library can only find the phase unknown, and the dropped state could not have produced a figure. The
+limits are constants, not options.
+
+A dropped thread loses its active changes (§4.6). That is the cost described in Q13, and here it
+applies only to threads idle for 2 hours or more, or to the oldest ones in a burst above the cap. A
+`Request` in flight is not affected. It holds its own copy of the state, and `Compute` makes a new, empty
+Tracker for the thread: `Result.Recomputed` is set and the phase is unknown. A thread forked from a
+dropped parent is no different, because `Thread.Parent` is carried and not read.
+
 A missing call is not a compile error. If `EndRequest` was not called, or a fact is missing, `Compute` returns
 the result with the missing items in `Unpriced` and a reason. It does not guess.
 
@@ -1213,6 +1228,8 @@ Where a question has test cases, a host that compares them with its own code mar
     reports once. A replay needs the whole history, which the archive may not have. The second
     proposal of question 12 (the operator names its active `ChangeID`s on each request) detects the
     loss, and the operator can then report the full operations once more. Not decided.
+    Partly handled: the Trackers drop idle threads on their own (§6.1, Memory), so a loss now also happens
+    after 2 idle hours. Persistence and recovery are still not decided.
 
 - <a id="q14"></a>**Q14. Two requests of one thread in flight.** A retry and parallel calls of one agent can overlap.
     Each opens its own request record, copies the thread's `ThreadState` in `EndRequest`, and each

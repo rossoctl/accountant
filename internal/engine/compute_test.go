@@ -41,7 +41,7 @@ func TestFirstRequestOfAThreadIsUnknown(t *testing.T) {
 	if res.Phase != PhaseUnknown || res.Boundary != nil || !hasUnpriced(res, ReasonPenaltyUnknown) {
 		t.Fatalf("first request: phase %q boundary %v unpriced %+v", res.Phase, res.Boundary, res.Unpriced)
 	}
-	if got := ts.tracker(ThreadKey("s1", Thread{ID: "main"})).snapshot().Version; got != 1 {
+	if got := ts.tracker(ThreadKey("s1", Thread{ID: "main"}), time.Time{}).snapshot().Version; got != 1 {
 		t.Fatalf("Compute did not replace the ThreadState: Version = %d", got)
 	}
 }
@@ -177,7 +177,7 @@ func TestARestoreIsFoundWhileAnEarlierChangeStaysApplied(t *testing.T) {
 	}
 	ids := func() []string {
 		var out []string
-		for _, op := range ts.tracker(ThreadKey("s1", Thread{ID: "main"})).snapshot().Active {
+		for _, op := range ts.tracker(ThreadKey("s1", Thread{ID: "main"}), time.Time{}).snapshot().Active {
 			out = append(out, op.ID)
 		}
 		return out

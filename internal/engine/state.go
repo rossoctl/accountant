@@ -2,7 +2,9 @@ package engine
 
 import (
 	"reflect"
+	"slices"
 	"sync"
+	"time"
 )
 
 // ThreadState is kept between requests and replaced after each one (§6.1).
@@ -17,6 +19,19 @@ type ThreadState struct {
 type Tracker struct {
 	mu    sync.Mutex
 	state ThreadState
+	// created is the At of the request that made this Tracker. The sweep ages a thread by it while
+	// the thread has no previous request (state.PrevPrint is nil).
+	created time.Time
+}
+
+// lastSeen is the time the sweep ages the Tracker by: its previous request, else its creation.
+func (t *Tracker) lastSeen() time.Time {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.state.PrevPrint != nil {
+		return t.state.PrevPrint.At
+	}
+	return t.created
 }
 
 // snapshot returns a copy of the thread's state. Callers must not share the slices.
@@ -28,12 +43,27 @@ func (t *Tracker) snapshot() ThreadState {
 	return s
 }
 
+// Bounds on the thread state the library keeps (design §6.1, "Memory"). Each Tracker holds a
+// thread's previous fingerprint and its active changes.
+const (
+	// sweepEvery is how many calls of BeginRequest pass between two idle sweeps.
+	sweepEvery = 1000
+	// idleAfter is how long a thread must be unseen to be dropped. It is twice the longest cache TTL
+	// (1h). Past the TTL the entry has expired, so the library can only find the phase unknown, and
+	// the dropped state could not have produced a figure.
+	idleAfter = 2 * time.Hour
+	// maxThreads is the hard cap. Over it, the threads seen longest ago are dropped down to
+	// maxThreads - maxThreads/10, so the sort runs once for each tenth of the cap.
+	maxThreads = 10000
+)
+
 // Trackers holds one Tracker for each thread. It is safe for concurrent use.
-// A Tracker is never evicted, so memory grows with every thread for the life of the process. Whether
-// and when to drop an idle thread is open, with persistence (design §11, question 13).
+// It bounds its own memory: BeginRequest drops threads unseen for idleAfter, and the oldest ones
+// when more than maxThreads are held. A dropped thread loses its active changes (design §11, Q13).
 type Trackers struct {
-	mu sync.Mutex
-	m  map[string]*Tracker
+	mu    sync.Mutex
+	m     map[string]*Tracker
+	calls uint64 // BeginRequest calls, for the sweep
 }
 
 // NewTrackers returns an empty set: every thread starts with no history.
@@ -42,15 +72,54 @@ func NewTrackers() *Trackers { return &Trackers{m: map[string]*Tracker{}} }
 // ThreadKey is the key of a thread's Tracker: the session and the thread ID.
 func ThreadKey(session string, t Thread) string { return session + "\x00" + t.ID }
 
-func (ts *Trackers) tracker(key string) *Tracker {
+// tracker returns the thread's Tracker, and makes one when there is none. at is the time of the
+// request, for a new Tracker's age.
+func (ts *Trackers) tracker(key string, at time.Time) *Tracker {
 	ts.mu.Lock()
 	defer ts.mu.Unlock()
+	return ts.trackerLocked(key, at)
+}
+
+func (ts *Trackers) trackerLocked(key string, at time.Time) *Tracker {
 	t, ok := ts.m[key]
 	if !ok {
-		t = &Tracker{}
+		t = &Tracker{created: at}
 		ts.m[key] = t
 	}
 	return t
+}
+
+// sweep drops the threads unseen since before, then, if more than maxThreads remain, the ones seen
+// longest ago. A Request in flight is not affected: it holds its own copy of the state
+// (EndRequest), and Compute looks the Tracker up again, so after a drop it makes a new, empty one,
+// calculates against that (Result.Recomputed, phase unknown) and stores the next state there.
+// Callers hold ts.mu.
+func (ts *Trackers) sweep(now time.Time, idle bool) {
+	if idle {
+		before := now.Add(-idleAfter)
+		for k, t := range ts.m {
+			if t.lastSeen().Before(before) {
+				delete(ts.m, k)
+			}
+		}
+	}
+	keep := maxThreads - maxThreads/10
+	over := len(ts.m) - keep
+	if len(ts.m) <= maxThreads || over <= 0 {
+		return
+	}
+	type aged struct {
+		key string
+		at  time.Time
+	}
+	all := make([]aged, 0, len(ts.m))
+	for k, t := range ts.m {
+		all = append(all, aged{k, t.lastSeen()})
+	}
+	slices.SortFunc(all, func(a, b aged) int { return a.at.Compare(b.at) })
+	for _, a := range all[:over] {
+		delete(ts.m, a.key)
+	}
 }
 
 // Request is the record of one request. It is private to that request: two requests of one thread
@@ -75,6 +144,10 @@ type Request struct {
 // BeginRequest opens a record that belongs to no thread yet: the thread is known only at the end of
 // the pass (§6.1). Call it before the plugins, with the client body before any plugin.
 func (ts *Trackers) BeginRequest(meta RequestMeta, client Body, clientBreakpoints []Breakpoint) *Request {
+	ts.mu.Lock()
+	ts.calls++
+	ts.sweep(meta.At, ts.calls%sweepEvery == 0)
+	ts.mu.Unlock()
 	return &Request{trackers: ts, Meta: meta, Client: client, ClientBreakpoints: clientBreakpoints}
 }
 
@@ -96,7 +169,7 @@ func (r *Request) EndRequest(thread Thread, forwarded Body, breakpoints []Breakp
 	r.Breakpoints = breakpoints
 	r.Facts = facts
 	r.ended = true
-	t := r.trackers.tracker(ThreadKey(r.Meta.Session, thread))
+	t := r.trackers.tracker(ThreadKey(r.Meta.Session, thread), r.Meta.At)
 	for {
 		s := t.snapshot()
 		active, changed := r.withReported(s)
