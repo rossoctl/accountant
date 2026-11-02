@@ -24,8 +24,10 @@ func TestAComputeAfterAnotherRequestRecomputes(t *testing.T) {
 	if !res.Recomputed {
 		t.Fatal("the second Compute must say it recomputed")
 	}
-	if got := stateOf(ts, "main").Version; got != 3 {
-		t.Fatalf("Version = %d, want 3: no request loses its replace", got)
+	// Version: 1 (request 0) + 1 (the change, stored by the first EndRequest) + 2 (two Computes). The
+	// second EndRequest reports the same change, so it stores nothing.
+	if got := stateOf(ts, "main").Version; got != 4 {
+		t.Fatalf("Version = %d, want 4: no request loses its replace", got)
 	}
 }
 
@@ -50,7 +52,11 @@ func TestPreviewStoresNothing(t *testing.T) {
 	rs[0].run(ts)
 	r := rs[1].begin(ts)
 	p := r.Preview(rs[1].usage)
-	if stateOf(ts, "main").Version != 1 {
+	before := stateOf(ts, "main").Version // 2: request 0, and the change stored by EndRequest
+	if p := r.Preview(rs[1].usage); p.Ops == nil {
+		t.Fatal("Preview returned no ops")
+	}
+	if stateOf(ts, "main").Version != before {
 		t.Fatal("Preview changed the ThreadState")
 	}
 	if c := r.Compute(rs[1].usage); findOp(t, c, "op1").Saved != findOp(t, p, "op1").Saved {
@@ -211,7 +217,7 @@ func TestThreadsOfOneSessionKeepTheirOwnChangesAndVersions(t *testing.T) {
 	// main reports the change once, so it is active on main.
 	onThread(ts, main, rs[0])
 	onThread(ts, main, rs[1])
-	versions(2, 0, 0)
+	versions(3, 0, 0) // request 0, the change stored by EndRequest, and request 1's Compute
 	if a := stateOf(ts, "main").Active; len(a) != 1 || a[0].ChangeID != "cg:cmdfilter:c40e" {
 		t.Fatalf("main Active = %+v, want the cmdfilter change", a)
 	}
@@ -225,7 +231,7 @@ func TestThreadsOfOneSessionKeepTheirOwnChangesAndVersions(t *testing.T) {
 		}
 		noChecks(t, res)
 	}
-	versions(2, 1, 1)
+	versions(3, 1, 1)
 	if len(stateOf(ts, "p:side").Active) != 0 || len(stateOf(ts, "a:sub").Active) != 0 {
 		t.Fatal("a change on main must not become active on another thread")
 	}
@@ -235,7 +241,7 @@ func TestThreadsOfOneSessionKeepTheirOwnChangesAndVersions(t *testing.T) {
 	if op := findOp(t, res, change); op.Saved != (TierTokens{CacheRead: 7000}) {
 		t.Fatalf("main active op %+v, want 7000 read", op)
 	}
-	versions(3, 1, 1)
+	versions(4, 1, 1)
 
 	// The side thread and the subagent both report the same ChangeID in their own requests. Each
 	// prices it once, as new, and neither fails unique_change.
@@ -247,7 +253,7 @@ func TestThreadsOfOneSessionKeepTheirOwnChangesAndVersions(t *testing.T) {
 		}
 		noChecks(t, res)
 	}
-	versions(3, 2, 2)
+	versions(4, 3, 3)
 
 	// Each thread now holds the change on its own, and main's stays at its own version.
 	for _, name := range []string{"main", "p:side", "a:sub"} {
@@ -259,5 +265,149 @@ func TestThreadsOfOneSessionKeepTheirOwnChangesAndVersions(t *testing.T) {
 	if findOp(t, res, change).Saved != (TierTokens{CacheRead: 7000}) {
 		t.Fatalf("p:side active op %+v, want 7000 read", findOp(t, res, change))
 	}
-	versions(3, 3, 2)
+	versions(4, 4, 3)
+}
+
+// Case 26 (testing.md): a request that fails before Compute. The operator reported its change
+// once, so EndRequest keeps it active for the next request (§4.6).
+func TestAChangeReportedOnARequestWithoutComputeStaysActive(t *testing.T) {
+	ts := NewTrackers()
+	rs := ex2Requests()
+	rs[0].run(ts)
+
+	rs[1].begin(ts) // EndRequest ran, the response failed, Compute never ran
+
+	s := stateOf(ts, "main")
+	if len(s.Active) != 1 || s.Active[0].ChangeID != "cg:cmdfilter:c40e" || s.Version != 2 {
+		t.Fatalf("after EndRequest: active %+v version %d, want the cmdfilter change and version 2", s.Active, s.Version)
+	}
+	if s.PrevPrint == nil || s.Cache.CachePhase != PhaseHot || !s.PrevPrint.At.Equal(rs[0].at) {
+		t.Fatalf("EndRequest changed the fingerprint or the cache state: %+v", s.Cache)
+	}
+
+	// The next request does not report the change again. The change must still be applied, not
+	// ended as a client edit: the client only appended to the body the fingerprint holds.
+	res := rs[2].run(ts)
+	if p := findOp(t, res, "active:cg:cmdfilter:c40e"); p.Saved == (TierTokens{}) {
+		t.Fatalf("the change was not applied again: %+v", res.Ops)
+	}
+	noChecks(t, res)
+}
+
+// EndRequest stores a change once. Compute must not add a second copy, and a retry that reports the
+// same change writes nothing.
+func TestAChangeIsStoredOnceByEndRequestAndCompute(t *testing.T) {
+	ts := NewTrackers()
+	rs := ex2Requests()
+	rs[0].run(ts)
+	rs[1].begin(ts)
+	v := stateOf(ts, "main").Version
+	rs[1].begin(ts) // a retry of the same request
+	if got := stateOf(ts, "main").Version; got != v {
+		t.Fatalf("a repeated report bumped Version from %d to %d", v, got)
+	}
+	res := rs[1].run(ts)
+	if a := stateOf(ts, "main").Active; len(a) != 1 {
+		t.Fatalf("Active = %+v, want one copy of the change", a)
+	}
+	noChecks(t, res)
+}
+
+// A request that reports nothing leaves the thread's state alone until Compute.
+func TestARequestWithoutReportsStoresNothingAtEndRequest(t *testing.T) {
+	ts := NewTrackers()
+	rs := ex2Requests()
+	rs[0].run(ts)
+	v := stateOf(ts, "main").Version
+	rs[2].begin(ts)
+	if got := stateOf(ts, "main").Version; got != v {
+		t.Fatalf("EndRequest with no reports bumped Version from %d to %d", v, got)
+	}
+}
+
+// A malformed report is not a change. With the ChangeID of an active change it must not replace
+// it: the good active change stays (the guard in withReported, §4.6).
+func TestAMalformedReportAtEndRequestKeepsTheActiveChange(t *testing.T) {
+	ts := NewTrackers()
+	rs := ex2Requests()
+	rs[0].run(ts)
+	rs[1].run(ts) // cg:cmdfilter:c40e is active now
+
+	q := rs[2]
+	q.ops = []Operation{rewrite("bad", "context-guru.cmdfilter", "cg:cmdfilter:c40e", msg(9), -5, 10)}
+	q.begin(ts)
+	a := stateOf(ts, "main").Active
+	if len(a) != 1 || a[0].SizeBefore.Bytes != 8000 || a[0].SizeAfter.Bytes != 1000 {
+		t.Fatalf("Active = %+v, want the original cmdfilter change (8000 to 1000 bytes)", a)
+	}
+}
+
+// A malformed report with a ChangeID nobody holds stores nothing.
+func TestEndRequestDoesNotStoreAMalformedChange(t *testing.T) {
+	ts := NewTrackers()
+	rs := ex2Requests()
+	rs[0].run(ts)
+	v := stateOf(ts, "main").Version
+	q := rs[1]
+	q.ops = []Operation{rewrite("bad", "context-guru.mask", "cg:bad", msg(9), -5, 10)}
+	q.begin(ts)
+	if s := stateOf(ts, "main"); len(s.Active) != 0 || s.Version != v {
+		t.Fatalf("Active = %+v version %d (was %d), want nothing stored", s.Active, s.Version, v)
+	}
+}
+
+// A DryRun change is stored like any other: it is computed but not sent, and Compute keeps it active
+// so that observe mode can show it on every request (§4.6). EndRequest does the same.
+func TestEndRequestStoresADryRunChange(t *testing.T) {
+	ts := NewTrackers()
+	rs := ex2Requests()
+	rs[0].run(ts)
+	q := rs[1]
+	q.ops = []Operation{rewrite("dry", "context-guru.mask", "cg:dry", msg(9), 8000, 1000)}
+	q.ops[0].DryRun = true
+	q.fwd = Body{} // a DryRun forwards the client's body unchanged
+	q.begin(ts)
+	a := stateOf(ts, "main").Active
+	if len(a) != 1 || !a[0].DryRun || a[0].ChangeID != "cg:dry" {
+		t.Fatalf("Active = %+v, want the DryRun change", a)
+	}
+}
+
+// R53: two requests of one thread in flight that report different changes. B's EndRequest stores B's
+// change before A's Compute runs, so A's Compute sees a newer Version, sets Recomputed, and prices
+// B's change next to its own. This is the cost of storing at EndRequest (§4.6): the thread's state
+// is shared, and a reported change is part of it from the moment the request ends.
+func TestAParallelRequestsChangeIsSeenByAnEarlierCompute(t *testing.T) {
+	ts := NewTrackers()
+	rs := ex2Requests()
+	rs[0].run(ts)
+
+	a := rs[1].begin(ts) // reports cg:cmdfilter:c40e on message 9
+	bq := rs[1]
+	bq.ops = []Operation{rewrite("opB", "context-guru.mask", "cg:mask:b", msg(9), 8000, 1000)}
+	bq.begin(ts) // B ends before A computes
+
+	res := a.Compute(rs[1].usage)
+	if !res.Recomputed {
+		t.Fatal("A's Compute must say it recomputed: B replaced the state after A's EndRequest")
+	}
+	if !hasOp(res, "active:cg:mask:b") {
+		t.Fatalf("A's result has no priced op for B's change: %+v", res.Ops)
+	}
+	if len(res.Checks) == 0 {
+		t.Fatal("two changes on the same span against one body must fail the sum check")
+	}
+}
+
+// The same ChangeID on both requests is a retry, not a second change: nothing leaks.
+func TestAParallelRetryDoesNotLeakIntoAnEarlierCompute(t *testing.T) {
+	ts := NewTrackers()
+	rs := ex2Requests()
+	rs[0].run(ts)
+	a := rs[1].begin(ts)
+	rs[1].begin(ts)
+	res := a.Compute(rs[1].usage)
+	if res.Recomputed || len(res.Checks) != 0 {
+		t.Fatalf("a retry leaked: recomputed %v checks %+v", res.Recomputed, res.Checks)
+	}
 }

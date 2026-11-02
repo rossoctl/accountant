@@ -71,8 +71,6 @@
 // recover from a panic: it leaves the ThreadState unchanged, and the host wraps the call to fail open.
 //
 //   - Result.Interaction on a rescued request (§6.2). It is always zero.
-//   - Storing a reported change in EndRequest (§4.6). Only Compute stores it, so the host calls
-//     Compute for every request that ended, with a zero Usage when there is no response.
 //   - The order check (§6.5 check 2). The attribution check (5) holds by
 //     construction: a break only takes the ChangeID of an operation of the same request.
 //   - The minimum cacheable length and the 20-block lookback (§5.1), and the long-context tier.

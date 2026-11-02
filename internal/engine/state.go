@@ -1,6 +1,9 @@
 package engine
 
-import "sync"
+import (
+	"reflect"
+	"sync"
+)
 
 // ThreadState is kept between requests and replaced after each one (§6.1).
 type ThreadState struct {
@@ -80,13 +83,63 @@ func (r *Request) Add(op Operation) { r.Ops = append(r.Ops, op) }
 
 // EndRequest names the thread, records the forwarded body, its breakpoints and the facts only the
 // host knows, and takes a copy of the thread's ThreadState. Call it after the last plugin.
+//
+// It also stores the reported rewrite and setting operations in the ThreadState as active, with a
+// Version bump (§4.6). A request can fail before the response, and then Compute never runs; the
+// operator reports a change once, so the change would be lost. The fingerprint and the cache state
+// change only in Compute, because they need the usage. Compute does not store the operations a
+// second time: a reported operation replaces the active one with its ChangeID. When the stored list
+// would not change (a retry that reports the same change), nothing is written and Version stays.
 func (r *Request) EndRequest(thread Thread, forwarded Body, breakpoints []Breakpoint, facts EntryFacts) {
 	r.Thread = thread
 	r.Forwarded = forwarded
 	r.Breakpoints = breakpoints
 	r.Facts = facts
-	r.start = r.trackers.tracker(ThreadKey(r.Meta.Session, thread)).snapshot()
 	r.ended = true
+	t := r.trackers.tracker(ThreadKey(r.Meta.Session, thread))
+	for {
+		s := t.snapshot()
+		active, changed := r.withReported(s)
+		if !changed {
+			r.start = s
+			return
+		}
+		next := s
+		next.Active = active
+		if t.replace(s.Version, next) {
+			r.start = next
+			r.start.Version = s.Version + 1
+			r.start.Active = append([]Operation(nil), active...) // not the slice the Tracker holds
+			return
+		}
+	}
+}
+
+// withReported returns s.Active with this request's reported rewrite and setting operations in it,
+// in client space (§4.3), and whether that differs from s.Active. A reported operation replaces the
+// active one with its ChangeID. The other active operations stay: whether they ended is for Compute.
+func (r *Request) withReported(s ThreadState) ([]Operation, bool) {
+	reported := map[string]bool{}
+	for _, op := range r.Ops {
+		if isChange(op) {
+			reported[op.ChangeID] = true
+		}
+	}
+	if len(reported) == 0 {
+		return nil, false
+	}
+	var out []Operation
+	for _, op := range s.Active {
+		if !reported[op.ChangeID] {
+			out = append(out, op)
+		}
+	}
+	for _, op := range r.newCalc(s, r.items(s), Usage{}).activeOps() {
+		if reported[op.ChangeID] {
+			out = append(out, op)
+		}
+	}
+	return out, !reflect.DeepEqual(out, s.Active)
 }
 
 // replace stores next only if the state is still at version, and gives it version + 1 (R53).

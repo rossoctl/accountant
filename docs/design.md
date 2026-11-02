@@ -511,12 +511,19 @@ archive alone cannot rebuild the state.
 client that hangs up), and then `Compute` is never called. The change it reported would be lost, and
 the context operator does not report it again. So `EndRequest` stores the reported `rewrite` and
 `setting` operations in the `ThreadState` as active, with a `Version` bump, and `Compute` does not
-store them again. **Not implemented in v0:** today only `Compute` stores them, so a request that never
-reaches `Compute` loses its change. A host must call `Compute` (with a zero `Usage` if there is no
-response) for every request that ended. A zero-usage `Compute` stores the fingerprint and sets the cache
-state to `unknown`, so the next request has `penalty_unknown`: its figure is lower, the safe direction. Storing in `EndRequest` changes the `Version` rules of R53, so
-it needs its own decision. The fingerprint and the cache state still change only in `Compute`, because they need
-the usage. A request with no usage therefore advances the active list and nothing else.
+store them again. A reported operation replaces the active one with its `ChangeID`. So a retry that
+reports the same change writes nothing and leaves `Version` alone, and a request that reports no change
+writes nothing. The request's own copy of the state is taken after the store, so `Recomputed` (R53) is
+true only when another request replaced the state after that. **Parallel requests:** a change is in the
+state from `EndRequest`, so two requests of one thread in flight with different `ChangeID`s see each
+other. When A calls `Compute` after B called `EndRequest`, A's result has `Recomputed` set and prices
+B's change as active next to its own. If both touch the same content, A's sum check fails. A retry with
+the same `ChangeID` does not do this (R53). The fingerprint and the cache state still
+change only in `Compute`, because they need the usage. A request with no usage therefore advances the
+active list and nothing else.
+
+The fingerprint can be older than the stored change. So the end rule (§4.5) does not count content that
+the client only appended after the end of the fingerprint's body as an edit.
 
 **What stays in the state after a request.** The Tracker keeps the context operations that are still
 applied on the next request, and drops the others:
