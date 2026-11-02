@@ -45,7 +45,7 @@ The module imports only the standard library, so any host can use it. `boundary_
 
 | Path | What it holds |
 |---|---|
-| `accountant.go` | The whole public API: type aliases, constants and three functions |
+| `accountant.go` | The whole public API: type aliases, constants and four functions |
 | `internal/engine/` | The implementation and its unit tests. Not importable by hosts |
 | `test/cases/` | The JSON cases and the loader (`import "github.com/rossoctl/accountant/test/cases"`) |
 | `test/gen/` | The Python generator that writes the cases |
