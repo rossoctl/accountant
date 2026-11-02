@@ -89,7 +89,13 @@ request of the thread needs, as `accountant.PingFacts`: the ping's start time (`
 `ChangeID` (`PingWindow`). The extent the ping read (`PingRead`) is a position in the thread's body, so
 only the host knows it and the host adds it. The host keeps the last of them beside the thread's Tracker,
 and passes them in `EntryFacts.LastPing`, `PingRead` and `PingWindow` at that request's `EndRequest`.
-Then it clears them. A ping does not move
+Then it clears them.
+
+**The shared prefix (R54).** At the same `EndRequest` the host also sets `EntryFacts.SharedWarm`. It looks at the
+other threads of the same session and finds the longest prefix of this request's forwarded body that one of
+them read or wrote inside the TTL before this request. It uses only each thread's last request time and
+cache extent, and compares body hashes. It stores no content. Without a sibling, it leaves `SharedWarm` nil.
+A ping does not move
 the thread's `ThreadState`.
 
 ```go

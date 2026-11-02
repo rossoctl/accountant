@@ -419,6 +419,42 @@ func TestNoRescueWhenTheRequestWroteMoreThanItRead(t *testing.T) {
 	}
 }
 
+// A sibling thread that read the shared head inside the TTL kept it warm without the ping, so the
+// rescue credits only what lies past it (design §4.4, rule R54).
+func TestARescueLeavesOutTheHeadASiblingKeptWarm(t *testing.T) {
+	f := pingFacts()
+	f.SharedWarm = ptr(sys(0)) // the system block: 4,000 of the ping's 10,000
+	e := effect(t, ex8(28*time.Minute, f), EffectRescue)
+	if e.Saved != (TierTokens{CacheWrite5m: 6000}) || e.Caused != (TierTokens{CacheRead: 6000}) {
+		t.Fatalf("rescue %+v, want 6000 write->read", e)
+	}
+}
+
+func TestNoRescueWhenASiblingKeptTheWholePingReadWarm(t *testing.T) {
+	f := pingFacts()
+	f.SharedWarm = ptr(msg(5)) // as far as the ping read
+	res := ex8(28*time.Minute, f)
+	if res.Phase != PhaseHot {
+		t.Fatalf("phase %q, want hot: the entry was alive", res.Phase)
+	}
+	for _, e := range res.CacheEffects {
+		if e.Kind == EffectRescue {
+			t.Fatalf("no rescue when a sibling kept it all warm: %+v", e)
+		}
+	}
+}
+
+func TestASharedWarmPastThePingReadAddsNothingBelowZero(t *testing.T) {
+	f := pingFacts()
+	f.PingRead = ptr(msg(1))
+	f.SharedWarm = ptr(msg(4)) // longer than the ping read
+	for _, e := range ex8(28*time.Minute, f).CacheEffects {
+		if e.Kind == EffectRescue {
+			t.Fatalf("no rescue: %+v", e)
+		}
+	}
+}
+
 // A request that names a different model from the thread's previous one, with nothing reported:
 // the usage shows the cache loss, and the break says why. The figure is the same as for an entry
 // lost early.

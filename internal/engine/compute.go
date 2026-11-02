@@ -648,6 +648,12 @@ func (c *calcState) rescue(res *Result) {
 		return
 	}
 	n := min(c.ratio.of(c.fwd.cumBytes(mustFlat(c.fwd, *c.r.Facts.PingRead))), c.usage.CacheRead)
+	if w := c.r.Facts.SharedWarm; w != nil {
+		n -= c.ratio.of(c.fwd.cumBytes(mustFlat(c.fwd, *w))) // a sibling kept this part warm without the ping (R54)
+	}
+	if n <= 0 {
+		return
+	}
 	e := CacheEffect{Kind: EffectRescue, ChangeID: c.r.Facts.PingWindow, To: c.r.Facts.PingRead, Estimated: true}
 	addWrite(&e.Saved, ttlName(c.r.Facts.TTL), n)
 	e.Caused.CacheRead = n

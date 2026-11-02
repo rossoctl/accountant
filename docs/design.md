@@ -209,6 +209,9 @@ type EntryFacts struct {
     LastPing   time.Time
     PingRead   *Position
     PingWindow string
+    // SharedWarm is the longest prefix of this request's forwarded body that another thread of the same
+    // session read or wrote inside the TTL before this request (R54). Nil when none did.
+    SharedWarm *Position
 }
 
 type Kind string          // rewrite | spend | setting
@@ -398,7 +401,9 @@ conditions of the current `keepaliveSavedUSD`:
    a gap past a `minimum` does not prove an expiry ([R45](spec.md#r45)), so it gives no rescue, and an `unknown` lifetime never gives a rescue.
    The current code uses the 5m TTL for a 1h entry, which is a `differs` entry ([§10.2](testing.md#102-one-case)).
 3. The provider read more than it wrote.
-4. The tokens are the smaller of what the last ping read and what this request read.
+4. The tokens are the smaller of what the last ping read and what this request read, less the prefix
+   named by `EntryFacts.SharedWarm` ([R54](spec.md#r54)). A sibling thread that touched that prefix inside the
+   TTL kept it warm without the ping. If nothing is left, the library adds no rescue, and the request stays `hot`.
 
 **The ping and the rescue share one `ChangeID`,** the ID of the keep-alive window. The host passes
 it in `EntryFacts.PingWindow`, built by the same rule as the ping's `spend` (wiring document, W4.6). A window whose
@@ -717,9 +722,13 @@ expired without a ping. When `Usage.CacheRead` is zero, the phase stays `unknown
 **A read from another thread's entry.** The provider keys its cache on content, not on threads. A
 subagent that declares the same `tools` and `system` as the main thread can read the main thread's
 entry on its first request. The rule above covers it: the read proves the entry, so the subagent's
-first request is `hot` up to that extent, not `unknown`. A ping of one thread can keep another
-thread's shared prefix alive the same way. That is not credited, and the rescue stays a ceiling, as
-the current `keepaliveSavedUSD` says.
+first request is `hot` up to that extent, not `unknown`. The same sharing can inflate a rescue: a
+sibling's request refreshes the shared head (the system prompt and the tool definitions, 20,093 tokens
+in one measured session) for every other thread, so that head is warm without any ping.
+The host reports it in `EntryFacts.SharedWarm`, and the rescue leaves it out ([R54](spec.md#r54), §4.4
+condition 4). One measured session over-credited about $2.3 of $30.81 (about 7%) before this rule
+(context-guru#853). The host, not the library, finds the prefix: only the host sees the other threads'
+Trackers. A ping of one thread that keeps another thread's prefix warm is still not credited to the other thread.
 
 **Why `minimum` is not `cold` ([R45](spec.md#r45)).** `TTL` can be a proven expiry or only a guaranteed floor
 (`apply.CacheLifetimeKind`: Anthropic's is `Exact`; OpenAI GPT-5.6+ states only a 30-minute

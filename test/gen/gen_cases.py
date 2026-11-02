@@ -502,6 +502,52 @@ def ex8():
 
 
 # ---------------------------------------------------------------------------------------------
+# Shared prefix (R54): example 8, but a sibling thread read the shared head inside the TTL, so it was warm
+# without the ping. The rescue credits only what lies past that head.
+def shared_prefix(shared, saved, ping_read, name, text, session):
+    sysb = [("sys8", 2000)]
+    msgs = [("m0", 3000), ("m1", 1000), ("m2", 1000), ("m3", 1000), ("m4", 1000), ("m5", 1000)]
+    ping_usage = {"input": 10, "cacheRead": 10000, "cacheWrite": 0, "cacheWrite1h": 0, "output": 1}
+    call = {"host": "api.anthropic.com", "model": "agent-model", "usage": ping_usage}
+    steps = [step(0, "turn-9", body([], sysb, msgs), body([], sysb, msgs), bps(msgs), bps(msgs), [],
+                  U(write=10000), expect("unknown", U(write=10000), []), session=session)]
+    ping = {"version": 1, "requestId": "ping-" + session, "session": session, "thread": {"id": "main"}, "at": ts(240),
+            "billing": {"mode": "api"},
+            "ops": [{"id": "op1", "kind": "spend", "operator": "keeper", "changeId": KA, "call": call}]}
+    steps.append({"standalone": ping, "usage": U(),
+                  "expected": {"ops": [eop(KA, call=call, note="the ping: priced by the host, 3,045 micro-dollars")]}})
+    msgs10 = msgs + [("m6", 500)]
+    facts = {"ttl": "5m", "lifetime": "exact", "lastPing": ts(240), "pingRead": ping_read, "pingWindow": KA,
+             "sharedWarm": shared}
+    effects = []
+    if saved:
+        effects = [effect("rescue", KA, saved=TT(cacheWrite5m=saved), caused=TT(cacheRead=saved), to=ping_read,
+                          note="the ping kept alive only the part no sibling had kept warm")]
+    steps.append(step(480, "turn-10", body([], sysb, msgs10), body([], sysb, msgs10), bps(msgs10), bps(msgs10), [],
+                      U(read=10000, write=500), expect("hot", U(read=10000 - saved, write=500 + saved), [], effects=effects),
+                      session=session, facts=facts))
+    write(case(name, text, "examples.md#8", {"kind": "rescue", "position": "beforeBStar", "cache": "rescue",
+                                            "ttl": "5m", "lifetime": "exact", "keepalive": "true",
+                                            "shared": "sibling"}, steps),
+          name.replace("/", "-"))
+
+
+def shared_prefix_cases():
+    head = ("Same as keepalive/ping-rescue/exact/5m, but a sibling thread of the session read the system block "
+            "(2,000 tokens) inside the TTL, so that block was warm without the ping. ")
+    shared_prefix(P("system", 0), 8000, P("messages", 5), "keepalive/shared-head-sibling/exact/5m",
+                  head + "The rescue credits 8,000 tokens, not 10,000: 8,000 x ($3.75 - $0.30) = +$0.02760.", "s-sh1")
+    shared_prefix(P("messages", 5), 0, P("messages", 5), "keepalive/shared-prefix-all-sibling/exact/5m",
+                  "A sibling thread read everything the ping read (through messages[5]) inside the TTL. The entry was "
+                  "alive without the ping, so turn 10 is hot and no rescue is credited. The ping stays a cost.",
+                  "s-sh2")
+    shared_prefix(P("messages", 4), 0, P("messages", 1), "keepalive/shared-past-ping-read/exact/5m",
+                  "The ping read only through messages[1] (6,000 tokens), and a sibling kept warm more than that "
+                  "(through messages[4]). Nothing is left to credit, and the figure never goes below zero.",
+                  "s-sh3")
+
+
+# ---------------------------------------------------------------------------------------------
 # Example 9: the extract_llm_sweep story. The ask goes out in place of a keep-alive ping, on the warm
 # cache; the answer is held; the removal is applied by the first request after the cache expired.
 SW = "cg:extract_llm_sweep:7a1c"
@@ -1833,7 +1879,7 @@ if __name__ == "__main__":
     for old in os.listdir(OUT):  # the generator owns this directory: drop cases that no longer exist
         if old.endswith(".json"):
             os.remove(os.path.join(OUT, old))
-    for f in (ex12, ex3, ex4, ex5, ex67, ex8, ex9, c01, c02, c03_04, c05, c06, c07, c08, c09, c10, c11, c12, c_threads, c_mix,
+    for f in (ex12, ex3, ex4, ex5, ex67, ex8, shared_prefix_cases, ex9, c01, c02, c03_04, c05, c06, c07, c08, c09, c10, c11, c12, c_threads, c_mix,
               c14, c15, c16, c17, c18, a1, a2, a3, a4_b3, b1_b2, b4, b5, c1_, c2_, c3_, c5, d2, d3, d4,
               d5, d6, e2, e345, f245, h2, h5):
         f()

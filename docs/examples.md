@@ -605,3 +605,17 @@ The ping has no request of its own, so the totals add up context operations, not
 the rescue both carry session `s2` and thread `main`. The host adds both to the totals of that
 session and that thread: −$0.003045 + $0.034500 = +$0.031455, which rounds to **+$0.03146**. The
 sum of the rounded figures is $0.03145, one step lower (see [Rounding](#setup)).
+
+### A sibling kept the head warm (R54)
+
+Suppose a sibling subagent of session `s2` read the system block (2,000 tokens) at minute 26, inside the TTL.
+Turn 10 is the same as above, but the host sets `EntryFacts.SharedWarm = system[0]`. The system block was warm
+without the ping, so the rescue covers 8,000 tokens, not 10,000:
+
+| Context operation | Calculation | Result |
+|---|---|---|
+| Ping (`spend`) | 10,000 read + 10 input + 1 output | −$0.00305 |
+| Rescue (cache effect, cold to hot) | 8,000 × ($3.75 − $0.30) | +$0.02760 |
+| **Total added to session `s2`** | | **+$0.02455** |
+
+If the sibling had kept everything the ping read warm, there is no rescue and the total is the ping's −$0.00305.
