@@ -89,14 +89,17 @@ request of the thread needs, as `accountant.PingFacts`: the ping's start time (`
 `ChangeID` (`PingWindow`). The extent the ping read (`PingRead`) is a position in the thread's body, so
 only the host knows it and the host adds it. The host keeps the last of them beside the thread's Tracker,
 and passes them in `EntryFacts.LastPing`, `PingRead` and `PingWindow` at that request's `EndRequest`.
-Then it clears them.
+Then it clears them. A ping does not move
+the thread's `ThreadState`.
 
 **The shared prefix (R54).** At the same `EndRequest` the host also sets `EntryFacts.SharedWarm`. It looks at the
 other threads of the same session and finds the longest prefix of this request's forwarded body that one of
 them read or wrote inside the TTL before this request. It uses only each thread's last request time and
 cache extent, and compares body hashes. It stores no content. Without a sibling, it leaves `SharedWarm` nil.
-A ping does not move
-the thread's `ThreadState`.
+`SharedWarm` is a position in the forwarded body of this request, and only a ping rescue reads it. Like the
+ping facts, it is for one request: the host sets it again at each `EndRequest` and does not carry it over.
+A position that is not in the forwarded body is a host bug: the library adds a `shared_warm` check failure
+(`Result.Checks`) and credits no rescue.
 
 ```go
 // OpsEmitter is an optional Emitter capability, the same pattern as KeepAliveEmitter: the engine

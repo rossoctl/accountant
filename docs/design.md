@@ -729,6 +729,8 @@ The host reports it in `EntryFacts.SharedWarm`, and the rescue leaves it out ([R
 condition 4). One measured session over-credited about $2.3 of $30.81 (about 7%) before this rule
 (context-guru#853). The host, not the library, finds the prefix: only the host sees the other threads'
 Trackers. A ping of one thread that keeps another thread's prefix warm is still not credited to the other thread.
+`SharedWarm` reduces the keep-alive `rescue` only. The `ttlRescue` of a head held at 1h is not reduced: a sibling
+that refreshed the head can over-credit it in the same way. That is a known gap, left out of R54 on purpose.
 
 **Why `minimum` is not `cold` ([R45](spec.md#r45)).** `TTL` can be a proven expiry or only a guaranteed floor
 (`apply.CacheLifetimeKind`: Anthropic's is `Exact`; OpenAI GPT-5.6+ states only a 30-minute
@@ -1022,7 +1024,7 @@ type Unpriced struct {
 
 type CheckFailure struct {
     Check    string // "sum" | "order" | "unique_change" | "spans" | "attribution" |
-                    // "conservation" (§6.5)
+                    // "conservation" | "shared_warm" (§6.5)
     Operator string // "" when the check is not about one operator
     Detail   string // numbers only, no content
 }
@@ -1117,6 +1119,9 @@ check, the operator, the detail, and the request, session and thread IDs). `Prev
 5. **Attribution:** a `break` effect's `ChangeID` is the `ChangeID` of a context operation of the same request, or empty. A `rescue`, `ttlPremium` and `ttlRescue` are exempt: their `ChangeID` is a keep-alive window or a head entry, which names no operation of this request.
 6. **Conservation:** the request total of the applied context operations and the cache effects equals the bill difference (§6.3).
    `DryRun` context operations are left out, because their content went upstream unchanged.
+7. **Shared warm:** `EntryFacts.SharedWarm`, when set, is a position in the forwarded body. If it is not, the check fails
+   with the section and index, and the keep-alive rescue of that request is not credited ([R54](spec.md#r54)).
+   A doubtful figure may only lower a saving.
 
 ## 7. Billing plans
 

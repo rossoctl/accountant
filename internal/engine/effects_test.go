@@ -455,6 +455,28 @@ func TestASharedWarmPastThePingReadAddsNothingBelowZero(t *testing.T) {
 	}
 }
 
+// A SharedWarm that is not in the forwarded body is a host bug. The library says so and credits no
+// rescue: a doubtful figure may only lower a saving (R54).
+func TestASharedWarmOutsideTheBodyFailsTheCheckAndCreditsNothing(t *testing.T) {
+	for name, w := range map[string]Position{
+		"index past the end": msg(99),
+		"unknown section":    {Section: "bogus"},
+		"negative index":     {Section: SectionSystem, Index: -1},
+	} {
+		f := pingFacts()
+		f.SharedWarm = ptr(w)
+		res := ex8(28*time.Minute, f)
+		for _, e := range res.CacheEffects {
+			if e.Kind == EffectRescue {
+				t.Fatalf("%s: no rescue for an invalid SharedWarm: %+v", name, e)
+			}
+		}
+		if len(res.Checks) != 1 || res.Checks[0].Check != "shared_warm" {
+			t.Fatalf("%s: checks %+v, want one shared_warm failure", name, res.Checks)
+		}
+	}
+}
+
 // A request that names a different model from the thread's previous one, with nothing reported:
 // the usage shows the cache loss, and the break says why. The figure is the same as for an entry
 // lost early.

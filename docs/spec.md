@@ -347,7 +347,9 @@ numbers are not used: those requirements were dropped.
   refreshes that entry for the others. The host reports the longest prefix of the request that another thread
   read or wrote inside the TTL before it, as `EntryFacts.SharedWarm`. The rescue leaves that prefix out. When
   nothing is left, there is no rescue. The request is still `hot`: the entry was alive. The library does not
-  look at other threads. The host finds the prefix from its Trackers (metadata only: times and extents).
+  look at other threads. The host finds the prefix from its own record of each thread's last request (metadata only:
+  times, extents and hashes). A `SharedWarm` that is not in the forwarded body fails the `shared_warm` check and
+  credits no rescue. R54 covers the keep-alive `rescue` only, not the `ttlRescue` of a head held at 1h (a known gap).
 - <a id="r35"></a>**R35.** A later change can end earlier ones (a summary of reduced messages). The model shows
   this by `Compute` no longer applying the earlier change, not by a link and not by the context
   operator: after its first report the context operator says nothing about the change. `Compute`

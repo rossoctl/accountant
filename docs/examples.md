@@ -616,6 +616,8 @@ without the ping, so the rescue covers 8,000 tokens, not 10,000:
 |---|---|---|
 | Ping (`spend`) | 10,000 read + 10 input + 1 output | −$0.00305 |
 | Rescue (cache effect, cold to hot) | 8,000 × ($3.75 − $0.30) | +$0.02760 |
-| **Total added to session `s2`** | | **+$0.02455** |
+| **Total added to session `s2`** | | **+$0.02456** |
+
+The exact sum is 0.0276 − 0.003045 = 0.024555, which rounds to $0.02456, one step above the sum of the rounded figures (see Rounding).
 
 If the sibling had kept everything the ping read warm, there is no rescue and the total is the ping's −$0.00305.

@@ -649,7 +649,15 @@ func (c *calcState) rescue(res *Result) {
 	}
 	n := min(c.ratio.of(c.fwd.cumBytes(mustFlat(c.fwd, *c.r.Facts.PingRead))), c.usage.CacheRead)
 	if w := c.r.Facts.SharedWarm; w != nil {
-		n -= c.ratio.of(c.fwd.cumBytes(mustFlat(c.fwd, *w))) // a sibling kept this part warm without the ping (R54)
+		i, ok := c.fwd.flat(*w)
+		if !ok { // a host bug: a doubtful figure may only lower a saving, so credit nothing (R54)
+			res.Checks = append(res.Checks, CheckFailure{Check: "shared_warm",
+				Detail: fmt.Sprintf("section=%q index=%d is not in the forwarded body", w.Section, w.Index)})
+			return
+		}
+		// a sibling kept this part warm without the ping (R54). Two floors, so n can be 1 token off the single
+		// conversion: the same tolerance the conservation check allows.
+		n -= c.ratio.of(c.fwd.cumBytes(i))
 	}
 	if n <= 0 {
 		return
