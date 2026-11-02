@@ -16,7 +16,7 @@ and turn 7.
 5. [A change of settings](#5-a-change-of-settings): a model change (5a) and an effort change (5b); the cache break and its position
 6. [One request in detail](#6-one-request-in-detail): the full flow: context, cache state, context operations, tiers, price
 7. [A change inside the cached prefix](#7-a-change-inside-the-cached-prefix): a cache break and why the breakpoints matter
-8. [A keep-alive ping](#8-a-keep-alive-ping): a ping and the request it rescues
+8. [A keep-alive ping](#8-a-keep-alive-ping): a ping and the request it rescues; a sibling thread that kept the head warm (R54)
 
 ---
 
@@ -36,7 +36,7 @@ Every example uses these values. The numbers are made up for the examples.
 The agent model prices the savings, because the removed tokens would have been billed to the agent's
 requests. The summarizer model prices the summarizer call. Example 5a adds a second pair of models.
 
-**Rounding.** Each figure is rounded to $0.00001, half up ($0.0000050 becomes $0.00001). A total
+**Rounding.** Each figure is rounded to $0.00001, half up: a tie goes toward +∞ ($0.000005 becomes $0.00001, and −$0.000005 becomes $0.00000). A total
 adds the exact amounts, then rounds. It can differ by $0.00001 from the sum of the rounded figures.
 
 **Cache state.** A request is **hot** if the previous request of the same thread was less than 5
@@ -55,8 +55,8 @@ on the **last message**. So the provider can read or write the cache at two poin
 `system`, and the end of the body.
 
 **Session and thread.** Examples 6 and 7 use session `s1`, thread `main`. Example 8 uses session `s2`, thread `main`. Both IDs are on the request, and the examples
-show them once, in `RequestOps`. `main` is the primary thread. `internal/thread` gives it the ID `""`,
-and the host maps it to `main`.
+show them once, in `RequestOps`. `main` is the primary thread. The thread resolver of the engine that applies the operations (`internal/thread`
+there, not in this repo) gives it the ID `""`, and the host maps it to `main`.
 
 **Pipeline** of examples 6 and 7, in order:
 
@@ -202,7 +202,7 @@ agent's requests. The call uses the summarizer model's rates (see the [setup](#s
   +$0.00285. But the summary changes the start of the messages, so no cached message matches. The
   provider still reads `tools` and `system` (8,000 tokens), up to the breakpoint at the end of `system`. The
   summary and the tail (3,500 tokens) are written, not read (orange). The break costs
-  3,500 × ($3.75 − $0.30) = −$0.01208. Request A is a net **−$0.00923**.
+  3,500 × ($3.75 − $0.30) = −$0.01207. Request A is a net **−$0.00922**.
 - **Request B** (hot): the summary is cached now, so the 9,500 tokens would have been read.
   Saving: 9,500 × $0.30 = +$0.00285.
 - **Request C** (cold, 15 minutes after B): the cache expired, so the 9,500 tokens would have been
@@ -236,14 +236,15 @@ three carry the same `changeId`, so the host can add the cost and the saving tog
    ```
 
 3. **A `break` cache effect, on request A only, found by `Compute`.** The summary is at the start of
-   the messages, so the provider reads only up to the end of `system`. `Compute` finds it by comparing request A with the
+   the messages, so the provider reads only up to the end of `system`. Its `from` and `to` are in forwarded
+   space: the forwarded messages are the summary (0) and the tail (1, 2), so the range ends at `messages[2]`. `Compute` finds it by comparing request A with the
    previous request, and gives it the `changeId` of the `rewrite`. B and C
    have no break: on B the summary is already cached, and on C the cache expired. It is in
    `Result.CacheEffects`, not in the operations:
 
    ```json
    {"id": "ce:1", "kind": "break", "changeId": "cg:summarize:5d21",
-    "from": {"section": "system", "index": 0}, "to": {"section": "messages", "index": 4},
+    "from": {"section": "system", "index": 0}, "to": {"section": "messages", "index": 2},
     "saved":  {"cacheRead": 3500},
     "caused": {"cacheWrite5m": 3500}}
    ```
@@ -257,7 +258,7 @@ three carry the same `changeId`, so the host can add the cost and the saving tog
   The `spend` and the `rewrite` are reported once, on A. `Compute` applies the `rewrite` again on B and C. Only the cache state changes the saving.
 - A break moves tokens that follow the break from cache read to cache write. This is the
   **penalty**: the forwarded tokens between `from` and `to` of the break, × ($3.75 − $0.30).
-  Here they are the summary and the 3,000-token tail, so the penalty is −$0.01208. It is larger than
+  Here they are the summary and the 3,000-token tail, so the penalty is −$0.01207. It is larger than
   the saving on A, so the first request with a summary costs money.
   Requests B and C have no break, so they pay no penalty.
 
@@ -399,10 +400,10 @@ Where the cache state is kept is not decided (design §11, question 11). Here it
 gap is 1 minute, inside the 5m TTL, so the state is hot:
 
 ```json
-"state": {"cachePhase": "hot", "extent": {"section": "messages", "index": 8}}
+"state": {"phase": "hot", "extent": {"section": "messages", "index": 8}}
 ```
 
-So B\* = `messages[8]`.
+So B\* = `messages[8]`. (`CacheState` is not public API; this snippet only shows the idea.)
 
 ### The context operations
 
@@ -416,6 +417,8 @@ them.
 {
   "version": 1, "requestId": "req-5", "session": "s1",
   "thread": {"id": "main"},
+  "at": "2026-03-02T09:04:00Z",
+  "billing": {"mode": "api"},
   "ops": [
     {
       "id": "op1", "kind": "rewrite",
@@ -564,6 +567,7 @@ total is negative.
    {
      "version": 1, "requestId": "ping-p1", "session": "s2",
      "thread": {"id": "main"},
+     "at": "2026-03-02T09:04:00Z",
      "billing": {"mode": "api"},
      "ops": [
        { "id": "op1", "kind": "spend", "operator": "keeper",
@@ -608,9 +612,10 @@ sum of the rounded figures is $0.03145, one step lower (see [Rounding](#setup)).
 
 ### A sibling kept the head warm (R54)
 
-Suppose a sibling subagent of session `s2` read the system block (2,000 tokens) at minute 26, inside the TTL.
-Turn 10 is the same as above, but the host sets `EntryFacts.SharedWarm = system[0]`. The system block was warm
-without the ping, so the rescue covers 8,000 tokens, not 10,000:
+The ping of example 8 read 10,000 tokens: the system block (2,000) and messages 0 to 5 (8,000). Suppose a sibling
+subagent of session `s2` read the system block inside the TTL before turn 10. The system block was warm without
+the ping. Turn 10 is the same as above, but the host sets `EntryFacts.SharedWarm` to `system[0]`. The rescue
+covers 10,000 − 2,000 = 8,000 tokens, not 10,000. The cache effect still ends at `messages[5]`:
 
 | Context operation | Calculation | Result |
 |---|---|---|
@@ -618,6 +623,13 @@ without the ping, so the rescue covers 8,000 tokens, not 10,000:
 | Rescue (cache effect, cold to hot) | 8,000 × ($3.75 − $0.30) | +$0.02760 |
 | **Total added to session `s2`** | | **+$0.02456** |
 
-The exact sum is 0.0276 − 0.003045 = 0.024555, which rounds to $0.02456, one step above the sum of the rounded figures (see Rounding).
+The exact sum is 0.0276 − 0.003045 = 0.024555, which rounds to $0.02456, one step above the sum of the rounded
+figures (see [Rounding](#setup)). The case is `keepalive-shared-head-sibling-exact-5m`.
 
-If the sibling had kept everything the ping read warm, there is no rescue and the total is the ping's −$0.00305.
+Two more cases show the edges ([R54](spec.md#r54)):
+
+- **A sibling kept everything the ping read warm** (`SharedWarm` = `messages[5]`, case
+  `keepalive-shared-prefix-all-sibling-exact-5m`). The entry was alive without the ping, so turn 10 is still
+  `hot`, but there is no rescue. The total is the ping's −$0.00305.
+- **The shared prefix is longer than the ping read** (`PingRead` = `messages[1]`, `SharedWarm` = `messages[4]`, case
+  `keepalive-shared-past-ping-read-exact-5m`). Nothing is left to credit, and the figure never goes below zero.

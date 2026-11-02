@@ -181,7 +181,7 @@
        "model": "agent-model",
        "usage": {
         "input": 10,
-        "cacheRead": 10000,
+        "cacheRead": 6000,
         "cacheWrite": 0,
         "cacheWrite1h": 0,
         "output": 1
@@ -202,13 +202,13 @@
       "changeId": "ka:main:w1",
       "saved": {},
       "caused": {},
-      "note": "the ping: priced by the host, 3,045 micro-dollars",
+      "note": "the ping: priced by the host",
       "call": {
        "host": "api.anthropic.com",
        "model": "agent-model",
        "usage": {
         "input": 10,
-        "cacheRead": 10000,
+        "cacheRead": 6000,
         "cacheWrite": 0,
         "cacheWrite1h": 0,
         "output": 1

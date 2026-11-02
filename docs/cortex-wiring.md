@@ -241,7 +241,7 @@ Each host does the same: Cortex, and the context-guru proxy. The parts are split
 
 | Part | Where | Cortex | Proxy |
 |---|---|---|---|
-| Resolve the thread | `internal/thread` (engine) | the engine resolves it inside `apply`, as today, and returns it in `apply.Result.Thread`. If the context-guru plugin is not in the pipeline, the host calls `internal/thread` itself on the client body | the same |
+| Resolve the thread | the engine's thread resolver (`internal/thread` there) | the engine resolves it inside `apply`, as today, and returns it in `apply.Result.Thread`. If the context-guru plugin is not in the pipeline, the host calls `internal/thread` itself on the client body | the same |
 | Collect the context operations | host | `pctx.ReportOps`, from every plugin, in pipeline order (W5.1) | `apply.Result.Ops`: the engine is the only context operator |
 | Keep the thread's state: active context operations, previous fingerprint, cache state | the Tracker (library); the host holds one Tracker for each thread | a map from `thread.Key(session, thread)` to its Tracker | the same map, beside `dash.Recorder`'s `lastTail` (W5.2) |
 | Find B\*, the break and the cache state | inside `Compute` (deterministic; the comparison is not public) | calls `BeginRequest` before the plugins and `EndRequest` with the resolved thread after them, then `request.Compute(usage)` after the response, which stores the new `ThreadState` | the same calls |

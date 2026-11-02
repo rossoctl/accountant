@@ -304,7 +304,7 @@ def ex4():
                "A summarizer replaces messages 0 to 2 (10,000 tokens) with a 500-token summary. The call costs "
                "$0.01250 first (summarizer rates). Request A is hot, but the summary changes the start of the "
                "messages, so the provider reads only tools and system: the summary and the tail (3,500 tokens) are "
-               "written, a break of 3,500 x ($3.75 - $0.30). A nets -$0.00923. B (hot) saves $0.00285, C (cold, 15 "
+               "written, a break of 3,500 x ($3.75 - $0.30). A nets -$0.00922. B (hot) saves $0.00285, C (cold, 15 "
                "minutes later) saves $0.03563. The total after three requests, call included, is +$0.01675.",
                "examples.md#4", {"kind": "rewrite+spend", "position": "beforeBStar", "cache": "break-hit-miss",
                                  "ttl": "5m", "lifetime": "exact", "break": "plugin"}, steps, open_=[BSTAR_SNAP]),
@@ -504,10 +504,10 @@ def ex8():
 # ---------------------------------------------------------------------------------------------
 # Shared prefix (R54): example 8, but a sibling thread read the shared head inside the TTL, so it was warm
 # without the ping. The rescue credits only what lies past that head.
-def shared_prefix(shared, saved, ping_read, name, text, session):
+def shared_prefix(shared, saved, ping_read, ping_tokens, name, text, session):
     sysb = [("sys8", 2000)]
     msgs = [("m0", 3000), ("m1", 1000), ("m2", 1000), ("m3", 1000), ("m4", 1000), ("m5", 1000)]
-    ping_usage = {"input": 10, "cacheRead": 10000, "cacheWrite": 0, "cacheWrite1h": 0, "output": 1}
+    ping_usage = {"input": 10, "cacheRead": ping_tokens, "cacheWrite": 0, "cacheWrite1h": 0, "output": 1}
     call = {"host": "api.anthropic.com", "model": "agent-model", "usage": ping_usage}
     steps = [step(0, "turn-9", body([], sysb, msgs), body([], sysb, msgs), bps(msgs), bps(msgs), [],
                   U(write=10000), expect("unknown", U(write=10000), []), session=session)]
@@ -515,7 +515,7 @@ def shared_prefix(shared, saved, ping_read, name, text, session):
             "billing": {"mode": "api"},
             "ops": [{"id": "op1", "kind": "spend", "operator": "keeper", "changeId": KA, "call": call}]}
     steps.append({"standalone": ping, "usage": U(),
-                  "expected": {"ops": [eop(KA, call=call, note="the ping: priced by the host, 3,045 micro-dollars")]}})
+                  "expected": {"ops": [eop(KA, call=call, note="the ping: priced by the host")]}})
     msgs10 = msgs + [("m6", 500)]
     facts = {"ttl": "5m", "lifetime": "exact", "lastPing": ts(240), "pingRead": ping_read, "pingWindow": KA,
              "sharedWarm": shared}
@@ -535,13 +535,13 @@ def shared_prefix(shared, saved, ping_read, name, text, session):
 def shared_prefix_cases():
     head = ("Same as keepalive/ping-rescue/exact/5m, but a sibling thread of the session read the system block "
             "(2,000 tokens) inside the TTL, so that block was warm without the ping. ")
-    shared_prefix(P("system", 0), 8000, P("messages", 5), "keepalive/shared-head-sibling/exact/5m",
+    shared_prefix(P("system", 0), 8000, P("messages", 5), 10000, "keepalive/shared-head-sibling/exact/5m",
                   head + "The rescue credits 8,000 tokens, not 10,000: 8,000 x ($3.75 - $0.30) = +$0.02760.", "s-sh1")
-    shared_prefix(P("messages", 5), 0, P("messages", 5), "keepalive/shared-prefix-all-sibling/exact/5m",
+    shared_prefix(P("messages", 5), 0, P("messages", 5), 10000, "keepalive/shared-prefix-all-sibling/exact/5m",
                   "A sibling thread read everything the ping read (through messages[5]) inside the TTL. The entry was "
                   "alive without the ping, so turn 10 is hot and no rescue is credited. The ping stays a cost.",
                   "s-sh2")
-    shared_prefix(P("messages", 4), 0, P("messages", 1), "keepalive/shared-past-ping-read/exact/5m",
+    shared_prefix(P("messages", 4), 0, P("messages", 1), 6000, "keepalive/shared-past-ping-read/exact/5m",
                   "The ping read only through messages[1] (6,000 tokens), and a sibling kept warm more than that "
                   "(through messages[4]). Nothing is left to credit, and the figure never goes below zero.",
                   "s-sh3")

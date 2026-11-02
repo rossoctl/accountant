@@ -1,6 +1,6 @@
 {
  "id": "rewrite+spend/summary/break-then-payback/5m",
- "description": "A summarizer replaces messages 0 to 2 (10,000 tokens) with a 500-token summary. The call costs $0.01250 first (summarizer rates). Request A is hot, but the summary changes the start of the messages, so the provider reads only tools and system: the summary and the tail (3,500 tokens) are written, a break of 3,500 x ($3.75 - $0.30). A nets -$0.00923. B (hot) saves $0.00285, C (cold, 15 minutes later) saves $0.03563. The total after three requests, call included, is +$0.01675.",
+ "description": "A summarizer replaces messages 0 to 2 (10,000 tokens) with a 500-token summary. The call costs $0.01250 first (summarizer rates). Request A is hot, but the summary changes the start of the messages, so the provider reads only tools and system: the summary and the tail (3,500 tokens) are written, a break of 3,500 x ($3.75 - $0.30). A nets -$0.00922. B (hot) saves $0.00285, C (cold, 15 minutes later) saves $0.03563. The total after three requests, call included, is +$0.01675.",
  "source": "examples.md#4",
  "dims": {
   "kind": "rewrite+spend",
