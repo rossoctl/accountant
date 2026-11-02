@@ -334,6 +334,11 @@ numbers are not used: those requirements were dropped.
   finds that the `ThreadState` changed since its `EndRequest` calculates again from the current
   `ThreadState` and says so in the `Result` (`Recomputed`). The order of the results is the order of the
   `Compute` calls ([D14](design.md#d14), [§6.1](design.md#61-call)).
+  **A reported change is part of the thread's state from `EndRequest`** ([§4.6](design.md#46-replays-who-remembers-past-changes)).
+  So a request that ended first and reported a different change can show up as an active change in the
+  `Compute` of a request that is still running: that `Compute` sets `Recomputed` and prices both. When
+  the two changes touch the same content, the sum check fails for that `Compute`. A retry that reports
+  the same `ChangeID` does not do this.
 - <a id="r52"></a>**R52.** The library never returns one token total. It returns tokens for each tier. Tiers differ in
   price by up to 20 times (a 1h cache write against a cache read), so a sum across them is not an invariant. A host that wants one figure
   prices the tiers and sums dollars. This is the rule of the tool-prune accounting (cortex#952).

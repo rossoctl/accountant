@@ -144,7 +144,7 @@ func (r *Request) calc(s ThreadState, usage Usage) (Result, ThreadState) {
 func (r *Request) items(s ThreadState) []*item {
 	reported := map[string]bool{} // a spend may share the ChangeID of its change (§6.5 check 3)
 	for _, op := range r.Ops {
-		if op.ChangeID != "" && (op.Kind == KindRewrite || op.Kind == KindSetting) && !negative(op) {
+		if isChange(op) {
 			reported[op.ChangeID] = true
 		}
 	}
@@ -182,6 +182,13 @@ func (r *Request) items(s ThreadState) []*item {
 		}
 	}
 	return items
+}
+
+// isChange reports whether op is a change the Tracker keeps and replays: a rewrite or a setting with a
+// ChangeID, and a well-formed size. A malformed report is not a change, so it must not replace an
+// active one (§4.6). items and EndRequest both use it, so they cannot disagree.
+func isChange(op Operation) bool {
+	return op.ChangeID != "" && (op.Kind == KindRewrite || op.Kind == KindSetting) && !negative(op)
 }
 
 func negative(op Operation) bool {

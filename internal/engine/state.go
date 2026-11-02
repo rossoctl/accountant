@@ -121,7 +121,7 @@ func (r *Request) EndRequest(thread Thread, forwarded Body, breakpoints []Breakp
 func (r *Request) withReported(s ThreadState) ([]Operation, bool) {
 	reported := map[string]bool{}
 	for _, op := range r.Ops {
-		if op.ChangeID != "" && (op.Kind == KindRewrite || op.Kind == KindSetting) && !negative(op) {
+		if isChange(op) {
 			reported[op.ChangeID] = true
 		}
 	}

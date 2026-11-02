@@ -79,9 +79,8 @@ go test ./...
 Pre-release. The API follows the design in [docs/design.md](docs/design.md) and may change before the
 first tag.
 
-Not implemented yet: `Result.Interaction` and the order check. Each is marked "Not implemented in v0" in the
-design. A `Tracker` is never evicted, so
-memory grows with every thread.
+Not implemented yet: `Result.Interaction` and the order check. Each is marked "Not implemented in v0" in
+the design. A `Tracker` is never evicted, so memory grows with every thread.
 
 ## License
 

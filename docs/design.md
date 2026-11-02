@@ -514,7 +514,11 @@ the context operator does not report it again. So `EndRequest` stores the report
 store them again. A reported operation replaces the active one with its `ChangeID`. So a retry that
 reports the same change writes nothing and leaves `Version` alone, and a request that reports no change
 writes nothing. The request's own copy of the state is taken after the store, so `Recomputed` (R53) is
-true only when another request replaced the state after that. The fingerprint and the cache state still
+true only when another request replaced the state after that. **Parallel requests:** a change is in the
+state from `EndRequest`, so two requests of one thread in flight with different `ChangeID`s see each
+other. When A calls `Compute` after B called `EndRequest`, A's result has `Recomputed` set and prices
+B's change as active next to its own. If both touch the same content, A's sum check fails. A retry with
+the same `ChangeID` does not do this (R53). The fingerprint and the cache state still
 change only in `Compute`, because they need the usage. A request with no usage therefore advances the
 active list and nothing else.
 

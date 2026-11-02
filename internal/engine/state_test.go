@@ -325,15 +325,89 @@ func TestARequestWithoutReportsStoresNothingAtEndRequest(t *testing.T) {
 	}
 }
 
-// A DryRun or malformed operation is not stored as a change the next request must apply.
+// A malformed report is not a change. With the ChangeID of an active change it must not replace
+// it: the good active change stays (the guard in withReported, §4.6).
+func TestAMalformedReportAtEndRequestKeepsTheActiveChange(t *testing.T) {
+	ts := NewTrackers()
+	rs := ex2Requests()
+	rs[0].run(ts)
+	rs[1].run(ts) // cg:cmdfilter:c40e is active now
+
+	q := rs[2]
+	q.ops = []Operation{rewrite("bad", "context-guru.cmdfilter", "cg:cmdfilter:c40e", msg(9), -5, 10)}
+	q.begin(ts)
+	a := stateOf(ts, "main").Active
+	if len(a) != 1 || a[0].SizeBefore.Bytes != 8000 || a[0].SizeAfter.Bytes != 1000 {
+		t.Fatalf("Active = %+v, want the original cmdfilter change (8000 to 1000 bytes)", a)
+	}
+}
+
+// A malformed report with a ChangeID nobody holds stores nothing.
 func TestEndRequestDoesNotStoreAMalformedChange(t *testing.T) {
 	ts := NewTrackers()
 	rs := ex2Requests()
 	rs[0].run(ts)
+	v := stateOf(ts, "main").Version
 	q := rs[1]
 	q.ops = []Operation{rewrite("bad", "context-guru.mask", "cg:bad", msg(9), -5, 10)}
 	q.begin(ts)
-	if a := stateOf(ts, "main").Active; len(a) != 0 {
-		t.Fatalf("Active = %+v, want none for a malformed operation", a)
+	if s := stateOf(ts, "main"); len(s.Active) != 0 || s.Version != v {
+		t.Fatalf("Active = %+v version %d (was %d), want nothing stored", s.Active, s.Version, v)
+	}
+}
+
+// A DryRun change is stored like any other: it is computed but not sent, and Compute keeps it active
+// so that observe mode can show it on every request (§4.6). EndRequest does the same.
+func TestEndRequestStoresADryRunChange(t *testing.T) {
+	ts := NewTrackers()
+	rs := ex2Requests()
+	rs[0].run(ts)
+	q := rs[1]
+	q.ops = []Operation{rewrite("dry", "context-guru.mask", "cg:dry", msg(9), 8000, 1000)}
+	q.ops[0].DryRun = true
+	q.fwd = Body{} // a DryRun forwards the client's body unchanged
+	q.begin(ts)
+	a := stateOf(ts, "main").Active
+	if len(a) != 1 || !a[0].DryRun || a[0].ChangeID != "cg:dry" {
+		t.Fatalf("Active = %+v, want the DryRun change", a)
+	}
+}
+
+// R53: two requests of one thread in flight that report different changes. B's EndRequest stores B's
+// change before A's Compute runs, so A's Compute sees a newer Version, sets Recomputed, and prices
+// B's change next to its own. This is the cost of storing at EndRequest (§4.6): the thread's state
+// is shared, and a reported change is part of it from the moment the request ends.
+func TestAParallelRequestsChangeIsSeenByAnEarlierCompute(t *testing.T) {
+	ts := NewTrackers()
+	rs := ex2Requests()
+	rs[0].run(ts)
+
+	a := rs[1].begin(ts) // reports cg:cmdfilter:c40e on message 9
+	bq := rs[1]
+	bq.ops = []Operation{rewrite("opB", "context-guru.mask", "cg:mask:b", msg(9), 8000, 1000)}
+	bq.begin(ts) // B ends before A computes
+
+	res := a.Compute(rs[1].usage)
+	if !res.Recomputed {
+		t.Fatal("A's Compute must say it recomputed: B replaced the state after A's EndRequest")
+	}
+	if !hasOp(res, "active:cg:mask:b") {
+		t.Fatalf("A's result has no priced op for B's change: %+v", res.Ops)
+	}
+	if len(res.Checks) == 0 {
+		t.Fatal("two changes on the same span against one body must fail the sum check")
+	}
+}
+
+// The same ChangeID on both requests is a retry, not a second change: nothing leaks.
+func TestAParallelRetryDoesNotLeakIntoAnEarlierCompute(t *testing.T) {
+	ts := NewTrackers()
+	rs := ex2Requests()
+	rs[0].run(ts)
+	a := rs[1].begin(ts)
+	rs[1].begin(ts)
+	res := a.Compute(rs[1].usage)
+	if res.Recomputed || len(res.Checks) != 0 {
+		t.Fatalf("a retry leaked: recomputed %v checks %+v", res.Recomputed, res.Checks)
 	}
 }
