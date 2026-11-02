@@ -152,6 +152,10 @@ type EntryFacts struct {
 	LastPing   time.Time `json:"lastPing,omitzero"`
 	PingRead   *Position `json:"pingRead,omitempty"`
 	PingWindow string    `json:"pingWindow,omitempty"`
+	// SharedWarm is the longest prefix of this request's forwarded body that another thread of the same
+	// session read or wrote inside the TTL before this request. That prefix was warm without the ping,
+	// so a rescue does not credit it. Nil when no other thread touched the entry.
+	SharedWarm *Position `json:"sharedWarm,omitempty"`
 }
 
 // The enums are strings, not integers, so an unknown value from a newer operator survives a

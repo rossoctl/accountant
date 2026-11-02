@@ -92,6 +92,15 @@ and passes them in `EntryFacts.LastPing`, `PingRead` and `PingWindow` at that re
 Then it clears them. A ping does not move
 the thread's `ThreadState`.
 
+**The shared prefix (R54).** At the same `EndRequest` the host also sets `EntryFacts.SharedWarm`. It looks at the
+other threads of the same session and finds the longest prefix of this request's forwarded body that one of
+them read or wrote inside the TTL before this request. It uses only each thread's last request time and
+cache extent, and compares body hashes. It stores no content. Without a sibling, it leaves `SharedWarm` nil.
+`SharedWarm` is a position in the forwarded body of this request, and only a ping rescue reads it. Like the
+ping facts, it is for one request: the host sets it again at each `EndRequest` and does not carry it over.
+A position that is not in the forwarded body is a host bug: the library adds a `shared_warm` check failure
+(`Result.Checks`) and credits no rescue.
+
 ```go
 // OpsEmitter is an optional Emitter capability, the same pattern as KeepAliveEmitter: the engine
 // type-asserts for it and does nothing if it is absent. It carries a RequestOps that has no
@@ -232,7 +241,7 @@ Each host does the same: Cortex, and the context-guru proxy. The parts are split
 
 | Part | Where | Cortex | Proxy |
 |---|---|---|---|
-| Resolve the thread | `internal/thread` (engine) | the engine resolves it inside `apply`, as today, and returns it in `apply.Result.Thread`. If the context-guru plugin is not in the pipeline, the host calls `internal/thread` itself on the client body | the same |
+| Resolve the thread | the engine's thread resolver (`internal/thread` there) | the engine resolves it inside `apply`, as today, and returns it in `apply.Result.Thread`. If the context-guru plugin is not in the pipeline, the host calls `internal/thread` itself on the client body | the same |
 | Collect the context operations | host | `pctx.ReportOps`, from every plugin, in pipeline order (W5.1) | `apply.Result.Ops`: the engine is the only context operator |
 | Keep the thread's state: active context operations, previous fingerprint, cache state | the Tracker (library); the host holds one Tracker for each thread | a map from `thread.Key(session, thread)` to its Tracker | the same map, beside `dash.Recorder`'s `lastTail` (W5.2) |
 | Find B\*, the break and the cache state | inside `Compute` (deterministic; the comparison is not public) | calls `BeginRequest` before the plugins and `EndRequest` with the resolved thread after them, then `request.Compute(usage)` after the response, which stores the new `ThreadState` | the same calls |

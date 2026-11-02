@@ -55,7 +55,8 @@
 //     (§5.2 row 5).
 //  10. A rescue (§4.4) needs a ping after the previous request, a request gap past an exact or minimum TTL, an
 //     entry gap inside it, and a read larger than the write. Its tokens are the smaller of the ping's
-//     read (converted with the ratio) and Usage.CacheRead, at the TTL of EntryFacts.TTL.
+//     read (converted with the ratio) and Usage.CacheRead, less the prefix EntryFacts.SharedWarm names (R54:
+//     a sibling thread kept it warm), at the TTL of EntryFacts.TTL.
 //  11. A spend is never priced in tokens: its Call is passed through (D4). A setting is not priced
 //     (R50); it only gives its ChangeID to a break. ComputeStandalone marks any operation that is not
 //     a spend as ReasonNotSpend.

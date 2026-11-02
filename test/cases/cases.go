@@ -72,6 +72,7 @@ type Facts struct {
 	LastPing   time.Time               `json:"lastPing,omitzero"`
 	PingRead   *accountant.Position    `json:"pingRead,omitempty"`
 	PingWindow string                  `json:"pingWindow,omitempty"`
+	SharedWarm *accountant.Position    `json:"sharedWarm,omitempty"`
 }
 
 // EntryFacts converts the facts to the library's type. It panics on a malformed TTL, which is a
@@ -81,7 +82,7 @@ func (f Facts) EntryFacts() accountant.EntryFacts {
 	if err != nil {
 		panic(fmt.Sprintf("cases: facts ttl %q: %v", f.TTL, err))
 	}
-	return accountant.EntryFacts{TTL: ttl, Lifetime: f.Lifetime, LastPing: f.LastPing, PingRead: f.PingRead, PingWindow: f.PingWindow}
+	return accountant.EntryFacts{TTL: ttl, Lifetime: f.Lifetime, LastPing: f.LastPing, PingRead: f.PingRead, PingWindow: f.PingWindow, SharedWarm: f.SharedWarm}
 }
 
 // Expected is what Compute must return for one step, in tokens for each tier.

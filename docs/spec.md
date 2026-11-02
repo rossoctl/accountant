@@ -342,6 +342,14 @@ numbers are not used: those requirements were dropped.
 - <a id="r52"></a>**R52.** The library never returns one token total. It returns tokens for each tier. Tiers differ in
   price by up to 20 times (a 1h cache write against a cache read), so a sum across them is not an invariant. A host that wants one figure
   prices the tiers and sums dollars. This is the rule of the tool-prune accounting (cortex#952).
+- <a id="r54"></a>**R54.** A rescue credits only what the ping kept alive. Another thread of the same session can keep
+  a shared prefix warm: subagents start with the same `system` and `tools`, and each request of one
+  refreshes that entry for the others. The host reports the longest prefix of the request that another thread
+  read or wrote inside the TTL before it, as `EntryFacts.SharedWarm`. The rescue leaves that prefix out. When
+  nothing is left, there is no rescue. The request is still `hot`: the entry was alive. The library does not
+  look at other threads. The host finds the prefix from its own record of each thread's last request (metadata only:
+  times, extents and hashes). A `SharedWarm` that is not in the forwarded body fails the `shared_warm` check and
+  credits no rescue. R54 covers the keep-alive `rescue` only, not the `ttlRescue` of a head held at 1h (a known gap).
 - <a id="r35"></a>**R35.** A later change can end earlier ones (a summary of reduced messages). The model shows
   this by `Compute` no longer applying the earlier change, not by a link and not by the context
   operator: after its first report the context operator says nothing about the change. `Compute`

@@ -122,7 +122,7 @@ svg{--surface:#fcfcfb;--ink:#0b0b0b;--ink2:#52514e;--grid:#d9d8d3;--read:#2a78d6
 <text class="t2" x="1180" y="522" font-size="11">total</text>
 <text class="t" x="1180" y="540" font-size="12">read 19,000 × $0.30 = +$0.00570</text>
 <text class="t" x="1180" y="556" font-size="12">write 9,500 × $3.75 = +$0.03563</text>
-<text class="t" x="1180" y="572" font-size="12">break 3,500 × ($3.75 − $0.30) = −$0.01208</text>
+<text class="t" x="1180" y="572" font-size="12">break 3,500 × ($3.75 − $0.30) = −$0.01207</text>
 <text class="t" x="1180" y="588" font-size="12">spend = −$0.01250</text>
 <text class="t" x="1180" y="612" font-size="16" font-weight="600">= +$0.01675 profit</text>
 <line class="axis" x1="170" y1="514" x2="957.5" y2="514"/>
