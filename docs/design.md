@@ -818,6 +818,23 @@ func (r *Request) Preview(usage Usage) Result
 // only spend operations. It is priced without any ThreadState and changes none, so it is not one of
 // the concurrent requests of R53. Its ChangeID joins it to the change or the window it belongs to.
 func ComputeStandalone(ops RequestOps) Result
+
+// Ping is a keep-alive ping in the library's own terms: the host copies its report into it. PingOps
+// returns the one-spend RequestOps for ComputeStandalone, and the PingFacts for the thread's next
+// real request (EntryFacts.LastPing and PingWindow). The ChangeID is "ka:" + thread + ":" + the window
+// start in RFC 3339 UTC, and PingWindow is the same string, so a ping and its rescue share one change
+// (§4.4). The thread "" becomes "main". PingRead stays with the host.
+type Ping struct {
+    Session, ThreadID, Model, Host string
+    Usage                          CallUsage
+    At                             time.Time // when the ping started
+    Window                         time.Time // the start of the idle gap the ping served
+}
+type PingFacts struct {
+    LastPing   time.Time
+    PingWindow string
+}
+func PingOps(p Ping, b Billing) (RequestOps, PingFacts)
 ```
 
 **What each call writes.**

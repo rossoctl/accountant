@@ -77,14 +77,19 @@ the fields the dashboard groups by (`Strategy`, `Preset`, `StopReason`, `MaxToke
 | `Strategy`, `Preset`, `StopReason`, `MaxTokens`, `Agent` | not on the context operation; the dashboard keeps reading them from `KeepAliveReport` (spec §9.1) |
 | `CostUSD` | not used: the host prices `Call.Usage` with its own rates, like every other call |
 
-The conversion is a pure function in `accountant` that turns a `KeepAliveReport` and a `Billing` into a `RequestOps` with one `spend` context operation, so both
-hosts build the same context operation. The host supplies `Billing`, because only it knows which credential
-the ping used. The host prices the result with `ComputeStandalone` (design §6.1).
+The conversion is `accountant.PingOps`, a pure function. The library cannot import a host type, so the
+host first copies its `KeepAliveReport` into an `accountant.Ping` (the table above says which field goes
+where). `PingOps(ping, billing)` returns a `RequestOps` with one `spend` context operation, so both hosts
+build the same context operation. The host supplies `Billing`, because only it knows which credential
+the ping used. The host prices the result with `ComputeStandalone` (design §6.1). `Ping.ThreadID` `""` is
+the primary thread, and `PingOps` maps it to `"main"`.
 
 **The ping facts for the next request.** The same conversion returns the facts the next real
-request of the thread needs: the ping's start time, the extent it read, and its `ChangeID`. The host
-keeps the last of them beside the thread's Tracker, and passes them in `EntryFacts.LastPing`,
-`PingRead` and `PingWindow` at that request's `EndRequest`. Then it clears them. A ping does not move
+request of the thread needs, as `accountant.PingFacts`: the ping's start time (`LastPing`) and its
+`ChangeID` (`PingWindow`). The extent the ping read (`PingRead`) is a position in the thread's body, so
+only the host knows it and the host adds it. The host keeps the last of them beside the thread's Tracker,
+and passes them in `EntryFacts.LastPing`, `PingRead` and `PingWindow` at that request's `EndRequest`.
+Then it clears them. A ping does not move
 the thread's `ThreadState`.
 
 ```go

@@ -5,7 +5,7 @@
 // sent. [Request.Add] records each change an operator reported. [Request.EndRequest] takes the body
 // that was forwarded and the cache facts. [Request.Compute] takes the billed [Usage] and returns a
 // [Result]: the tokens each change saved or caused. The host turns tokens into money. A keep-alive
-// ping has no request record: use [ComputeStandalone].
+// ping has no request record: use [ComputeStandalone]. [PingOps] builds its operations.
 //
 // The module imports only the standard library. Its design is in docs/design.md, and a complete
 // program is in the package example.
@@ -32,6 +32,10 @@ func NewTrackers() *Trackers { return engine.NewTrackers() }
 // ComputeStandalone prices operations that have no request record, such as a keep-alive ping.
 func ComputeStandalone(ops RequestOps) Result { return engine.ComputeStandalone(ops) }
 
+// PingOps turns a keep-alive [Ping] into a [RequestOps] with one spend, for [ComputeStandalone], and
+// returns the [PingFacts] the thread's next real request passes in [EntryFacts].
+func PingOps(p Ping, b Billing) (RequestOps, PingFacts) { return engine.PingOps(p, b) }
+
 // NewBody hashes the content of one request body, one entry for each position of each section.
 func NewBody(tools, system, messages [][]byte) Body { return engine.NewBody(tools, system, messages) }
 
@@ -48,6 +52,8 @@ type (
 	Billing     = engine.Billing
 	ModelCall   = engine.ModelCall
 	CallUsage   = engine.CallUsage
+	Ping        = engine.Ping
+	PingFacts   = engine.PingFacts
 )
 
 // Parts of an operation.
