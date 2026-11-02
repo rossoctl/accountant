@@ -3,6 +3,7 @@ package engine
 import (
 	"reflect"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 )
@@ -19,12 +20,12 @@ type ThreadState struct {
 type Tracker struct {
 	mu    sync.Mutex
 	state ThreadState
-	// created is the At of the request that made this Tracker. The sweep ages a thread by it while
+	// created is the At of the request that made this Tracker. The trim ages a thread by it while
 	// the thread has no previous request (state.PrevPrint is nil).
 	created time.Time
 }
 
-// lastSeen is the time the sweep ages the Tracker by: its previous request, else its creation.
+// lastSeen is the time trim ages the Tracker by: its previous request, else its creation.
 func (t *Tracker) lastSeen() time.Time {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -43,27 +44,22 @@ func (t *Tracker) snapshot() ThreadState {
 	return s
 }
 
-// Bounds on the thread state the library keeps (design §6.1, "Memory"). Each Tracker holds a
-// thread's previous fingerprint and its active changes.
-const (
-	// sweepEvery is how many calls of BeginRequest pass between two idle sweeps.
-	sweepEvery = 1000
-	// idleAfter is how long a thread must be unseen to be dropped. It is twice the longest cache TTL
-	// (1h). Past the TTL the entry has expired, so the library can only find the phase unknown, and
-	// the dropped state could not have produced a figure.
-	idleAfter = 2 * time.Hour
-	// maxThreads is the hard cap. Over it, the threads seen longest ago are dropped down to
-	// maxThreads - maxThreads/10, so the sort runs once for each tenth of the cap.
-	maxThreads = 10000
-)
+// maxThreads bounds the thread state the library keeps (design §6.1, "Memory"). Each Tracker holds a
+// thread's previous fingerprint and its active changes. Over the cap, the threads seen longest ago
+// are dropped down to maxThreads - maxThreads/10, so the sort runs once for each tenth of the cap.
+//
+// There is no idle timeout on purpose. A keep-alive ping keeps a cache entry alive after the last
+// real request, and the library learns of a ping only at the thread's next EndRequest
+// (EntryFacts.LastPing). A sweep by idle time would drop a thread whose pings kept it hot, and its
+// next request would lose the rescue.
+const maxThreads = 10000
 
 // Trackers holds one Tracker for each thread. It is safe for concurrent use.
-// It bounds its own memory: BeginRequest drops threads unseen for idleAfter, and the oldest ones
-// when more than maxThreads are held. A dropped thread loses its active changes (design §11, Q13).
+// It bounds its own memory: when more than maxThreads are held, BeginRequest drops the threads seen
+// longest ago. A dropped thread loses its active changes (design §11, Q13).
 type Trackers struct {
-	mu    sync.Mutex
-	m     map[string]*Tracker
-	calls uint64 // BeginRequest calls, for the sweep
+	mu sync.Mutex
+	m  map[string]*Tracker
 }
 
 // NewTrackers returns an empty set: every thread starts with no history.
@@ -89,23 +85,14 @@ func (ts *Trackers) trackerLocked(key string, at time.Time) *Tracker {
 	return t
 }
 
-// sweep drops the threads unseen since before, then, if more than maxThreads remain, the ones seen
-// longest ago. A Request in flight is not affected: it holds its own copy of the state
-// (EndRequest), and Compute looks the Tracker up again, so after a drop it makes a new, empty one,
-// calculates against that (Result.Recomputed, phase unknown) and stores the next state there.
-// Callers hold ts.mu.
-func (ts *Trackers) sweep(now time.Time, idle bool) {
-	if idle {
-		before := now.Add(-idleAfter)
-		for k, t := range ts.m {
-			if t.lastSeen().Before(before) {
-				delete(ts.m, k)
-			}
-		}
-	}
-	keep := maxThreads - maxThreads/10
-	over := len(ts.m) - keep
-	if len(ts.m) <= maxThreads || over <= 0 {
+// trim drops the threads seen longest ago when more than maxThreads are held. A thread's age is its
+// previous request, else the At of the request that made its Tracker, so a late request (an At far
+// before the others) makes a Tracker that is among the first to go. Equal ages drop in key order.
+// A Request in flight is not affected: it holds its own copy of the state (EndRequest), and Compute
+// looks the Tracker up again, so after a drop it makes a new, empty one, calculates against that
+// (Result.Recomputed, phase unknown) and stores the next state there. Callers hold ts.mu.
+func (ts *Trackers) trim() {
+	if len(ts.m) <= maxThreads {
 		return
 	}
 	type aged struct {
@@ -116,8 +103,13 @@ func (ts *Trackers) sweep(now time.Time, idle bool) {
 	for k, t := range ts.m {
 		all = append(all, aged{k, t.lastSeen()})
 	}
-	slices.SortFunc(all, func(a, b aged) int { return a.at.Compare(b.at) })
-	for _, a := range all[:over] {
+	slices.SortFunc(all, func(a, b aged) int {
+		if c := a.at.Compare(b.at); c != 0 {
+			return c
+		}
+		return strings.Compare(a.key, b.key)
+	})
+	for _, a := range all[:len(ts.m)-(maxThreads-maxThreads/10)] {
 		delete(ts.m, a.key)
 	}
 }
@@ -145,8 +137,7 @@ type Request struct {
 // the pass (§6.1). Call it before the plugins, with the client body before any plugin.
 func (ts *Trackers) BeginRequest(meta RequestMeta, client Body, clientBreakpoints []Breakpoint) *Request {
 	ts.mu.Lock()
-	ts.calls++
-	ts.sweep(meta.At, ts.calls%sweepEvery == 0)
+	ts.trim()
 	ts.mu.Unlock()
 	return &Request{trackers: ts, Meta: meta, Client: client, ClientBreakpoints: clientBreakpoints}
 }

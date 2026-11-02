@@ -17,68 +17,87 @@ func has(ts *Trackers, session, thread string) bool {
 	return ok
 }
 
-// sweepOnce runs the idle sweep as BeginRequest does on every sweepEvery-th call.
-func sweepOnce(ts *Trackers, now time.Time) {
+func trimOnce(ts *Trackers) {
 	ts.mu.Lock()
 	defer ts.mu.Unlock()
-	ts.sweep(now, true)
+	ts.trim()
 }
 
-func TestSweepDropsOnlyIdleThreads(t *testing.T) {
+func TestTrimUnderTheCapDropsNothing(t *testing.T) {
 	ts := NewTrackers()
-	seenAt(ts, "s", "old", t0.Add(-3*time.Hour))
-	seenAt(ts, "s", "recent", t0.Add(-time.Minute))
-	ts.tracker(ThreadKey("s", Thread{ID: "fresh"}), t0) // no previous request: aged by creation
-	ts.tracker(ThreadKey("s", Thread{ID: "stale-new"}), t0.Add(-3*time.Hour))
-	sweepOnce(ts, t0)
-	if has(ts, "s", "old") || has(ts, "s", "stale-new") {
-		t.Fatal("an idle thread was kept")
+	for i := range maxThreads {
+		seenAt(ts, "s", fmt.Sprint("t", i), t0.Add(-time.Duration(i)*24*time.Hour)) // days old: age alone drops nothing
 	}
-	if !has(ts, "s", "recent") || !has(ts, "s", "fresh") {
-		t.Fatal("a recent thread was dropped")
+	trimOnce(ts)
+	if len(ts.m) != maxThreads {
+		t.Fatalf("held %d threads, want %d", len(ts.m), maxThreads)
 	}
 }
 
-func TestSweepCapKeepsTheMostRecent(t *testing.T) {
+func TestTrimOverTheCapKeepsTheMostRecent(t *testing.T) {
 	ts := NewTrackers()
 	for i := range maxThreads + 5 {
 		seenAt(ts, "s", fmt.Sprint("t", i), t0.Add(time.Duration(i)*time.Millisecond))
 	}
-	sweepOnce(ts, t0.Add(time.Hour)) // inside idleAfter: only the cap acts
+	trimOnce(ts)
 	if want := maxThreads - maxThreads/10; len(ts.m) != want {
 		t.Fatalf("held %d threads, want %d", len(ts.m), want)
 	}
-	newest := fmt.Sprint("t", maxThreads+4)
-	oldest := "t0"
-	if !has(ts, "s", newest) || has(ts, "s", oldest) {
-		t.Fatalf("the cap must keep the newest (%v) and drop the oldest (%v)", has(ts, "s", newest), has(ts, "s", oldest))
+	if !has(ts, "s", fmt.Sprint("t", maxThreads+4)) || has(ts, "s", "t0") {
+		t.Fatal("the cap must keep the newest thread and drop the oldest")
 	}
 }
 
-func TestSweepUnderTheCapDropsNothingRecent(t *testing.T) {
+// Threads of equal age drop in key order, so the same input always drops the same threads (R26).
+func TestTrimBreaksTiesByKey(t *testing.T) {
 	ts := NewTrackers()
-	for i := range 20 {
-		seenAt(ts, "s", fmt.Sprint("t", i), t0.Add(time.Duration(i)*time.Second))
+	for i := range maxThreads + 1 {
+		seenAt(ts, "s", fmt.Sprintf("t%05d", i), t0) // all the same age
 	}
-	sweepOnce(ts, t0.Add(time.Minute))
-	if len(ts.m) != 20 {
-		t.Fatalf("held %d threads, want 20", len(ts.m))
+	trimOnce(ts)
+	drop := len(ts.m) // after: 9,000 left
+	if drop != maxThreads-maxThreads/10 {
+		t.Fatalf("held %d threads", drop)
+	}
+	if has(ts, "s", "t00000") || !has(ts, "s", fmt.Sprintf("t%05d", maxThreads)) {
+		t.Fatal("equal ages must drop the lowest keys first")
 	}
 }
 
-// BeginRequest sweeps on its own every sweepEvery-th call, with the request's time as the clock.
-func TestBeginRequestSweepsIdleThreadsOnItsOwn(t *testing.T) {
+// BeginRequest runs the cap on its own, with no call from the host.
+func TestBeginRequestTrimsOnItsOwn(t *testing.T) {
 	ts := NewTrackers()
-	seenAt(ts, "s", "old", t0.Add(-3*time.Hour))
-	for i := 1; i < sweepEvery; i++ {
-		ts.BeginRequest(RequestMeta{Session: "other", At: t0}, Body{}, nil)
-	}
-	if !has(ts, "s", "old") {
-		t.Fatal("swept before the sweepEvery-th call")
+	for i := range maxThreads + 1 {
+		seenAt(ts, "s", fmt.Sprint("t", i), t0.Add(time.Duration(i)*time.Millisecond))
 	}
 	ts.BeginRequest(RequestMeta{Session: "other", At: t0}, Body{}, nil)
-	if has(ts, "s", "old") {
-		t.Fatal("the sweepEvery-th call did not drop the idle thread")
+	if want := maxThreads - maxThreads/10; len(ts.m) != want {
+		t.Fatalf("held %d threads, want %d", len(ts.m), want)
+	}
+}
+
+// There is no idle timeout: a thread kept hot only by keep-alive pings must still be there for its
+// next request, however many hours have passed and however many other threads came in between
+// (design §6.1, Memory). With a 1h lifetime, a ping at 85 minutes kept the entry of the request at
+// minute 0 alive, so the request at minute 90 is hot and earns the rescue.
+func TestAThreadKeptHotByPingsIsNotDroppedForBeingIdle(t *testing.T) {
+	ts := NewTrackers()
+	m := msgs(6, 1000)
+	sysB := []blk{b("sys", 4000)}
+	f := EntryFacts{TTL: time.Hour, Lifetime: LifetimeExact}
+	req{at: t0, client: mk(nil, sysB, m), clientBPs: bps5(sys(0), msg(5)), facts: f, usage: Usage{CacheWrite: 10000}}.run(ts)
+	for i := range 2000 { // other threads arrive over the next 3 hours
+		at := t0.Add(time.Duration(i) * 5 * time.Second)
+		ts.BeginRequest(RequestMeta{Session: fmt.Sprint("other", i), At: at}, Body{}, nil)
+	}
+	f.LastPing, f.PingRead, f.PingWindow = t0.Add(85*time.Minute), ptr(msg(5)), "ka:main:w1"
+	res := req{at: t0.Add(90 * time.Minute), client: mk(nil, sysB, with(m, b("m6", 500))), clientBPs: bps5(sys(0), msg(6)),
+		facts: f, usage: Usage{CacheRead: 10000, CacheWrite: 500}}.run(ts)
+	if res.Phase != PhaseHot {
+		t.Fatalf("phase %q, want hot: the thread's state was lost", res.Phase)
+	}
+	if e := effect(t, res, EffectRescue); e.ChangeID != "ka:main:w1" {
+		t.Fatalf("rescue %+v", e)
 	}
 }
 
@@ -95,10 +114,9 @@ func TestDroppedThreadStillComputes(t *testing.T) {
 	r1.Compute(Usage{Input: 300})
 	r2 := ts.BeginRequest(meta("r2"), body, nil)
 	r2.EndRequest(Thread{ID: "main"}, body, nil, EntryFacts{TTL: 5 * time.Minute})
-	sweepOnce(ts, t0.Add(10*time.Hour))
-	if len(ts.m) != 0 {
-		t.Fatal("precondition: the thread must be dropped")
-	}
+	ts.mu.Lock()
+	delete(ts.m, ThreadKey("s", Thread{ID: "main"})) // what trim does to it
+	ts.mu.Unlock()
 	res := r2.Compute(Usage{Input: 300})
 	if !res.Recomputed || res.Phase != PhaseUnknown {
 		t.Fatalf("Recomputed %v, phase %v, want a recompute against an empty state", res.Recomputed, res.Phase)
@@ -108,7 +126,7 @@ func TestDroppedThreadStillComputes(t *testing.T) {
 	}
 }
 
-func TestSweepIsSafeAgainstConcurrentRequests(t *testing.T) {
+func TestTrimIsSafeAgainstConcurrentRequests(t *testing.T) {
 	ts := NewTrackers()
 	body := mk(nil, nil, msgs(3, 100))
 	var wg sync.WaitGroup
@@ -117,13 +135,13 @@ func TestSweepIsSafeAgainstConcurrentRequests(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for i := range 300 {
-				at := t0.Add(time.Duration(i) * time.Hour) // each call ages the earlier threads
+				at := t0.Add(time.Duration(i) * time.Hour)
 				th := Thread{ID: fmt.Sprint("t", g, "-", i%5)}
 				r := ts.BeginRequest(RequestMeta{Session: "s", At: at, Billing: Billing{Mode: BillingAPI}}, body, nil)
 				r.EndRequest(th, body, nil, EntryFacts{TTL: 5 * time.Minute})
 				r.Compute(Usage{Input: 300})
 				if i%17 == 0 {
-					sweepOnce(ts, at)
+					trimOnce(ts)
 				}
 			}
 		}()

@@ -80,7 +80,7 @@ Pre-release. The API follows the design in [docs/design.md](docs/design.md) and 
 first tag.
 
 Not implemented yet: `Result.Interaction` and the order check. Each is marked "Not implemented in v0" in
-the design. The Trackers drop a thread unseen for 2 hours, and keep at most 10,000. A dropped thread loses
+the design. The Trackers hold about 10,000 threads and drop the oldest above that. A dropped thread loses
 its active changes (design §6.1, Memory).
 
 ## License
