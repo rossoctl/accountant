@@ -59,6 +59,8 @@ The module imports only the standard library, so any host can use it. `boundary_
 | [docs/design.md](docs/design.md) | The design: types, `Compute`, cache effects, checks |
 | [docs/testing.md](docs/testing.md) | How the library is tested, and the exhaustive test-case list |
 | [docs/examples.md](docs/examples.md) | Eight worked examples with figures |
+| [docs/more_examples.md](docs/more_examples.md) | The plan for scenarios beyond the first eight, and which are written as cases |
+| [docs/issue_cases.md](docs/issue_cases.md) | Test cases drawn from issues, and which are written as cases |
 | [docs/cached-prefix.md](docs/cached-prefix.md) | How providers decide what a cache read covers |
 | [docs/cortex-wiring.md](docs/cortex-wiring.md) | How Cortex and context-guru plug it in |
 
