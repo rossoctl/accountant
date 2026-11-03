@@ -200,9 +200,9 @@ func compare(t *testing.T, i int, want Expected, got accountant.Result) {
 	for j, w := range want.Effects {
 		g := got.CacheEffects[j]
 		if g.Kind != w.Kind || g.ChangeID != w.ChangeID || g.Saved != w.Saved || g.Caused != w.Caused ||
-			(w.TTL != "" && g.TTL != w.TTL) || g.Cause != w.Cause {
-			t.Errorf("step %d effect %d: got %s %s saved=%+v caused=%+v, want %s %s saved=%+v caused=%+v",
-				i, j, g.Kind, g.ChangeID, g.Saved, g.Caused, w.Kind, w.ChangeID, w.Saved, w.Caused)
+			(w.TTL != "" && g.TTL != w.TTL) || g.Cause != w.Cause || g.InBaseline != w.InBaseline {
+			t.Errorf("step %d effect %d: got %s %s saved=%+v caused=%+v inBaseline=%v, want %s %s saved=%+v caused=%+v inBaseline=%v",
+				i, j, g.Kind, g.ChangeID, g.Saved, g.Caused, g.InBaseline, w.Kind, w.ChangeID, w.Saved, w.Caused, w.InBaseline)
 		}
 		if w.From != nil && (g.From == nil || *g.From != *w.From) {
 			t.Errorf("step %d effect %d: from %v, want %v", i, j, g.From, *w.From)

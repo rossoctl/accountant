@@ -691,6 +691,11 @@ or read the entry:
 Row 6 is checked first: with no previous fingerprint, no other row applies. The other rows are
 checked in order, and the first match wins.
 
+Rows 2, 4 and 5 set `InBaseline` on the break: the client body would have had the same break, so it
+is on the record but is not part of the bill difference (§6.3). A row 1 break with no `ChangeID` (the
+change ended, Q12) does not set it: the client body would have read that prefix, so the break counts.
+A host that sums cache effects into a net skips each break with `InBaseline`.
+
 | # | Comparison | Result |
 |---|---|---|
 | 1 | `fwdFirstDiff` ≤ `prevExtent`, and `fwdFirstDiff` < `clientFirstDiff` | A plugin broke the cache. Add a break with `at: fwdFirstDiff` and the `ChangeID` of the context operation, reported or active, that changed the position `fwdFirstDiff`. |
@@ -1060,6 +1065,7 @@ type CacheEffect struct {
     Caused    TierTokens
     Estimated bool
     Cause     CacheEffectCause // why a break nobody caused happened, when the library knows; "model_changed" is the only value
+    InBaseline bool           // the client body has this break too (§5.2 rows 2, 4, 5): on the record, not in the bill difference
 }
 ```
 

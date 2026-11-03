@@ -121,8 +121,7 @@ def effect(kind, change, saved=None, caused=None, frm=None, to=None, ttl=None, n
 def expect(phase, baseline, ops, boundary=None, unpriced=None, effects=None, checks=None):
     e = {"phase": phase, "baselineUsage": baseline, "ops": ops}
     if phase == "cold" and not effects:  # §5.2 row 5: the expiry is on the record, and it moves no tokens
-        effects = [{"kind": "break", "changeId": "", "saved": {}, "caused": {},
-                    "note": "the entry expired; B* is 0, so the read extent to B* is empty"}]
+        effects = [effect("break", "", note="the entry expired; B* is 0, so the read extent to B* is empty")]
     if effects:
         e["effects"] = effects
     if boundary:

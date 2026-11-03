@@ -94,8 +94,8 @@ func TestAColdRequestWritesAgainAndRecordsTheExpiry(t *testing.T) {
 		t.Fatalf("cold: %+v, want 7000 written", op.Saved)
 	}
 	if len(res.CacheEffects) != 1 || res.CacheEffects[0].Kind != EffectBreak || res.CacheEffects[0].ChangeID != "" ||
-		res.CacheEffects[0].Saved != (TierTokens{}) {
-		t.Fatalf("expiry: %+v, want one empty break with no cause", res.CacheEffects)
+		res.CacheEffects[0].Saved != (TierTokens{}) || !res.CacheEffects[0].InBaseline {
+		t.Fatalf("expiry: %+v, want one empty break with no cause, in the baseline", res.CacheEffects)
 	}
 	noChecks(t, res)
 }
