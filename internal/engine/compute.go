@@ -538,7 +538,7 @@ func (c *calcState) cacheEffects(res *Result) {
 	case c.unknown || c.s.PrevPrint == nil:
 		return // row 6
 	case c.phase == PhaseCold:
-		c.addEffect(res, CacheEffect{Kind: EffectBreak}) // row 5: the expiry, on the record, moving no tokens
+		c.addEffect(res, CacheEffect{Kind: EffectBreak, InBaseline: true}) // row 5: the expiry, on the record, moving no tokens
 		return
 	}
 	fwdFDCli := mustFlat(c.client, c.fwdToClient(c.fwd.position(c.fwdFD)))
@@ -548,6 +548,7 @@ func (c *calcState) cacheEffects(res *Result) {
 		return
 	case c.clientFD <= c.prevExtCli && fwdFDCli >= c.clientFD: // row 2
 		c.addBreak(res, c.readEnd, "")
+		c.inBaseline(res)
 		return
 	}
 	if c.prevExt < 0 {
@@ -572,6 +573,7 @@ func (c *calcState) cacheEffects(res *Result) {
 		return
 	}
 	c.addBreak(res, c.readEnd, "") // row 4: the entry was lost early
+	c.inBaseline(res)
 	if prev := c.s.PrevPrint; prev.Model != "" && c.r.Meta.Model != "" && prev.Model != c.r.Meta.Model {
 		// the provider keeps a cache for each model, so this is not a loss nobody can explain
 		res.CacheEffects[len(res.CacheEffects)-1].Cause = CauseModelChanged
@@ -640,6 +642,11 @@ func (c *calcState) addBreak(res *Result, from int, changeID string) {
 		}
 	}
 	c.addEffect(res, e)
+}
+
+// inBaseline marks the last effect as one the client body would have had too (§5.2 rows 2 and 4).
+func (c *calcState) inBaseline(res *Result) {
+	res.CacheEffects[len(res.CacheEffects)-1].InBaseline = true
 }
 
 // rescue adds the keep-alive rescue when the provider read more than it wrote (§4.4).
