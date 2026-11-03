@@ -507,3 +507,96 @@ func TestAnUnreportedModelChangeLabelsTheBreak(t *testing.T) {
 		}
 	}
 }
+
+// usagePingFacts is pingFacts for a host that knows the ping's usage and not its extent.
+func usagePingFacts(u Usage) EntryFacts {
+	f := pingFacts()
+	f.PingRead, f.PingUsage = nil, &u
+	return f
+}
+
+// A ping replays the previous body: its usage gives the extent it left cached, and the rescue is the
+// same as with that extent named (TestAPingThatKeptTheEntryAliveIsARescue).
+func TestAPingsUsageGivesItsRead(t *testing.T) {
+	e := effect(t, ex8(28*time.Minute, usagePingFacts(Usage{CacheRead: 10000})), EffectRescue)
+	if !samePos(e.To, ptr(msg(5))) || e.Saved != (TierTokens{CacheWrite5m: 10000}) {
+		t.Fatalf("rescue %+v, want 10000 write->read to messages[5]", e)
+	}
+}
+
+// A ping that found the entry gone wrote it again: that renews it, so it counts as cached.
+func TestAPingThatRewroteTheEntryRenewsIt(t *testing.T) {
+	e := effect(t, ex8(28*time.Minute, usagePingFacts(Usage{CacheWrite: 10000})), EffectRescue)
+	if !samePos(e.To, ptr(msg(5))) {
+		t.Fatalf("rescue %+v, want it to messages[5]", e)
+	}
+}
+
+// A ping that cached nothing gives no extent: no rescue, and the phase is cold.
+func TestAPingThatCachedNothingIsNoRescue(t *testing.T) {
+	res := ex8(28*time.Minute, usagePingFacts(Usage{Input: 10000}))
+	if res.Phase != PhaseCold {
+		t.Fatalf("phase %q, want cold", res.Phase)
+	}
+	for _, e := range res.CacheEffects {
+		if e.Kind == EffectRescue {
+			t.Fatalf("a ping that cached nothing rescued: %+v", e)
+		}
+	}
+}
+
+// An explicit PingRead wins over the usage.
+func TestAnExplicitPingReadWinsOverTheUsage(t *testing.T) {
+	f := usagePingFacts(Usage{CacheRead: 10000})
+	f.PingRead = ptr(msg(1))
+	if e := effect(t, ex8(28*time.Minute, f), EffectRescue); e.Saved != (TierTokens{CacheWrite5m: 6000}) {
+		t.Fatalf("rescue %+v, want 6000 from the explicit extent", e.Saved)
+	}
+}
+
+// PingOps carries the ping's usage in the facts, and Apply hands it to the next request.
+func TestPingFactsCarryTheUsage(t *testing.T) {
+	u := CallUsage{Usage: Usage{CacheRead: 9000, Input: 10}, Output: 1}
+	_, pf := PingOps(Ping{ThreadID: "", At: t0, Window: t0, Usage: u}, Billing{Mode: BillingAPI})
+	var f EntryFacts
+	pf.Apply(&f)
+	if f.PingUsage == nil || *f.PingUsage != u.Usage || f.PingWindow != pf.PingWindow || !f.LastPing.Equal(t0) {
+		t.Fatalf("facts %+v from %+v", f, pf)
+	}
+	var none EntryFacts
+	PingFacts{}.Apply(&none)
+	if none.PingUsage != nil {
+		t.Fatal("a ping with no usage set PingUsage")
+	}
+}
+
+// CacheWrite1h is part of CacheWrite: counting it again would reach past the body the ping cached.
+func TestAPingsOneHourWriteIsNotCountedTwice(t *testing.T) {
+	// 5000 of 10000 tokens written, all at the 1h rate: the extent is half the body, not all of it.
+	both := ex8(28*time.Minute, usagePingFacts(Usage{CacheWrite: 5000, CacheWrite1h: 5000, Input: 5000}))
+	plain := ex8(28*time.Minute, usagePingFacts(Usage{CacheWrite: 5000, Input: 5000}))
+	be, pe := effect(t, both, EffectRescue), effect(t, plain, EffectRescue)
+	if !samePos(be.To, pe.To) || be.Saved != pe.Saved {
+		t.Fatalf("with 1h %+v, without %+v: CacheWrite1h moved the extent", be, pe)
+	}
+}
+
+// A usage with no prompt token proves nothing, so the ping is not a rescue.
+func TestAPingUsageWithNoPromptTokensIsNoRescue(t *testing.T) {
+	res := ex8(28*time.Minute, usagePingFacts(Usage{CacheWrite1h: 5000}))
+	for _, e := range res.CacheEffects {
+		if e.Kind == EffectRescue {
+			t.Fatalf("rescue from a usage with no prompt tokens: %+v", e)
+		}
+	}
+}
+
+// Apply replaces the facts of an earlier ping: a ping that billed nothing leaves PingUsage nil.
+func TestApplyClearsAStalePingUsage(t *testing.T) {
+	old := Usage{CacheRead: 1}
+	f := EntryFacts{PingUsage: &old}
+	PingFacts{}.Apply(&f)
+	if f.PingUsage != nil {
+		t.Fatalf("stale PingUsage kept: %+v", *f.PingUsage)
+	}
+}
