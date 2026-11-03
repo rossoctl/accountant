@@ -455,8 +455,12 @@ func (c *calcState) pingRead() *Position {
 	}
 	if c.derivedPingRead == nil {
 		u := *f.PingUsage
+		// CacheWrite1h is part of CacheWrite, never an addition to it.
 		r := ratio{tokens: u.Input + u.CacheRead + u.CacheWrite, bytes: prev.Forwarded.cumBytes(len(prev.Forwarded.Pos) - 1)}
-		i := extent(prev.Forwarded, r, u.CacheRead+u.CacheWrite+u.CacheWrite1h, nil)
+		i := -1
+		if r.tokens > 0 { // a usage that bills no prompt token proves nothing about the extent
+			i = extent(prev.Forwarded, r, u.CacheRead+u.CacheWrite, nil)
+		}
 		p := Position{}
 		if i >= 0 {
 			p = prev.Forwarded.position(i)

@@ -23,7 +23,7 @@ type PingFacts struct {
 
 // Apply copies the facts into f. A ping that billed nothing leaves PingUsage nil.
 func (p PingFacts) Apply(f *EntryFacts) {
-	f.LastPing, f.PingWindow = p.LastPing, p.PingWindow
+	f.LastPing, f.PingWindow, f.PingUsage = p.LastPing, p.PingWindow, nil
 	if p.PingUsage != (Usage{}) {
 		u := p.PingUsage
 		f.PingUsage = &u
