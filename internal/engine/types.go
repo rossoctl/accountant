@@ -152,6 +152,11 @@ type EntryFacts struct {
 	LastPing   time.Time `json:"lastPing,omitzero"`
 	PingRead   *Position `json:"pingRead,omitempty"`
 	PingWindow string    `json:"pingWindow,omitempty"`
+	// PingUsage is the last ping's billed usage. When PingRead is nil, the library derives PingRead
+	// from it: a ping replays the previous request's forwarded body, so the extent its CacheRead
+	// covers in that body, at the ping's own bytes-to-tokens ratio, is what it read (§4.4). A host
+	// that knows PingRead sets PingRead; PingUsage is for a host that only has the ping's usage.
+	PingUsage *Usage `json:"pingUsage,omitempty"`
 	// SharedWarm is the longest prefix of this request's forwarded body that another thread of the same
 	// session read or wrote inside the TTL before this request. That prefix was warm without the ping,
 	// so a rescue does not credit it. Nil when no other thread touched the entry.

@@ -209,6 +209,10 @@ type EntryFacts struct {
     LastPing   time.Time
     PingRead   *Position
     PingWindow string
+    // PingUsage is the last ping's billed usage. With PingRead nil, the library derives PingRead
+    // from it (§5.2, the ping row): the extent its CacheRead + CacheWrite covers in the previous
+    // forwarded body, which the ping replays, at the ping's own bytes-to-tokens ratio.
+    PingUsage  *Usage
     // SharedWarm is the longest prefix of this request's forwarded body that another thread of the same
     // session read or wrote inside the TTL before this request (R54). Nil when none did.
     SharedWarm *Position
@@ -712,10 +716,18 @@ The phase is found **before** the rows, from the gaps. It is the **cache state**
 | A previous fingerprint exists, and the request gap ≤ TTL | `hot` | `prevExtent` |
 | A previous fingerprint exists, the previous request cached nothing (its cache state was `cold`), and the request gap ≤ TTL | `hot` | empty: nothing can have been lost |
 | A previous fingerprint exists, the previous request cached nothing, the lifetime is `exact`, and the request gap > TTL | `cold` | nil |
-| A previous fingerprint exists, request gap > TTL, entry gap ≤ TTL, `PingRead` is set, and the lifetime is `exact` or `minimum`. The rescue also needs conditions 3 and 4 of §4.4 | `hot`, and the library adds a rescue with `ChangeID = EntryFacts.PingWindow` (§4.4) | `PingRead` |
-| A previous fingerprint exists, request gap > TTL, the lifetime is `exact`, and no ping qualifies (none was sent, one was sent too late, or `PingRead` is unset) | `cold`. A late ping gets no rescue | nil |
+| A previous fingerprint exists, request gap > TTL, entry gap ≤ TTL, `PingRead` is set (or derived from `PingUsage`, below), and the lifetime is `exact` or `minimum`. The rescue also needs conditions 3 and 4 of §4.4 | `hot`, and the library adds a rescue with `ChangeID = EntryFacts.PingWindow` (§4.4) | `PingRead` |
+| A previous fingerprint exists, request gap > TTL, the lifetime is `exact`, and no ping qualifies (none was sent, one was sent too late, or `PingRead` is unset and cannot be derived) | `cold`. A late ping gets no rescue | nil |
 | A previous fingerprint exists, request gap > TTL, no qualifying ping, and the lifetime is `minimum` or `unknown` | `unknown`, unless `Usage.CacheRead` proves a read (below) | nil |
 | No previous fingerprint for this thread | `unknown`, unless `Usage.CacheRead` proves a read (below) | nil |
+
+**`PingRead` from the ping's usage.** A host may not know which position the ping read. The keeper
+replays the previous request's forwarded body, so the ping's usage bills that body, and the library
+derives `PingRead` when it is nil and `PingUsage` is set: the last position of the previous forwarded
+body that `CacheRead + CacheWrite` covers, at the ping's own ratio (§5.3), with every position a
+candidate. A ping that found the entry gone and wrote it again renewed it, so its write counts. A ping
+that cached nothing gives no extent, so the phase stays `cold`. An explicit `PingRead` wins. A host whose
+ping does not replay the previous body, or that has no usage for the ping, sets `PingRead` itself.
 
 **A read in the usage is evidence.** The provider bills a read only for an entry it holds. So when
 the phase is `unknown` and `Usage.CacheRead` is larger than zero, the entry was alive up to the read
@@ -839,7 +851,8 @@ func ComputeStandalone(ops RequestOps) Result
 // returns the one-spend RequestOps for ComputeStandalone, and the PingFacts for the thread's next
 // real request (EntryFacts.LastPing and PingWindow). The ChangeID is "ka:" + thread + ":" + the window
 // start in RFC 3339 UTC, and PingWindow is the same string, so a ping and its rescue share one change
-// (§4.4). The thread "" becomes "main". PingRead stays with the host.
+// (§4.4). The thread "" becomes "main". PingFacts also carries the ping's usage, from which the
+// library derives PingRead when the host does not set it.
 type Ping struct {
     Session, ThreadID, Model, Host string
     Usage                          CallUsage
@@ -849,7 +862,9 @@ type Ping struct {
 type PingFacts struct {
     LastPing   time.Time
     PingWindow string
+    PingUsage  Usage
 }
+func (p PingFacts) Apply(f *EntryFacts) // copies LastPing, PingWindow and PingUsage (nil when zero)
 func PingOps(p Ping, b Billing) (RequestOps, PingFacts)
 ```
 

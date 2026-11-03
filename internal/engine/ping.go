@@ -11,12 +11,23 @@ type Ping struct {
 	Window                         time.Time // the start of the idle gap the ping served
 }
 
-// PingFacts are what the thread's next real request needs in EntryFacts: LastPing and PingWindow.
-// The host keeps the last one for each thread, passes it at that request's EndRequest, then clears
-// it. The ping's PingRead extent is not here: only the host knows what the ping read.
+// PingFacts are what the thread's next real request needs in EntryFacts: LastPing, PingWindow and
+// PingUsage. The host keeps the last one for each thread, passes it at that request's EndRequest, then
+// clears it. With PingUsage set and PingRead nil, the library derives the extent the ping read
+// (EntryFacts.PingUsage).
 type PingFacts struct {
 	LastPing   time.Time
 	PingWindow string
+	PingUsage  Usage
+}
+
+// Apply copies the facts into f. A ping that billed nothing leaves PingUsage nil.
+func (p PingFacts) Apply(f *EntryFacts) {
+	f.LastPing, f.PingWindow = p.LastPing, p.PingWindow
+	if p.PingUsage != (Usage{}) {
+		u := p.PingUsage
+		f.PingUsage = &u
+	}
 }
 
 // PingOps turns a ping into a RequestOps with one spend, and returns the facts for the thread's
@@ -44,5 +55,5 @@ func PingOps(p Ping, b Billing) (RequestOps, PingFacts) {
 				Call:     &ModelCall{Host: p.Host, Model: p.Model, Usage: p.Usage},
 			}},
 		},
-		PingFacts{LastPing: p.At, PingWindow: change}
+		PingFacts{LastPing: p.At, PingWindow: change, PingUsage: p.Usage.Usage}
 }

@@ -327,3 +327,59 @@ func TestClientSizeFollowsFromResult(t *testing.T) {
 		}
 	}
 }
+
+// pingReadNeedsTheHost are the cases whose pingRead no usage can give, with the reason.
+var pingReadNeedsTheHost = map[string]string{
+	// The ping timed out and has no usage; the host set the extent from the next turn's read. A
+	// usage-only host cannot, and the library leaves the phase cold: the safe side.
+	"keepalive/ping-timeout-unknown-result/5m": "no usage",
+	// The case states a read shorter than the body its ping replays (its usage bills the whole
+	// body), to put a sibling's warm prefix past the ping's read. Only an explicit PingRead says that.
+	"keepalive/shared-past-ping-read/exact/5m": "read shorter than the replayed body",
+}
+
+// TestPingReadFromUsageMeetsEveryCase plays every case again as a host that knows no PingRead: each
+// step's pingRead is dropped and the usage of the ping before it is passed instead (PingFacts from
+// PingOps). The library derives the same extent, so every case still holds.
+func TestPingReadFromUsageMeetsEveryCase(t *testing.T) {
+	for _, c := range All() {
+		hasPingRead := false
+		for _, s := range c.Steps {
+			if !s.IsStandalone() && s.End.Facts.PingRead != nil {
+				hasPingRead = true
+			}
+		}
+		if !hasPingRead || pingReadNeedsTheHost[c.ID] != "" {
+			continue
+		}
+		t.Run(c.ID, func(t *testing.T) {
+			ts := accountant.NewTrackers()
+			var ping *accountant.Usage
+			for i, s := range c.Steps {
+				var res accountant.Result
+				if s.IsStandalone() {
+					res = accountant.ComputeStandalone(*s.Standalone)
+					for _, op := range s.Standalone.Ops {
+						if op.Kind == accountant.KindSpend && op.Operator == "keeper" && op.Call != nil {
+							u := op.Call.Usage.Usage
+							ping = &u
+						}
+					}
+				} else {
+					r := ts.BeginRequest(s.Begin.Meta, s.Begin.Client, s.Begin.ClientBreakpoints)
+					for _, op := range s.Add {
+						r.Add(op)
+					}
+					f := s.End.Facts.EntryFacts()
+					if f.PingRead != nil {
+						f.PingRead, f.PingUsage = nil, ping
+					}
+					r.EndRequest(s.End.Thread, s.End.Forwarded, s.End.Breakpoints, f)
+					res = r.Compute(s.Usage)
+					ping = nil
+				}
+				compare(t, i, s.Expected, res)
+			}
+		})
+	}
+}

@@ -85,11 +85,12 @@ the ping used. The host prices the result with `ComputeStandalone` (design §6.1
 the primary thread, and `PingOps` maps it to `"main"`.
 
 **The ping facts for the next request.** The same conversion returns the facts the next real
-request of the thread needs, as `accountant.PingFacts`: the ping's start time (`LastPing`) and its
-`ChangeID` (`PingWindow`). The extent the ping read (`PingRead`) is a position in the thread's body, so
-only the host knows it and the host adds it. The host keeps the last of them beside the thread's Tracker,
-and passes them in `EntryFacts.LastPing`, `PingRead` and `PingWindow` at that request's `EndRequest`.
-Then it clears them. A ping does not move
+request of the thread needs, as `accountant.PingFacts`: the ping's start time (`LastPing`), its
+`ChangeID` (`PingWindow`) and its usage (`PingUsage`). The host keeps the last of them beside the thread's
+Tracker, and copies them into that request's `EntryFacts` with `PingFacts.Apply` at its `EndRequest`.
+Then it clears them. The library derives the extent the ping read (`PingRead`) from the usage, because
+the keeper replays the previous request's body (design §5.2). A host that knows the extent sets
+`PingRead` itself. A ping does not move
 the thread's `ThreadState`.
 
 **The shared prefix (R54).** At the same `EndRequest` the host also sets `EntryFacts.SharedWarm`. It looks at the
@@ -224,7 +225,7 @@ sequenceDiagram
     Upstream-->>Keeper: response + billed usage
     Keeper->>Emitter: KeepAlivePing(KeepAliveReport)<br/>(existing path, unchanged)
     Emitter->>Emitter: convert report + Billing with the library<br/>-> RequestOps with one spend op<br/>(ChangeID = window ID, Billing from the ping's credential)
-    Emitter->>Emitter: keep the ping facts (start, PingRead, window ID)<br/>beside thread T's Tracker
+    Emitter->>Emitter: keep the ping facts (start, window ID, usage)<br/>beside thread T's Tracker
     Emitter->>Settle: RequestOps
     Settle->>Settle: ComputeStandalone(RequestOps), price Call.Usage
     Note over Settle: on the NEXT request on thread T,<br/>EndRequest passes the ping facts and<br/>the library adds a rescue cache effect<br/>with the SAME ChangeID -- ping cost and rescue<br/>value join under one change (design §4.4, W4.6)

@@ -255,6 +255,9 @@ type calcState struct {
 	fwdFD      int
 	clientFD   int
 	prevExtCli int // prevExt in client space, flat in the previous client body; -1 = none
+
+	derivedPingRead *Position // pingRead's cache; derivedPingOK is false when the ping read nothing
+	derivedPingOK   bool
 }
 
 func (r *Request) newCalc(s ThreadState, items []*item, usage Usage) *calcState {
@@ -434,6 +437,38 @@ func (c *calcState) candidates() []bp {
 	return out
 }
 
+// pingRead is the extent the last ping left cached, in the previous request's forwarded body:
+// Facts.PingRead when the host set it, else derived from Facts.PingUsage. A ping replays that body,
+// so its usage bills that body and gives its bytes-to-tokens ratio. The extent is the last position
+// its CacheRead plus CacheWrite covers: a ping that found the entry gone writes it again, and that
+// renews it as well as a read does (case keepalive/ping-miss-restarts-clock/5m). Every position is a
+// candidate, as for a read with no breakpoint, because the ping's usage is the only evidence. Nil
+// when neither is set or the ping cached nothing.
+func (c *calcState) pingRead() *Position {
+	f := c.r.Facts
+	if f.PingRead != nil {
+		return f.PingRead
+	}
+	prev := c.s.PrevPrint
+	if f.PingUsage == nil || prev == nil || len(prev.Forwarded.Pos) == 0 {
+		return nil
+	}
+	if c.derivedPingRead == nil {
+		u := *f.PingUsage
+		r := ratio{tokens: u.Input + u.CacheRead + u.CacheWrite, bytes: prev.Forwarded.cumBytes(len(prev.Forwarded.Pos) - 1)}
+		i := extent(prev.Forwarded, r, u.CacheRead+u.CacheWrite+u.CacheWrite1h, nil)
+		p := Position{}
+		if i >= 0 {
+			p = prev.Forwarded.position(i)
+		}
+		c.derivedPingRead, c.derivedPingOK = &p, i >= 0
+	}
+	if !c.derivedPingOK {
+		return nil
+	}
+	return c.derivedPingRead
+}
+
 // phaseAndBoundary finds the cache phase from the gaps (§5.2) and B* (§5.1).
 func (c *calcState) phaseAndBoundary(res *Result) {
 	prev, f := c.s.PrevPrint, c.r.Facts
@@ -450,9 +485,9 @@ func (c *calcState) phaseAndBoundary(res *Result) {
 			c.phase, c.prevExt = PhaseHot, mustFlat(prev.Forwarded, *c.s.Cache.Extent)
 		case f.Lifetime == LifetimeUnknown:
 			// an unknown lifetime cannot prove an expiry (R45)
-		case !f.LastPing.IsZero() && entryGap <= f.TTL && f.PingRead != nil:
+		case !f.LastPing.IsZero() && entryGap <= f.TTL && c.pingRead() != nil:
 			// a minimum counts as the lifetime for a rescue: 30 minutes is 30 minutes
-			c.phase, c.prevExt, c.pingHot = PhaseHot, mustFlat(prev.Forwarded, *f.PingRead), true
+			c.phase, c.prevExt, c.pingHot = PhaseHot, mustFlat(prev.Forwarded, *c.pingRead()), true
 		case f.Lifetime == LifetimeMinimum:
 			// with no ping, a gap past a minimum proves no expiry (R45)
 		default:
@@ -654,7 +689,7 @@ func (c *calcState) rescue(res *Result) {
 	if c.usage.CacheRead <= c.usage.CacheWrite {
 		return
 	}
-	n := min(c.ratio.of(c.fwd.cumBytes(mustFlat(c.fwd, *c.r.Facts.PingRead))), c.usage.CacheRead)
+	n := min(c.ratio.of(c.fwd.cumBytes(mustFlat(c.fwd, *c.pingRead()))), c.usage.CacheRead)
 	if w := c.r.Facts.SharedWarm; w != nil {
 		i, ok := c.fwd.flat(*w)
 		if !ok { // a host bug: a doubtful figure may only lower a saving, so credit nothing (R54)
@@ -669,7 +704,7 @@ func (c *calcState) rescue(res *Result) {
 	if n <= 0 {
 		return
 	}
-	e := CacheEffect{Kind: EffectRescue, ChangeID: c.r.Facts.PingWindow, To: c.r.Facts.PingRead, Estimated: true}
+	e := CacheEffect{Kind: EffectRescue, ChangeID: c.r.Facts.PingWindow, To: c.pingRead(), Estimated: true}
 	addWrite(&e.Saved, ttlName(c.r.Facts.TTL), n)
 	e.Caused.CacheRead = n
 	c.addEffect(res, e)
