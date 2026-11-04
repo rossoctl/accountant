@@ -143,7 +143,7 @@ func TestOperationOverMediaIsUnpricedWhenBillIsBelowMediaPrice(t *testing.T) {
 	}
 }
 
-// capturedWarnings runs f with a slog handler that counts the warnings it gets.
+// countWarnings runs f with a slog handler that counts the warnings it gets.
 func countWarnings(t *testing.T, f func()) int {
 	t.Helper()
 	var buf strings.Builder

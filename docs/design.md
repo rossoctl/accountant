@@ -1231,7 +1231,7 @@ check, the operator, the detail, and the request, session and thread IDs). `Prev
 3. **Unique `ChangeID`:** no two `rewrite` or `setting` context operations of one request, reported or active, have the same `ChangeID`. A `spend` or a cache effect may share the `ChangeID` of the change it belongs to.
 4. **Spans:** for a context operation with `Spans`, its `SizeBefore` and `SizeAfter` equal the sums over its spans.
 5. **Attribution:** a `break` effect's `ChangeID` is the `ChangeID` of a context operation of the same request, or empty. A `rescue`, `ttlPremium` and `ttlRescue` are exempt: their `ChangeID` is a keep-alive window or a head entry, which names no operation of this request.
-6. **Conservation:** the request total of the applied context operations and the cache effects equals the bill difference (§6.3).
+6. **Conservation:** the request total of the applied context operations and the cache effects equals the bill difference (§6.3). The ranges of operations unpriced for `media_tokens` are taken out of the bill difference (as `DryRun` operations are left out), because the operation prices none of it; every other operation stays in the check.
    Each size is compared at the request ratio, so a correct `Size.Tokens` passes (the gap between the host's tokens
    and the ratio's figure for the same bytes is taken out of the total). `DryRun` context operations are left out,
    because their content went upstream unchanged.
@@ -1255,6 +1255,7 @@ check, the operator, the detail, and the request, session and thread IDs). `Prev
     the bill less 0.05 tokens for each text byte, and gives the text the rest, which is the lowest text ratio that check 9
     allows. Every saving on text is then the lowest the bill allows. An operation whose range covers media goes to
     `Unpriced` with the reason `media_tokens`, because the bill does not say how it splits between that media and the text.
+    The tokens of such an operation's ranges are taken out of the bill difference of check 6.
     A range with `Size.Tokens` on both sizes is exact and stays priced. Every other operation is priced and `Estimated`.
 12. **Size tokens (`size_tokens`):** a `Size.Tokens` is between 0.05 tokens for each text byte and 2.0 tokens for each byte
     of its range (the limits of check 9). If it is not, the host's count is a bug: the library ignores it, converts the
