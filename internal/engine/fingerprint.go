@@ -23,6 +23,10 @@ type Fingerprint struct {
 type Body struct {
 	Start [3]int    `json:"start"`
 	Pos   []PosHash `json:"pos"`
+
+	// cum[i+1] is the bytes of positions 0..i. NewBody builds it. A Body made another way (decoded
+	// from JSON) has none, and cumBytes sums instead. Not part of the API.
+	cum []int
 }
 
 // PosHash holds hashes and sizes only (R2).
@@ -51,6 +55,10 @@ func NewBody(tools, system, messages [][]byte) Body {
 			h = (h ^ 0xff) * 1099511628211 // position separator
 			b.Pos = append(b.Pos, PosHash{Hash: h, Bytes: int32(len(p))})
 		}
+	}
+	b.cum = make([]int, len(b.Pos)+1)
+	for i, p := range b.Pos {
+		b.cum[i+1] = b.cum[i] + int(p.Bytes)
 	}
 	return b
 }

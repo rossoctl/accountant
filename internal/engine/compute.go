@@ -232,12 +232,13 @@ func apply(p Position, s *MessageSplice, into bool) (Position, bool) {
 
 // calcState is the working state of one calculation.
 type calcState struct {
-	r       *Request
-	s       ThreadState
-	items   []*item
-	usage   Usage
-	noUsage bool
-	ratio   ratio
+	r        *Request
+	s        ThreadState
+	items    []*item
+	splicers []int // indexes of the items with a MessageSplice; no other item moves a position
+	usage    Usage
+	noUsage  bool
+	ratio    ratio
 
 	client, fwd       Body
 	clientBPs, fwdBPs []bp
@@ -264,6 +265,11 @@ func (r *Request) newCalc(s ThreadState, items []*item, usage Usage) *calcState 
 	c := &calcState{r: r, s: s, items: items, usage: usage, client: r.Client, fwd: r.Forwarded,
 		prevExt: -1, bstar: -1, bstarFwd: -1, readEnd: -1, cachedFwd: -1, prevExtCli: -1}
 	c.noUsage = usage == (Usage{})
+	for j, it := range items {
+		if it.op.MessageSplice != nil {
+			c.splicers = append(c.splicers, j)
+		}
+	}
 	c.ratio = ratio{tokens: usage.Input + usage.CacheRead + usage.CacheWrite, bytes: r.Forwarded.cumBytes(len(r.Forwarded.Pos) - 1)}
 	c.clientBPs = c.client.breakpoints(r.ClientBreakpoints)
 	c.fwdBPs = c.fwd.breakpoints(r.Breakpoints)
@@ -350,7 +356,8 @@ func (c *calcState) insertionPoint(p Position) int {
 // toFwdSkipping is toFwd without item k's own splice. Content that k inserted is already at its
 // forwarded position: applying the insertion to it would shift it past itself.
 func (c *calcState) toFwdSkipping(k int, p Position) (Position, bool) {
-	for j, it := range c.items {
+	for _, j := range c.splicers {
+		it := c.items[j]
 		if j == k || it.ended || it.bad != "" || it.op.DryRun {
 			continue
 		}
@@ -367,7 +374,8 @@ func (c *calcState) toFwdSkipping(k int, p Position) (Position, bool) {
 // the position ended k, unless the splice did not see the original content (sawOriginal): then k
 // ran before it, and its change is inside what the splice replaced.
 func (c *calcState) toFwd(k int, p Position) (Position, bool) {
-	for j, it := range c.items {
+	for _, j := range c.splicers {
+		it := c.items[j]
 		if it.ended || it.bad != "" || it.op.DryRun {
 			continue
 		}
