@@ -225,14 +225,15 @@ numbers are not used: those requirements were dropped.
   import either host or any framework, so a third party can use it. Its public types are named for
   the model, not for context-guru or Cortex. A contract test in
   each repo pins it.
-- <a id="r26"></a>**R26.** `Compute` is deterministic: its result depends only on its record and on the
-  `ThreadState` that the record started from, and it does no I/O. The one exception is a warning through
+- <a id="r26"></a>**R26.** `Compute` is deterministic: its result depends only on its record, on the
+  `ThreadState` that the record started from and, for a fork's first request, on its parent's `ThreadState` at the
+  call, and it does no I/O. The one exception is a warning through
   `log/slog` for each failed check ([§6.5](design.md#65-checks)); it does not change the figure. The Tracker holds the `ThreadState`.
   As its last step `Compute` replaces it with the new one; a failure leaves the old one ([D14](design.md#d14)). The same
-  `ThreadState` and the same request give the same figure in the context-guru proxy and in Cortex.
+  `ThreadState` (and parent state) and the same request give the same figure in the context-guru proxy and in Cortex.
   One input is read from another thread: a fork's first request reads its parent's `ThreadState` as it is at the
   call ([§5.2](design.md#52-classifying-a-break)), so `Preview` and `Compute` can differ if the parent moved in between.
-  `Preview` gives the same figure and stores nothing.
+  `Preview` gives the same figure when the parent state did not move, and stores nothing.
 
 ### B. Coverage
 
