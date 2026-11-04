@@ -246,7 +246,16 @@ func (r *Request) seededFromParent(s ThreadState) (ThreadState, bool) {
 	if p == nil || ps.Cache.Extent == nil || p.Model != r.Meta.Model {
 		return s, false
 	}
-	if gap := r.Meta.At.Sub(p.At); gap < 0 || gap > r.Facts.TTL {
+	ttl := ps.Cache.EntryTTL // the parent's entry lives as long as the parent wrote it for
+	if ttl <= 0 {
+		ttl = r.Facts.TTL
+	}
+	if ps.Cache.Extent != nil { // the longest part decides, as in phaseAndBoundary: a 1h head outlives a 5m tail
+		for _, sg := range entrySegs(ps, ttl) {
+			ttl = max(ttl, sg.ttl)
+		}
+	}
+	if gap := r.Meta.At.Sub(p.At); gap < 0 || gap > ttl {
 		return s, false
 	}
 	i, ok := p.Forwarded.flat(*ps.Cache.Extent)

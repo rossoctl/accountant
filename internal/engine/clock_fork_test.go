@@ -5,13 +5,14 @@ import (
 	"time"
 )
 
-// The skew margin is bounded: 11 seconds past the TTL, the same read does not overrule the clock.
-func TestAReadPastTheSkewMarginStaysCold(t *testing.T) {
+// With no billed read, 11 seconds past the TTL is cold. (A billed read beats the clock at any gap:
+// TestAReadBeatsTheClockPastTheOldSkewMargin.)
+func TestNoReadPastTheTTLByElevenSecondsStaysCold(t *testing.T) {
 	ts := NewTrackers()
 	req{at: t0, client: mk(nil, nil, msgs(3, 1000)), clientBPs: bps5(msg(2)), facts: exact5m,
 		usage: Usage{CacheWrite: 3000}}.run(ts)
 	res := req{at: t0.Add(5*time.Minute + 11*time.Second), client: mk(nil, nil, msgs(4, 1000)), clientBPs: bps5(msg(3)),
-		facts: exact5m, usage: Usage{CacheRead: 3000, CacheWrite: 1000}}.run(ts)
+		facts: exact5m, usage: Usage{CacheWrite: 4000}}.run(ts)
 	if res.Phase != PhaseCold {
 		t.Fatalf("phase %q, want cold", res.Phase)
 	}

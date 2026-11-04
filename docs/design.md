@@ -193,7 +193,10 @@ type MessageSplice struct{ At, Removed, Inserted int } // messages only
 type CacheState struct {
     CachePhase CachePhase // hot | cold | unknown
     Extent     *Position  // the last position the entry covers; nil when nothing is covered
-    TTL        string     // "5m" | "1h": the lifetime the breakpoint asks for; empty when cold or unknown
+    TTL        string     // "5m" | "1h": the longest TTL of a breakpoint that wrote the entry; empty when cold or unknown
+    // EntryTTL is EntryFacts.TTL of the request that wrote the entry. The next request judges the
+    // entry with it, not with its own EntryFacts.TTL (§5.2). Zero when unknown: the next request's TTL is used.
+    EntryTTL time.Duration
 }
 
 // EntryFacts are the facts that decide the cache phase and that only the host knows. The host passes
@@ -201,7 +204,9 @@ type CacheState struct {
 // The library finds the two gaps itself (§5.2), from `ThreadState.PrevPrint.At`, `LastPing` and the
 // time of the request, so a recompute after another request (§6.1) uses the current state.
 type EntryFacts struct {
-    TTL  time.Duration // lifetime of the entry: 5m or 1h, from the breakpoint that wrote it
+    TTL  time.Duration // lifetime of the entry THIS request writes: 5m or 1h, from the breakpoint that writes it.
+                       // The next request judges the entry with it (CacheState.EntryTTL); this request is
+                       // judged by what the previous request wrote, not by this field (§5.2)
     // Lifetime says whether TTL is a proven expiry (exact) or only a guaranteed floor
     // (minimum): Anthropic's TTL is exact; OpenAI GPT-5.6+ states only a 30-minute minimum
     // with no documented maximum (R45, §5.2). A gap past TTL proves expiry only when exact.
@@ -754,15 +759,49 @@ A host that sums cache effects into a net skips each break with `InBaseline`.
 | 5 | No diff inside `prevExtent`, and the phase is `cold` | The cache expired. Add a break with no `ChangeID`, so the expiry is on the record ([R31](spec.md#r31)). It moves no tokens: B\* = 0 already prices every position as a write (§6.2), so the range from the read extent to B\* is empty, and the expiry is not counted twice. |
 | 6 | No previous fingerprint for this thread | First turn of the thread with no `Inherits`, or a restart: no break is added. B\* is unknown (§6.4). |
 
-The phase is found **before** the rows, from the gaps. It is the **cache state** that `Compute` uses ([R36](spec.md#r36)):
+The phase is found **before** the rows, from the gaps. It is the **cache state** that `Compute` uses ([R36](spec.md#r36)).
+
+**Which TTL.** The clock judges the entry the previous request *wrote*. In the table, "TTL" is the TTL of that
+entry, not `EntryFacts.TTL` of the current request (accountant#41). A 5m entry that a request asks to keep at 1h
+is still expired after 30 minutes. A 1h entry is alive after 10 minutes, whatever TTL the new request asks for.
+`CacheState.EntryTTL` keeps the `EntryFacts.TTL` of the writing request. A state from before that field (zero)
+falls back to the current `EntryFacts.TTL`.
+
+**Mixed TTLs.** The entry has one part for each breakpoint of the previous request, and each part lives for the TTL
+of its breakpoint (`Breakpoint.TTL`, accountant#40). The prefix up to a 1h breakpoint is alive for 1h, the prefix up
+to a 5m breakpoint for 5m. After 10 minutes a 1h head is alive and a 5m tail has expired. The phase is `hot` when any
+part is alive, and the `Extent` is the end of the last live part (the head, here). The part beyond the last
+breakpoint, up to the extent, has `EntryTTL` (`EntryFacts.TTL` of the writing request). A breakpoint whose TTL is
+not "5m" or "1h" (empty, or a typo in a stored state) also takes `EntryTTL`, with no warning. With a ping, the entry
+gap is compared with the longest TTL of the entry. If one part is alive on the clock and a ping kept another part
+alive, the clock-alive part wins: the phase is hot, there is no ping rescue, and the window is under-credited (the
+safe direction).
+
+**A read extends a live head.** When some part is alive on the clock, a billed read that covers the prefix of a
+clock-dead part (the 5m tail of a mixed entry) still extends the extent to that part. The 1,500 tokens of a tail change
+that the provider read are priced at the read tier, not as a 5m write. The read only lowers a saving (R45).
+
+**A fork** is seeded when the gap is within the longest part TTL of the parent's entry, the same rule. A fork that
+keeps only the 1h head of a mixed entry (and changes the 5m tail) is not seeded: the seed needs the whole extent.
+That is the safe direction (`unknown`).
+
+**The current request's `Facts.TTL`** must be above 0 for the clock branch and for the fork seed. With 0 the phase is
+`unknown` (a read can still prove it hot), whatever the state holds.
+
+**A billed read beats the clock.** When `Usage.CacheRead` covers the prefix of a part (with the tolerance of
+decision 7), that part was alive: the provider read it. The clock then loses at any gap, not only within 10 seconds.
+Reasons: the provider measures the TTL from the end of the previous response, and the library measures from the
+start of the previous request, so a long streamed response puts the gap past the TTL while the entry is alive.
+Clock skew and queue time act in the same way. The usage is the provider's own evidence, and it can only lower a
+saving (R45).
 
 | Case | `CachePhase` | `Extent` |
 |---|---|---|
-| A previous fingerprint exists, and the request gap ≤ TTL | `hot` | `prevExtent` |
+| A previous fingerprint exists, and the request gap ≤ TTL of at least one part of the entry | `hot` | the end of the longest live part (`prevExtent` when all are live) |
 | A previous fingerprint exists, the previous request cached nothing (its cache state was `cold`), and the request gap ≤ TTL | `hot` | empty: nothing can have been lost |
 | A previous fingerprint exists, the previous request cached nothing, the lifetime is `exact`, and the request gap > TTL | `cold` | nil |
 | A previous fingerprint exists, request gap > TTL, entry gap ≤ TTL, `PingRead` is set (or derived from `PingUsage`, below), and the lifetime is `exact` or `minimum`. The rescue also needs condition 3 of §4.4 | `hot`, and the library adds a rescue with `ChangeID = EntryFacts.PingWindow` (§4.4) | `PingRead` |
-| A previous fingerprint exists, request gap > TTL by at most 10 seconds, the lifetime is `exact`, no ping qualifies, and `Usage.CacheRead` covers the whole previous extent | `hot`, as for a request gap ≤ TTL. The provider read the entry, so clock skew or queue time moved the gap past the TTL. No rescue | `prevExtent` |
+| A previous fingerprint exists, request gap > TTL of every part, the lifetime is `exact`, no ping qualifies, and `Usage.CacheRead` covers the prefix of a part | `hot`. The provider read the entry, so the clock is wrong (clock skew, queue time, a long response). No rescue | the end of the longest part the read covers |
 | A previous fingerprint exists, request gap > TTL, the lifetime is `exact`, and no ping qualifies (none was sent, one was sent too late, or `PingRead` is unset and cannot be derived) | `cold`. A late ping gets no rescue | nil |
 | A previous fingerprint exists, request gap > TTL, no qualifying ping, and the lifetime is `minimum` or `unknown` | `unknown`, unless `Usage.CacheRead` proves a read (below) | nil |
 | No previous fingerprint for this thread | `unknown`, unless `Usage.CacheRead` proves a read (below) | nil |

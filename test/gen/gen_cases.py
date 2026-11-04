@@ -1042,16 +1042,17 @@ def c_clock():
     def edge(sec, rid, phase, read):
         u = U(read=T, write=500) if read else U(write=T + 500)
         return sim(sec, rid, ([], SYS1, c1), ([], SYS1, c1), [], phase, prev=(T, T), usage=u,
-                   base=U(read=T, write=500),
+                   base=u,
                    boundary=P("messages", 8) if phase == "hot" else None)
     write_issue("clock/ttl-edge-read-covers-extent/hot", 16,
                 "A request arrives 2 seconds past the 5m TTL, but the usage bills a read of all 30,000 tokens of the "
                 "previous extent. The provider held the entry (clock skew, queue time), so the phase is hot, not cold. "
-                "The margin is 10 seconds (design 5.2).",
+                "A billed read beats the clock (design 5.2).",
                 DIMS("none", "afterBStar", "hit"), [r0, edge(302, "r1", "hot", True)])
     write_issue("clock/ttl-edge-past-margin/cold", 16,
-                "The same read, 11 seconds past the TTL, is outside the 10 second margin. The phase stays cold.",
-                DIMS("none", "afterBStar", "miss"), [r0, edge(311, "r1", "cold", True)])
+                "The same request, 11 seconds past the TTL, bills no read: all 30,500 tokens are written. With no read "
+                "there is no evidence against the clock, so the phase stays cold.",
+                DIMS("none", "afterBStar", "miss"), [r0, edge(311, "r1", "cold", False)])
     b = M + [("b1", 500)]
     c = b + [("c", 500)]
     d = b + [("d", 500)]
@@ -1078,6 +1079,135 @@ def c_clock():
                 DIMS("none", "afterBStar", "fork", threads="2"),
                 [r0, sim(1200, "fork-0", ([], SYS1, fk), ([], SYS1, fk), [], "hot", prev=(T, T), boundary=P("messages", 9),
                          thread=sub, unpriced=[{"reason": "penalty_unknown"}])])
+
+
+# accountant#40 and #41: the clock judges the entry the previous request WROTE, breakpoint by breakpoint.
+# Every case: r0 has messages a=2000, b=3000, c=2000 tokens; change cg:ttl:c1 shrinks b to b2=1000 (-2000 tokens).
+# r1 adds d=500 and replays the change: its saving is 2000 tokens. Hot: read tier. Cold: write tier.
+def c_ttl():
+    CH = "cg:ttl:c1"
+    cm = [("a", 2000), ("b", 3000), ("c", 2000)]
+    fm = [("a", 2000), ("b2", 1000), ("c", 2000)]
+    c1m, f1m = cm + [("d", 500)], fm + [("d", 500)]
+    op = rewrite("o1", "mask", "messages", 1, 3000, 1000, CH)
+
+    def bpl(*pairs):
+        return [{"pos": P("messages", i), "ttl": t} for i, t in pairs]
+
+    def facts(ttl):
+        return {"ttl": ttl, "lifetime": "exact"}
+
+    def first(b0, ttl, w1h, saved, note):
+        # r0: unknown phase. The forwarded body is 5000 tokens, all written. The client body would write 7000.
+        # Of the saved 2000 tokens, the ones under a 1h mark are written at 1h.
+        return step(0, "r0", body([], [], cm), body([], [], fm), b0, b0, [op], U(write=5000, w1h=w1h),
+                    expect("unknown", U(write=7000, w1h=w1h + 2000 if saved == "1h" else w1h),
+                           [eop(CH, saved=TT(cacheWrite1h=2000) if saved == "1h" else TT(cacheWrite5m=2000), note=note)],
+                           unpriced=[{"reason": "penalty_unknown"}]),
+                    facts=facts(ttl))
+
+    # 1. #40: mixed marks, a 10 minute gap, a billed read of the 1h head.
+    mark0 = bpl((1, "1h"), (2, "5m"))
+    mark1 = bpl((1, "1h"), (3, "5m"))
+    s0 = step(0, "r0", body([], [], cm), body([], [], fm), mark0, mark0, [op], U(write=5000, w1h=3000),
+              expect("unknown", U(write=7000, w1h=5000),
+                     [eop(CH, saved=TT(cacheWrite1h=2000), note="the shrunk part is under the 1h mark")],
+                     unpriced=[{"reason": "penalty_unknown"}]), facts=facts("5m"))
+    s1 = step(600, "r1", body([], [], c1m), body([], [], f1m), mark1, mark1, [], U(read=3000, write=2500),
+              expect("hot", U(read=5000, write=2500),
+                     [eop(CH, saved=TT(cacheRead=2000), note="the 1h head is alive at minute 10: 2000 tokens are read")],
+                     boundary=P("messages", 1)),
+              facts=facts("5m"))
+    write_issue("ttl/mixed-1h-head-5m-tail/read-after-10-minutes", 40,
+                "r0 sends a 1h mark on messages[1] and a 5m mark on messages[2]. The change shrinks messages[1] from 3,000 "
+                "to 1,000 tokens. The forwarded head is 2,000 + 1,000 = 3,000 tokens (1h), the tail 2,000 (5m): r0 writes "
+                "5,000, of which 3,000 at 1h. r1 comes 10 minutes later with marks on messages[1] (1h) and messages[3] "
+                "(5m). The provider reads the 3,000-token 1h head and writes the 2,000 tail and the 500 new message again: "
+                "read 3,000, write 2,500. The 5m tail expired, the 1h head did not. The host reports Facts.TTL 5m. The "
+                "replayed 2,000 tokens are inside the head, so they are READ (2,000 x $0.30/M), not written. Before the fix "
+                "the phase was cold and the saving a 1h write (2,000 x $6.00/M).",
+                DIMS("rewrite", "afterBStarToL", "hit", ttl="mixed"), [s0, s1])
+
+    # 2. #41: a 5m entry, re-asked at 1h after 30 minutes.
+    m5 = bpl((2, "5m"))
+    m1h = bpl((3, "1h"))
+    s0 = first(m5, "5m", 0, "5m", "first request: nothing is cached")
+    s1 = step(1800, "r1", body([], [], c1m), body([], [], f1m), m1h, m1h, [], U(write=5500, w1h=5500),
+              expect("cold", U(write=7500, w1h=7500),
+                     [eop(CH, saved=TT(cacheWrite1h=2000), note="the 5m entry expired at minute 5: 2000 written at 1h")]),
+              facts=facts("1h"))
+    write_issue("ttl/5m-entry-asked-at-1h/cold-after-30-minutes", 41,
+                "r0 writes a 5m entry. r1 comes 30 minutes later and asks for a 1h mark (Facts.TTL 1h). The entry was "
+                "written for 5m and is long expired, so the phase is cold: r1 writes all 5,500 tokens at 1h. The replayed "
+                "2,000 tokens are written again at the tier of r1's mark: 2,000 x $6.00/M. Before the fix the library used "
+                "r1's TTL (1h), saw 30 minutes inside it, and said hot with a 2,000-token read.",
+                DIMS("rewrite", "afterBStarToL", "miss", ttl="5m-then-1h"), [s0, s1])
+
+    # 3. #41: a 1h entry, a 10 minute gap, a request with 5m marks.
+    m1h0 = bpl((2, "1h"))
+    m5b = bpl((3, "5m"))
+    s0 = first(m1h0, "1h", 5000, "1h", "first request: nothing is cached")
+    s1 = step(600, "r1", body([], [], c1m), body([], [], f1m), m5b, m5b, [], U(read=5000, write=500),
+              expect("hot", U(read=7000, write=500),
+                     [eop(CH, saved=TT(cacheRead=2000), note="the 1h entry is alive at minute 10: 2000 tokens are read")],
+                     boundary=P("messages", 2)),
+              facts=facts("5m"))
+    write_issue("ttl/1h-entry-asked-at-5m/hot-after-10-minutes", 41,
+                "r0 writes a 1h entry (5,000 tokens). r1 comes 10 minutes later with a 5m mark (Facts.TTL 5m) and the "
+                "provider reads the whole entry: read 5,000, write 500. The entry was written for 1h, so it is alive. The "
+                "replayed 2,000 tokens are read: 2,000 x $0.30/M. Before the fix the library used r1's TTL (5m), said cold "
+                "and booked a 5m write (2,000 x $3.75/M), 12.5 times too much.",
+                DIMS("rewrite", "afterBStarToL", "hit", ttl="1h-then-5m"), [s0, s1])
+
+    # 4. #41 related: a 5m entry, a 5m30s gap, a billed read of the whole entry.
+    s0 = first(m5, "5m", 0, "5m", "first request: nothing is cached")
+    s1 = step(330, "r1", body([], [], c1m), body([], [], f1m), bpl((3, "5m")), bpl((3, "5m")), [], U(read=5000, write=500),
+              expect("hot", U(read=7000, write=500),
+                     [eop(CH, saved=TT(cacheRead=2000), note="the provider read the entry: the read beats the clock")],
+                     boundary=P("messages", 2)),
+              facts=facts("5m"))
+    write_issue("clock/read-beats-clock-past-ttl/hot", 41,
+                "r0 writes a 5m entry (5,000 tokens). r1 comes 5 minutes 30 seconds later, 30 seconds past the TTL, "
+                "and the provider billed a read of the whole entry: read 5,000, write 500. The provider measures the TTL "
+                "from the end of the previous response, so a long streamed response can put the entry inside the TTL. "
+                "The billed read is the evidence, and it beats the clock at any gap: the phase is hot and the replayed "
+                "2,000 tokens are read (2,000 x $0.30/M). Before the fix the margin was 10 seconds and the phase was cold.",
+                DIMS("rewrite", "afterBStarToL", "hit"), [s0, s1])
+    # 5. Review round 1: the 1h head is alive, the 5m tail is dead on the clock, and the read covers the tail.
+    # r0: a=2000, b=3000, c=2000 -> c shrinks to c2=500. Forwarded 5500 (5000 at 1h). Client would write 7000.
+    c2m = [("a", 2000), ("b", 3000), ("c2", 500)]
+    mk0 = bpl((1, "1h"), (2, "5m"))
+    mk1 = bpl((1, "1h"), (3, "5m"))
+    op2 = rewrite("o1", "mask", "messages", 2, 2000, 500, CH)
+    s0 = step(0, "r0", body([], [], cm), body([], [], c2m), mk0, mk0, [op2], U(write=5500, w1h=5000),
+              expect("unknown", U(write=7000, w1h=5000),
+                     [eop(CH, saved=TT(cacheWrite5m=1500), note="first request: nothing is cached")],
+                     unpriced=[{"reason": "penalty_unknown"}]), facts=facts("5m"))
+    s1 = step(360, "r1", body([], [], c1m), body([], [], c2m + [("d", 500)]), mk1, mk1, [], U(read=5500, write=500),
+              expect("hot", U(read=7000, write=500),
+                     [eop(CH, saved=TT(cacheRead=1500), note="the tail is dead on the clock but was billed as a read")],
+                     boundary=P("messages", 2)), facts=facts("5m"))
+    write_issue("ttl/mixed-dead-tail-read/hot-after-6-minutes", 40,
+                "r0 sends a 1h mark on messages[1] and a 5m mark on messages[2]. The change shrinks messages[2] from 2,000 "
+                "to 500 tokens, so the forwarded body is 5,500 tokens and r0 writes 5,500, of which 5,000 at 1h. r1 comes "
+                "6 minutes later: the 1h head is alive, the 5m tail is dead on the clock. The provider billed a read of "
+                "all 5,500 tokens. The billed read proves the tail was alive, so the boundary is the end of messages[2] "
+                "and the replayed 1,500 tokens are READ (1,500 x $0.30/M = $0.00045). Without the read rule the library "
+                "stopped at the head and booked a 5m write (1,500 x $3.75/M).",
+                DIMS("rewrite", "afterBStarToL", "hit", ttl="mixed"), [s0, s1])
+
+    # 6. Review round 1: a fork of a mixed entry, 10 minutes later. The 1h head is alive, so the fork is seeded.
+    sub = {"id": "a:sub", "parent": "main"}
+    s0 = step(0, "r0", body([], [], cm), body([], [], cm), mark0, mark0, [], U(write=7000, w1h=5000),
+              expect("unknown", U(write=7000, w1h=5000), [], unpriced=[{"reason": "penalty_unknown"}]), facts=facts("5m"))
+    s1 = step(600, "fork-0", body([], [], c1m), body([], [], c1m), mark1, mark1, [], U(read=5000, write=2500),
+              expect("hot", U(read=5000, write=2500), [], boundary=P("messages", 1)), facts=facts("5m"), thread=sub)
+    write_issue("ttl/mixed-fork/seeded-while-head-alive", 40,
+                "The main thread writes a mixed entry: a 1h mark on messages[1] (a+b = 5,000 tokens) and a 5m mark on "
+                "messages[2] (7,000 tokens in all). A subagent forks 10 minutes later and keeps the whole prefix. The "
+                "5m tail is dead, the 1h head is alive, so the library seeds the fork from the parent. The phase is hot "
+                "at messages[1], with no penalty_unknown. The provider read the 5,000-token head and wrote 2,500.",
+                DIMS("none", "afterBStar", "fork", threads="2", ttl="mixed"), [s0, s1])
 
 
 # Three cases that mix sessions, threads and models.
@@ -2220,7 +2350,7 @@ if __name__ == "__main__":
     for old in os.listdir(OUT):  # the generator owns this directory: drop cases that no longer exist
         if old.endswith(".json"):
             os.remove(os.path.join(OUT, old))
-    for f in (ex12, ex3, ex4, ex5, ex67, ex8, shared_prefix_cases, ex9, c01, c02, c03_04, c05, c06, c07, c08, c09, c10, c11, c12, c_threads, c_clock, c_mix,
+    for f in (ex12, ex3, ex4, ex5, ex67, ex8, shared_prefix_cases, ex9, c01, c02, c03_04, c05, c06, c07, c08, c09, c10, c11, c12, c_threads, c_clock, c_ttl, c_mix,
               c14, c15, c16, c17, c18, a1, a2, a3, a4_b3, b1_b2, b4, b5, c1_, c2_, c2b, c3_, c5, d2, d3, d4,
               d5, d6, e2, e345, f245, h2, h5, r9, r14, r21, r20, r20b, c42, c42b, c42c, c42d, c43):
         f()

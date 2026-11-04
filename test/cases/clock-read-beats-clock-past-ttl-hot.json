@@ -1,0 +1,267 @@
+{
+ "id": "clock/read-beats-clock-past-ttl/hot",
+ "description": "r0 writes a 5m entry (5,000 tokens). r1 comes 5 minutes 30 seconds later, 30 seconds past the TTL, and the provider billed a read of the whole entry: read 5,000, write 500. The provider measures the TTL from the end of the previous response, so a long streamed response can put the entry inside the TTL. The billed read is the evidence, and it beats the clock at any gap: the phase is hot and the replayed 2,000 tokens are read (2,000 x $0.30/M). Before the fix the margin was 10 seconds and the phase was cold.",
+ "source": "issue_cases.md#41",
+ "dims": {
+  "kind": "rewrite",
+  "position": "afterBStarToL",
+  "cache": "hit",
+  "ttl": "5m",
+  "lifetime": "exact"
+ },
+ "rates": "fixture-v1",
+ "steps": [
+  {
+   "begin": {
+    "meta": {
+     "requestId": "r0",
+     "session": "s1",
+     "model": "agent-model",
+     "at": "2026-03-02T09:00:00Z",
+     "billing": {
+      "mode": "api"
+     }
+    },
+    "client": {
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "pos": [
+      {
+       "hash": 620337896427418084,
+       "bytes": 8000
+      },
+      {
+       "hash": 12340099932563210358,
+       "bytes": 12000
+      },
+      {
+       "hash": 14899682270663221853,
+       "bytes": 8000
+      }
+     ]
+    },
+    "clientBreakpoints": [
+     {
+      "pos": {
+       "section": "messages",
+       "index": 2
+      },
+      "ttl": "5m"
+     }
+    ]
+   },
+   "add": [
+    {
+     "id": "o1",
+     "kind": "rewrite",
+     "operator": "mask",
+     "at": {
+      "section": "messages",
+      "index": 1
+     },
+     "sizeBefore": {
+      "bytes": 12000
+     },
+     "sizeAfter": {
+      "bytes": 4000
+     },
+     "changeId": "cg:ttl:c1"
+    }
+   ],
+   "end": {
+    "thread": {
+     "id": "main"
+    },
+    "forwarded": {
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "pos": [
+      {
+       "hash": 620337896427418084,
+       "bytes": 8000
+      },
+      {
+       "hash": 4540961017517697664,
+       "bytes": 4000
+      },
+      {
+       "hash": 8551067516420745051,
+       "bytes": 8000
+      }
+     ]
+    },
+    "breakpoints": [
+     {
+      "pos": {
+       "section": "messages",
+       "index": 2
+      },
+      "ttl": "5m"
+     }
+    ],
+    "facts": {
+     "ttl": "5m",
+     "lifetime": "exact"
+    }
+   },
+   "usage": {
+    "input": 0,
+    "cacheRead": 0,
+    "cacheWrite": 5000,
+    "cacheWrite1h": 0
+   },
+   "expected": {
+    "phase": "unknown",
+    "baselineUsage": {
+     "input": 0,
+     "cacheRead": 0,
+     "cacheWrite": 7000,
+     "cacheWrite1h": 0
+    },
+    "ops": [
+     {
+      "changeId": "cg:ttl:c1",
+      "saved": {
+       "cacheWrite5m": 2000
+      },
+      "caused": {},
+      "estimated": true,
+      "note": "first request: nothing is cached"
+     }
+    ],
+    "unpriced": [
+     {
+      "reason": "penalty_unknown"
+     }
+    ]
+   }
+  },
+  {
+   "begin": {
+    "meta": {
+     "requestId": "r1",
+     "session": "s1",
+     "model": "agent-model",
+     "at": "2026-03-02T09:05:30Z",
+     "billing": {
+      "mode": "api"
+     }
+    },
+    "client": {
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "pos": [
+      {
+       "hash": 620337896427418084,
+       "bytes": 8000
+      },
+      {
+       "hash": 12340099932563210358,
+       "bytes": 12000
+      },
+      {
+       "hash": 14899682270663221853,
+       "bytes": 8000
+      },
+      {
+       "hash": 14661398692511680033,
+       "bytes": 2000
+      }
+     ]
+    },
+    "clientBreakpoints": [
+     {
+      "pos": {
+       "section": "messages",
+       "index": 3
+      },
+      "ttl": "5m"
+     }
+    ]
+   },
+   "add": [],
+   "end": {
+    "thread": {
+     "id": "main"
+    },
+    "forwarded": {
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "pos": [
+      {
+       "hash": 620337896427418084,
+       "bytes": 8000
+      },
+      {
+       "hash": 4540961017517697664,
+       "bytes": 4000
+      },
+      {
+       "hash": 8551067516420745051,
+       "bytes": 8000
+      },
+      {
+       "hash": 1426876972646721047,
+       "bytes": 2000
+      }
+     ]
+    },
+    "breakpoints": [
+     {
+      "pos": {
+       "section": "messages",
+       "index": 3
+      },
+      "ttl": "5m"
+     }
+    ],
+    "facts": {
+     "ttl": "5m",
+     "lifetime": "exact"
+    }
+   },
+   "usage": {
+    "input": 0,
+    "cacheRead": 5000,
+    "cacheWrite": 500,
+    "cacheWrite1h": 0
+   },
+   "expected": {
+    "phase": "hot",
+    "baselineUsage": {
+     "input": 0,
+     "cacheRead": 7000,
+     "cacheWrite": 500,
+     "cacheWrite1h": 0
+    },
+    "ops": [
+     {
+      "changeId": "cg:ttl:c1",
+      "saved": {
+       "cacheRead": 2000
+      },
+      "caused": {},
+      "estimated": true,
+      "note": "the provider read the entry: the read beats the clock"
+     }
+    ],
+    "boundary": {
+     "section": "messages",
+     "index": 2
+    }
+   }
+  }
+ ]
+}

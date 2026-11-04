@@ -1,6 +1,6 @@
 {
  "id": "clock/ttl-edge-past-margin/cold",
- "description": "The same read, 11 seconds past the TTL, is outside the 10 second margin. The phase stays cold.",
+ "description": "The same request, 11 seconds past the TTL, bills no read: all 30,500 tokens are written. With no read there is no evidence against the clock, so the phase stays cold.",
  "source": "issue_cases.md#16",
  "dims": {
   "kind": "none",
@@ -347,16 +347,16 @@
    },
    "usage": {
     "input": 0,
-    "cacheRead": 30000,
-    "cacheWrite": 500,
+    "cacheRead": 0,
+    "cacheWrite": 30500,
     "cacheWrite1h": 0
    },
    "expected": {
     "phase": "cold",
     "baselineUsage": {
      "input": 0,
-     "cacheRead": 30000,
-     "cacheWrite": 500,
+     "cacheRead": 0,
+     "cacheWrite": 30500,
      "cacheWrite1h": 0
     },
     "ops": [],
