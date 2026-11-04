@@ -12,10 +12,12 @@
 // The design leaves some rules open. This implementation decides them as follows. Each one is
 // the simplest rule that the design allows.
 //
-//  1. Tokens from bytes. Size is bytes only (§4.2 rule 7). The ratio is the billed prompt tokens
+//  1. Tokens from bytes. A Size is bytes (§4.2 rule 7), or tokens when the host sets Size.Tokens:
+//     those are used as they are and are not Estimated. The ratio is the billed prompt tokens
 //     (input + cache read + cache write) divided by the bytes of the forwarded body, because the
-//     billed tokens bill the forwarded body (§5.3). Every priced rewrite and every effect that uses
-//     the ratio is Estimated.
+//     billed tokens bill the forwarded body (§5.3). Base64 media (PosHash.Media, Size.MediaBytes)
+//     is left out of the ratio and priced at a fixed 250 bytes a token. Every priced rewrite that
+//     converts bytes and every effect that uses the ratio is Estimated.
 //  2. No usage. A response with no usage prices nothing (§8): every operation goes to Unpriced
 //     with ReasonNoUsage. The fixed fallback ratio of §4.2 rule 7 is not used.
 //  3. Extents from usage. The provider reports token counts, not positions. The read extent is the

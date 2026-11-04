@@ -192,11 +192,11 @@ func isChange(op Operation) bool {
 }
 
 func negative(op Operation) bool {
-	if op.SizeBefore.Bytes < 0 || op.SizeAfter.Bytes < 0 {
+	if op.SizeBefore.invalid() || op.SizeAfter.invalid() {
 		return true
 	}
 	for _, s := range op.Spans {
-		if s.SizeBefore.Bytes < 0 || s.SizeAfter.Bytes < 0 {
+		if s.SizeBefore.invalid() || s.SizeAfter.invalid() {
 			return true
 		}
 	}
@@ -228,6 +228,16 @@ func apply(p Position, s *MessageSplice, into bool) (Position, bool) {
 	}
 	p.Index = s.At
 	return p, into
+}
+
+// sizeTokens converts one reported size to tokens. A size the host counted (Tokens > 0) is exact.
+// Any other size is converted from its bytes with the request ratio, and so is an estimate. A size
+// of zero bytes is exactly zero tokens (§4.2 rule 7).
+func (c *calcState) sizeTokens(s Size) (tokens int, exact bool) {
+	if s.Tokens > 0 {
+		return s.Tokens, true
+	}
+	return c.ratio.tokensOf(s.Bytes, s.MediaBytes), s.Bytes == 0
 }
 
 // calcState is the working state of one calculation.
@@ -264,7 +274,7 @@ func (r *Request) newCalc(s ThreadState, items []*item, usage Usage) *calcState 
 	c := &calcState{r: r, s: s, items: items, usage: usage, client: r.Client, fwd: r.Forwarded,
 		prevExt: -1, bstar: -1, bstarFwd: -1, readEnd: -1, cachedFwd: -1, prevExtCli: -1}
 	c.noUsage = usage == (Usage{})
-	c.ratio = ratio{tokens: usage.Input + usage.CacheRead + usage.CacheWrite, bytes: r.Forwarded.cumBytes(len(r.Forwarded.Pos) - 1)}
+	c.ratio = newRatio(usage.Input+usage.CacheRead+usage.CacheWrite, r.Forwarded)
 	c.clientBPs = c.client.breakpoints(r.ClientBreakpoints)
 	c.fwdBPs = c.fwd.breakpoints(r.Breakpoints)
 	if p := s.PrevPrint; p != nil {
@@ -459,7 +469,7 @@ func (c *calcState) pingRead() *Position {
 		// Only the tokens the ping cached are in that body. Its Input after the prefix (a sweep question,
 		// a summary request) is billed but is not part of the body, so it would raise the ratio and pull
 		// the extent back to an earlier message.
-		r := ratio{tokens: u.CacheRead + u.CacheWrite, bytes: prev.Forwarded.cumBytes(len(prev.Forwarded.Pos) - 1)}
+		r := newRatio(u.CacheRead+u.CacheWrite, prev.Forwarded)
 		i := -1
 		if r.tokens > 0 { // a usage that bills no prompt token proves nothing about the extent
 			i = extent(prev.Forwarded, r, u.CacheRead+u.CacheWrite, nil)
@@ -554,7 +564,7 @@ func (c *calcState) phaseAndBoundary(res *Result) {
 // readCoversExtent reports whether the tokens the provider read reach the previous request's cached extent,
 // with the tolerance of extent. The extent is priced at the byte ratio of this request.
 func (c *calcState) readCoversExtent(prev *Fingerprint) bool {
-	want := c.ratio.of(prev.Forwarded.cumBytes(c.prevExt))
+	want := c.ratio.upTo(prev.Forwarded, c.prevExt)
 	return want > 0 && want <= c.usage.CacheRead+128+c.usage.CacheRead/50
 }
 
@@ -620,7 +630,7 @@ func (c *calcState) cacheEffects(res *Result) {
 		// past the 5m TTL only the entries held at 1h are still alive: a 5m part past the head expired
 		expect = min(expect, c.headEnd())
 	}
-	predicted := c.ratio.of(c.fwd.cumBytes(expect))
+	predicted := c.ratio.upTo(c.fwd, expect)
 	low := c.usage.CacheRead+128+predicted/50 < predicted // the one-block tolerance (row 4)
 	if !low {
 		return
@@ -697,7 +707,7 @@ func (c *calcState) addBreak(res *Result, from int, changeID string) {
 	if c.bstarFwd >= 0 {
 		p := c.fwd.position(c.bstarFwd)
 		e.To = &p
-		if n := c.ratio.of(c.fwd.cumBytes(c.bstarFwd) - c.fwd.cumBytes(from)); n > 0 {
+		if n := c.ratio.between(c.fwd, from, c.bstarFwd); n > 0 {
 			e.Saved.CacheRead = n
 			addWrite(&e.Caused, ttlAtOrAfter(c.fwdBPs, c.bstarFwd), n) // "" counts as 5m
 		}
@@ -717,7 +727,7 @@ func (c *calcState) rescue(res *Result) {
 	if c.usage.CacheRead <= 0 {
 		return
 	}
-	n := min(c.ratio.of(c.fwd.cumBytes(mustFlat(c.fwd, *c.pingRead()))), c.usage.CacheRead)
+	n := min(c.ratio.upTo(c.fwd, mustFlat(c.fwd, *c.pingRead())), c.usage.CacheRead)
 	if w := c.r.Facts.SharedWarm; w != nil {
 		i, ok := c.fwd.flat(*w)
 		if !ok { // a host bug: a doubtful figure may only lower a saving, so credit nothing (R54)
@@ -727,7 +737,7 @@ func (c *calcState) rescue(res *Result) {
 		}
 		// a sibling kept this part warm without the ping (R54). Two floors, so n can be 1 token off the single
 		// conversion: the same tolerance the conservation check allows.
-		n -= c.ratio.of(c.fwd.cumBytes(i))
+		n -= c.ratio.upTo(c.fwd, i)
 	}
 	if n <= 0 {
 		return
@@ -763,7 +773,7 @@ func (c *calcState) headTTL(res *Result) {
 	if head < 0 {
 		return
 	}
-	n := min(c.ratio.of(c.fwd.cumBytes(head)), c.usage.CacheRead)
+	n := min(c.ratio.upTo(c.fwd, head), c.usage.CacheRead)
 	e := CacheEffect{Kind: EffectTTLRescue, ChangeID: id, TTL: "1h", Estimated: true}
 	e.Saved.CacheWrite5m, e.Caused.CacheRead = n, n
 	c.addEffect(res, e)
@@ -791,9 +801,9 @@ func (c *calcState) split(res *Result) {
 	if c.s.PrevPrint == nil || c.clientFD >= c.client.sectionEnd(1) {
 		return
 	}
-	n := min(c.ratio.of(c.fwd.cumBytes(c.fwdFD-1)), c.usage.CacheRead)
+	n := min(c.ratio.upTo(c.fwd, c.fwdFD-1), c.usage.CacheRead)
 	if c.bstarFwd >= 0 { // the client body would have read up to B* anyway: only the rest is the split's
-		n -= c.ratio.of(c.fwd.cumBytes(c.bstarFwd))
+		n -= c.ratio.upTo(c.fwd, c.bstarFwd)
 	}
 	if n <= 0 {
 		return
@@ -871,6 +881,7 @@ func (c *calcState) price(res *Result) {
 			continue
 		}
 		p := priced(it.op, it.id)
+		estimated := false // true when a size is converted from bytes (§4.2 rule 7)
 		switch {
 		case it.bad != "":
 			res.Unpriced = append(res.Unpriced, Unpriced{OpID: it.id, Reason: it.bad})
@@ -879,9 +890,13 @@ func (c *calcState) price(res *Result) {
 		case resultUnknown(it.op):
 			res.Unpriced = append(res.Unpriced, Unpriced{OpID: it.id, Reason: ReasonPingResultUnknown})
 		case it.op.Kind == KindRewrite:
-			p.Estimated = true // the tokens come from the bytes ratio (§4.2 rule 7)
 			for _, sp := range it.spans {
-				d := c.ratio.of(sp.before.Bytes) - c.ratio.of(sp.after.Bytes)
+				bt, bx := c.sizeTokens(sp.before)
+				at, ax := c.sizeTokens(sp.after)
+				if !bx || !ax {
+					estimated = true
+				}
+				d := bt - at
 				if d > 0 {
 					addTier(&p.Saved, mustFlat(c.client, sp.from), c.bstar, c.clientBPs, d)
 				} else if d < 0 {
@@ -900,6 +915,7 @@ func (c *calcState) price(res *Result) {
 				}
 			}
 		}
+		p.Estimated = p.Estimated || estimated
 		if it.active {
 			active = append(active, p)
 		} else {
@@ -926,7 +942,7 @@ func (c *calcState) conservation(res *Result) {
 		tol++
 	}
 	billed := c.usage.Input + c.usage.CacheRead + c.usage.CacheWrite
-	want := c.ratio.of(c.client.cumBytes(len(c.client.Pos)-1)) - billed
+	want := c.ratio.upTo(c.client, len(c.client.Pos)-1) - billed
 	if d := want - net; d > tol+1 || d < -(tol+1) {
 		res.Checks = append(res.Checks, CheckFailure{Check: "conservation",
 			Detail: fmt.Sprintf("bill difference=%d ops=%d tokens", want, net)})

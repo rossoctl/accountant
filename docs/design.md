@@ -271,6 +271,14 @@ and can be reported as unpriced ([R19](spec.md#r19)).
    cache write). The provider bills the forwarded body, so the ratio is taken on it. If the request has no usage, the library uses a fixed fallback ratio. The library
    marks every priced result that uses this conversion as `Estimated`. No operator names a tokenizer,
    so two operators give the same tokens for the same bytes.
+   Two exceptions keep the ratio true (accountant#11):
+   - **Base64 media stays out of the ratio.** `NewBody` counts the base64 payload of image and
+     document blocks in `PosHash.Media`. The ratio uses the text bytes only, over the billed tokens
+     less the media tokens. Media is priced at a fixed 1 token for 250 bytes. A host that builds a
+     `Body` itself sets `PosHash.Media`. A host marks media inside a `Size` with `Size.MediaBytes`.
+   - **The host may pass tokens.** If a host knows the tokens of a range (a tokenizer, or a
+     count_tokens call), it sets `Size.Tokens`. The library uses them as they are, and does not mark
+     that size `Estimated`. `Tokens` 0 means not measured, and the bytes are converted.
 8. **The engine reports a change that `apply` writes, under the context operator that decided it.**
    `toolschema`, `toolfilter` and `cachesplit` are marker components: their `Reformat()` does
    nothing, and `apply` performs the rewrite (`apply/envelope.go`, `apply/prefixsplit.go`). `apply`
@@ -787,8 +795,8 @@ cache break (§6.2), which counts forwarded content between the break and B\*. T
 Both hosts send bytes for each forwarded position (`Body`) and for each operation (`Size`). The
 library converts both with the request's own ratio (billed prompt tokens ÷ body bytes), as
 `pricing.EstimateTokensFromBytes` does today. Results that use the ratio are marked `Estimated`.
-No host sends a token count, so the same tokens in both hosts holds whenever the two hosts receive
-the same bodies and the same operations.
+A host may also send a token count in `Size.Tokens` (§4.2 rule 7). The same tokens in both hosts
+holds whenever the two hosts receive the same bodies and the same operations.
 
 ## 6. The library
 
@@ -1225,8 +1233,9 @@ Where a question has test cases, a host that compares them with its own code mar
 - <a id="q3"></a>**Q3. Accuracy of the bytes ratio.** The request ratio is an average. Removed content (large JSON
    tool output) may have fewer bytes per token than the average request. Option: `Size` takes a
    content class (`text`, `json`, `binary`) and the library keeps a ratio for each class. Decide
-   after measuring the error on real sessions. An optional `Tokens` field on `Size`, which
-   the library would use instead of estimating, is also possible.
+   after measuring the error on real sessions. The optional `Tokens` field on `Size` is done
+   (accountant#11), as is the exclusion of base64 media from the ratio. A content class and an error
+   range for each `PricedOp` are still open.
 
 - <a id="q4"></a>**Q4. Where the previous request's hashes live.** The counterfactual needs the previous request's
    hashes on the same thread. The current design (D12, wiring document) has the host keep one

@@ -1,6 +1,9 @@
 package engine
 
-import "time"
+import (
+	"bytes"
+	"time"
+)
 
 // Fingerprint is the most recent request of one thread (§5.1). The library builds it inside
 // Compute, because Cached comes from the usage, which arrives after the response.
@@ -29,6 +32,9 @@ type Body struct {
 type PosHash struct {
 	Hash  uint64 `json:"hash"` // cumulative: equal hashes mean an equal prefix up to this position
 	Bytes int32  `json:"bytes"`
+	// Media is the part of Bytes that is a base64 image or document block. NewBody finds it. The
+	// token ratio leaves it out (§4.2 rule 7). It is not in the hash.
+	Media int32 `json:"media,omitempty"`
 }
 
 // Breakpoint is a cache breakpoint in a body.
@@ -49,8 +55,42 @@ func NewBody(tools, system, messages [][]byte) Body {
 				h = (h ^ uint64(c)) * 1099511628211
 			}
 			h = (h ^ 0xff) * 1099511628211 // position separator
-			b.Pos = append(b.Pos, PosHash{Hash: h, Bytes: int32(len(p))})
+			b.Pos = append(b.Pos, PosHash{Hash: h, Bytes: int32(len(p)), Media: int32(mediaBytes(p))})
 		}
 	}
 	return b
+}
+
+// mediaBytes counts the base64 payload of the media blocks in one position: the value of each
+// "data" string that follows a "base64" source type, as in {"type":"base64","media_type":"image/png",
+// "data":"..."}. It does not parse JSON, and the payload is never kept (R2).
+func mediaBytes(p []byte) int {
+	const marker = `"base64"`
+	n := 0
+	for rest := p; ; {
+		i := bytes.Index(rest, []byte(marker))
+		if i < 0 {
+			return n
+		}
+		rest = rest[i+len(marker):]
+		j := bytes.Index(rest, []byte(`"data"`))
+		if j < 0 {
+			return n
+		}
+		k := j + len(`"data"`)
+		// skip spaces and the colon, then the opening quote
+		for k < len(rest) && (rest[k] == ' ' || rest[k] == ':') {
+			k++
+		}
+		if k >= len(rest) || rest[k] != '"' {
+			continue
+		}
+		k++
+		end := bytes.IndexByte(rest[k:], '"')
+		if end < 0 {
+			return n + len(rest) - k
+		}
+		n += end
+		rest = rest[k+end:]
+	}
 }
