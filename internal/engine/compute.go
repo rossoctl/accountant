@@ -245,7 +245,7 @@ type calcState struct {
 	usage    Usage
 	noUsage  bool
 	invalid  string // the reason the usage or breakpoints cannot be trusted; "" when they can (§6.5, checks 8 to 10)
-	seeded   bool // s.PrevPrint is the parent's fingerprint (seededFromParent), not this thread's own
+	seeded   bool   // s.PrevPrint is the parent's fingerprint (seededFromParent), not this thread's own
 	ratio    ratio
 
 	client, fwd       Body
