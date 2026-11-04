@@ -1,5 +1,7 @@
 package engine
 
+import "sort"
+
 // Helpers on Body positions. Inside the library a position is a flat index into Body.Pos, because
 // the flat order is the provider's hash order (§4.3). -1 means "before the first position".
 
@@ -53,6 +55,25 @@ func (b Body) cumBytes(i int) int {
 		n += int(b.Pos[j].Bytes)
 	}
 	return n
+}
+
+// buildPrefix fills cum and cumMed from Pos.
+func (b *Body) buildPrefix() {
+	b.cum = make([]int, len(b.Pos)+1)
+	b.cumMed = make([]int, len(b.Pos)+1)
+	for i, p := range b.Pos {
+		b.cum[i+1] = b.cum[i] + int(p.Bytes)
+		b.cumMed[i+1] = b.cumMed[i] + int(max(min(p.Media, p.Bytes), 0)) // a host-built Media outside 0..Bytes is clamped
+	}
+}
+
+// withPrefix returns b with its prefix sums built. A Body from NewBody or Restore has them; one
+// decoded from JSON does not.
+func (b Body) withPrefix() Body {
+	if len(b.cum) != len(b.Pos)+1 || len(b.cumMed) != len(b.Pos)+1 {
+		b.buildPrefix()
+	}
+	return b
 }
 
 func (b Body) sectionBytes(s int) int {
@@ -114,6 +135,9 @@ const mediaBytesPerToken = 250
 
 // cumMedia returns the media bytes of positions 0..i; 0 for i < 0.
 func (b Body) cumMedia(i int) int {
+	if len(b.cumMed) == len(b.Pos)+1 { // built by NewBody or Restore
+		return b.cumMed[min(max(i+1, 0), len(b.Pos))]
+	}
 	n := 0
 	for j := 0; j <= i && j < len(b.Pos); j++ {
 		n += int(max(min(b.Pos[j].Media, b.Pos[j].Bytes), 0)) // a host-built Media outside 0..Bytes is clamped
@@ -163,19 +187,17 @@ func extent(b Body, r ratio, tokens int, candidates []bp) int {
 		return -1
 	}
 	limit := tokens + 128 + tokens/50
-	best := -1
-	try := func(i int) {
-		if i > best && r.upTo(b, i) <= limit {
-			best = i
-		}
-	}
+	b = b.withPrefix()
 	if len(candidates) == 0 {
-		for i := range b.Pos {
-			try(i)
-		}
+		// upTo grows with i (the prefix sums never fall), so the fitting positions are a prefix
+		// of the body: binary search for its end.
+		return sort.Search(len(b.Pos), func(i int) bool { return r.upTo(b, i) > limit }) - 1
 	}
+	best := -1
 	for _, c := range candidates {
-		try(c.at)
+		if c.at > best && r.upTo(b, c.at) <= limit {
+			best = c.at
+		}
 	}
 	return best
 }
