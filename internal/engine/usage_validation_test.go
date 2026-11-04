@@ -1,6 +1,9 @@
 package engine
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 // Issue #12: usage that does not fit the body must not book a saving.
 
@@ -63,4 +66,53 @@ func TestFourBreakpointsAndEmptyTTLAreValid(t *testing.T) {
 	if hasUnpriced(res, ReasonBreakpoints) || hasUnpriced(res, ReasonBadUsage) || hasUnpriced(res, ReasonRatioRange) || len(res.Checks) != 0 {
 		t.Fatalf("Unpriced=%+v Checks=%+v, want none", res.Unpriced, res.Checks)
 	}
+}
+
+// Design §6.5: the reason is the first check that fails, in the order 8, 9, 10. A request with 8 breakpoints
+// and 20 tokens per byte fails check 9 first.
+func TestTheReasonIsTheFirstCheckThatFails(t *testing.T) {
+	var many []Breakpoint
+	for i := range 8 {
+		many = append(many, bp5(msg(i)))
+	}
+	body := mk(nil, nil, msgs(8, 100)) // 800 bytes
+	res := req{at: t0, client: body, clientBPs: many, facts: exact5m, usage: Usage{CacheRead: 16000}}.run(NewTrackers())
+	if !hasCheck(res, ReasonRatioRange) || hasCheck(res, ReasonBreakpoints) {
+		t.Fatalf("Checks = %+v, want ratio_range only", res.Checks)
+	}
+}
+
+// A usage with only CacheWrite1h is malformed (it is part of CacheWrite, never an addition). An empty body
+// with billed tokens has an infinite ratio, which is outside the range too.
+func TestAMalformedOrInfiniteUsageIsRefused(t *testing.T) {
+	body := mk(nil, nil, []blk{b("a", 10000)})
+	res := req{at: t0, client: body, clientBPs: bps5(msg(0)), facts: exact5m, usage: Usage{CacheWrite1h: 500}}.run(NewTrackers())
+	if !hasCheck(res, ReasonBadUsage) {
+		t.Fatalf("1h-only usage: Checks = %+v, want bad_usage (CacheWrite1h is part of CacheWrite)", res.Checks)
+	}
+	res = req{at: t0, client: mk(nil, nil, nil), facts: exact5m, usage: Usage{Input: 500}}.run(NewTrackers())
+	if !hasCheck(res, ReasonRatioRange) {
+		t.Fatalf("empty body: Checks = %+v, want ratio_range", res.Checks)
+	}
+}
+
+// After a failed check the next request has an unknown cache state, as after a response with no usage (§6.5).
+func TestTheRequestAfterAFailedCheckIsUnknown(t *testing.T) {
+	ts := NewTrackers()
+	body := mk(nil, nil, []blk{b("a", 5000)})
+	req{at: t0, client: body, clientBPs: bps5(msg(0)), facts: exact5m, usage: Usage{CacheRead: 100000}}.run(ts)
+	res := req{at: t0.Add(time.Minute), client: body, clientBPs: bps5(msg(0)), facts: exact5m,
+		usage: Usage{Input: 5000}}.run(ts)
+	if res.Phase != PhaseUnknown {
+		t.Fatalf("phase %q, want unknown after a failed check", res.Phase)
+	}
+}
+
+func hasCheck(res Result, name string) bool {
+	for _, c := range res.Checks {
+		if c.Check == name {
+			return true
+		}
+	}
+	return false
 }

@@ -1168,9 +1168,12 @@ check, the operator, the detail, and the request, session and thread IDs). `Prev
 7. **Shared warm:** `EntryFacts.SharedWarm`, when set, is a position in the forwarded body. If it is not, the check fails
    with the section and index, and the keep-alive rescue of that request is not credited ([R54](spec.md#r54)).
    A doubtful figure may only lower a saving.
-8. **Usage sign:** no count in `Usage` is negative. If one is, the check `bad_usage` fails.
+8. **Usage sign:** no count in `Usage` is negative, and `CacheWrite1h` is not larger than `CacheWrite` (it is part of
+   it, never an addition). If one is, the check `bad_usage` fails.
 9. **Ratio range:** the tokens per forwarded byte, `(Input + CacheRead + CacheWrite) / bytes`, is from 0.05 to 2.0.
-   If it is outside that range, the usage does not fit the body, and the check `ratio_range` fails. Without this
+   If it is outside that range, the usage does not fit the body, and the check `ratio_range` fails. A ratio of 0
+   (a body with bytes and no billed prompt token) and an infinite ratio (billed tokens and an empty body) are outside
+   the range too. Without this
    check the ratio, and so the conservation check (check 6), agree with themselves for any usage.
 10. **Breakpoints:** a request has at most 4 forwarded breakpoints (the Anthropic limit), and each TTL (client and
     forwarded) is `"5m"`, `"1h"` or empty (empty counts as `5m`). Otherwise the check `breakpoints` fails.

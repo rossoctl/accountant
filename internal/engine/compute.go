@@ -894,16 +894,25 @@ func (c *calcState) validate(u Usage) string {
 		return ""
 	}
 	switch {
-	case u.Input < 0 || u.CacheRead < 0 || u.CacheWrite < 0 || u.CacheWrite1h < 0:
+	case u.Input < 0 || u.CacheRead < 0 || u.CacheWrite < 0 || u.CacheWrite1h < 0 || u.CacheWrite1h > u.CacheWrite:
 		return ReasonBadUsage
+	case c.badRatio():
+		return ReasonRatioRange
 	case c.badBreakpoints():
 		return ReasonBreakpoints
-	case c.ratio.bytes > 0 && c.ratio.tokens > 0 &&
-		(float64(c.ratio.tokens) < minTokensPerByte*float64(c.ratio.bytes) ||
-			float64(c.ratio.tokens) > maxTokensPerByte*float64(c.ratio.bytes)):
-		return ReasonRatioRange
 	}
 	return ""
+}
+
+// badRatio says whether the tokens per forwarded byte are outside 0.05 to 2.0 (check 9). A usage that
+// bills no prompt token for a body with bytes (tokens per byte 0), or tokens for an empty body (infinite),
+// is outside the range too.
+func (c *calcState) badRatio() bool {
+	t, n := float64(c.ratio.tokens), float64(c.ratio.bytes)
+	if t == 0 || n == 0 {
+		return true
+	}
+	return t < minTokensPerByte*n || t > maxTokensPerByte*n
 }
 
 // badBreakpoints says whether the forwarded body has more than 4 breakpoints, or any breakpoint
