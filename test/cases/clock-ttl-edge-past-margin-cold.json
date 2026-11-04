@@ -1,0 +1,376 @@
+{
+ "id": "clock/ttl-edge-past-margin/cold",
+ "description": "The same read, 11 seconds past the TTL, is outside the 10 second margin. The phase stays cold.",
+ "source": "issue_cases.md#16",
+ "dims": {
+  "kind": "none",
+  "position": "afterBStar",
+  "cache": "miss",
+  "ttl": "5m",
+  "lifetime": "exact"
+ },
+ "rates": "fixture-v1",
+ "steps": [
+  {
+   "begin": {
+    "meta": {
+     "requestId": "r0",
+     "session": "s1",
+     "model": "agent-model",
+     "at": "2026-03-02T09:00:00Z",
+     "billing": {
+      "mode": "api"
+     }
+    },
+    "client": {
+     "start": [
+      0,
+      0,
+      1
+     ],
+     "pos": [
+      {
+       "hash": 11074467856982677247,
+       "bytes": 8000
+      },
+      {
+       "hash": 16616267534773330454,
+       "bytes": 16000
+      },
+      {
+       "hash": 2966253261979961008,
+       "bytes": 12000
+      },
+      {
+       "hash": 2081818211719572733,
+       "bytes": 12000
+      },
+      {
+       "hash": 7285214446445393403,
+       "bytes": 12000
+      },
+      {
+       "hash": 8639518196644133190,
+       "bytes": 12000
+      },
+      {
+       "hash": 100555197456561604,
+       "bytes": 12000
+      },
+      {
+       "hash": 15814600468007131557,
+       "bytes": 12000
+      },
+      {
+       "hash": 272910142480290119,
+       "bytes": 12000
+      },
+      {
+       "hash": 2079522210389081174,
+       "bytes": 12000
+      }
+     ]
+    },
+    "clientBreakpoints": [
+     {
+      "pos": {
+       "section": "system",
+       "index": 0
+      },
+      "ttl": "5m"
+     },
+     {
+      "pos": {
+       "section": "messages",
+       "index": 8
+      },
+      "ttl": "5m"
+     }
+    ]
+   },
+   "add": [],
+   "end": {
+    "thread": {
+     "id": "main"
+    },
+    "forwarded": {
+     "start": [
+      0,
+      0,
+      1
+     ],
+     "pos": [
+      {
+       "hash": 11074467856982677247,
+       "bytes": 8000
+      },
+      {
+       "hash": 16616267534773330454,
+       "bytes": 16000
+      },
+      {
+       "hash": 2966253261979961008,
+       "bytes": 12000
+      },
+      {
+       "hash": 2081818211719572733,
+       "bytes": 12000
+      },
+      {
+       "hash": 7285214446445393403,
+       "bytes": 12000
+      },
+      {
+       "hash": 8639518196644133190,
+       "bytes": 12000
+      },
+      {
+       "hash": 100555197456561604,
+       "bytes": 12000
+      },
+      {
+       "hash": 15814600468007131557,
+       "bytes": 12000
+      },
+      {
+       "hash": 272910142480290119,
+       "bytes": 12000
+      },
+      {
+       "hash": 2079522210389081174,
+       "bytes": 12000
+      }
+     ]
+    },
+    "breakpoints": [
+     {
+      "pos": {
+       "section": "system",
+       "index": 0
+      },
+      "ttl": "5m"
+     },
+     {
+      "pos": {
+       "section": "messages",
+       "index": 8
+      },
+      "ttl": "5m"
+     }
+    ],
+    "facts": {
+     "ttl": "5m",
+     "lifetime": "exact"
+    }
+   },
+   "usage": {
+    "input": 0,
+    "cacheRead": 0,
+    "cacheWrite": 30000,
+    "cacheWrite1h": 0
+   },
+   "expected": {
+    "phase": "unknown",
+    "baselineUsage": {
+     "input": 0,
+     "cacheRead": 0,
+     "cacheWrite": 30000,
+     "cacheWrite1h": 0
+    },
+    "ops": [],
+    "unpriced": [
+     {
+      "reason": "penalty_unknown"
+     }
+    ]
+   }
+  },
+  {
+   "begin": {
+    "meta": {
+     "requestId": "r1",
+     "session": "s1",
+     "model": "agent-model",
+     "at": "2026-03-02T09:05:11Z",
+     "billing": {
+      "mode": "api"
+     }
+    },
+    "client": {
+     "start": [
+      0,
+      0,
+      1
+     ],
+     "pos": [
+      {
+       "hash": 11074467856982677247,
+       "bytes": 8000
+      },
+      {
+       "hash": 16616267534773330454,
+       "bytes": 16000
+      },
+      {
+       "hash": 2966253261979961008,
+       "bytes": 12000
+      },
+      {
+       "hash": 2081818211719572733,
+       "bytes": 12000
+      },
+      {
+       "hash": 7285214446445393403,
+       "bytes": 12000
+      },
+      {
+       "hash": 8639518196644133190,
+       "bytes": 12000
+      },
+      {
+       "hash": 100555197456561604,
+       "bytes": 12000
+      },
+      {
+       "hash": 15814600468007131557,
+       "bytes": 12000
+      },
+      {
+       "hash": 272910142480290119,
+       "bytes": 12000
+      },
+      {
+       "hash": 2079522210389081174,
+       "bytes": 12000
+      },
+      {
+       "hash": 10840872981498827576,
+       "bytes": 2000
+      }
+     ]
+    },
+    "clientBreakpoints": [
+     {
+      "pos": {
+       "section": "system",
+       "index": 0
+      },
+      "ttl": "5m"
+     },
+     {
+      "pos": {
+       "section": "messages",
+       "index": 9
+      },
+      "ttl": "5m"
+     }
+    ]
+   },
+   "add": [],
+   "end": {
+    "thread": {
+     "id": "main"
+    },
+    "forwarded": {
+     "start": [
+      0,
+      0,
+      1
+     ],
+     "pos": [
+      {
+       "hash": 11074467856982677247,
+       "bytes": 8000
+      },
+      {
+       "hash": 16616267534773330454,
+       "bytes": 16000
+      },
+      {
+       "hash": 2966253261979961008,
+       "bytes": 12000
+      },
+      {
+       "hash": 2081818211719572733,
+       "bytes": 12000
+      },
+      {
+       "hash": 7285214446445393403,
+       "bytes": 12000
+      },
+      {
+       "hash": 8639518196644133190,
+       "bytes": 12000
+      },
+      {
+       "hash": 100555197456561604,
+       "bytes": 12000
+      },
+      {
+       "hash": 15814600468007131557,
+       "bytes": 12000
+      },
+      {
+       "hash": 272910142480290119,
+       "bytes": 12000
+      },
+      {
+       "hash": 2079522210389081174,
+       "bytes": 12000
+      },
+      {
+       "hash": 10840872981498827576,
+       "bytes": 2000
+      }
+     ]
+    },
+    "breakpoints": [
+     {
+      "pos": {
+       "section": "system",
+       "index": 0
+      },
+      "ttl": "5m"
+     },
+     {
+      "pos": {
+       "section": "messages",
+       "index": 9
+      },
+      "ttl": "5m"
+     }
+    ],
+    "facts": {
+     "ttl": "5m",
+     "lifetime": "exact"
+    }
+   },
+   "usage": {
+    "input": 0,
+    "cacheRead": 30000,
+    "cacheWrite": 500,
+    "cacheWrite1h": 0
+   },
+   "expected": {
+    "phase": "cold",
+    "baselineUsage": {
+     "input": 0,
+     "cacheRead": 30000,
+     "cacheWrite": 500,
+     "cacheWrite1h": 0
+    },
+    "ops": [],
+    "effects": [
+     {
+      "kind": "break",
+      "changeId": "",
+      "saved": {},
+      "caused": {},
+      "inBaseline": true,
+      "note": "the entry expired; B* is 0, so the read extent to B* is empty"
+     }
+    ]
+   }
+  }
+ ]
+}

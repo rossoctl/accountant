@@ -174,6 +174,9 @@ type EntryFacts struct {
 	// session read or wrote inside the TTL before this request. That prefix was warm without the ping,
 	// so a rescue does not credit it. Nil when no other thread touched the entry.
 	SharedWarm *Position `json:"sharedWarm,omitempty"`
+	// MinCacheable is the model's minimum cacheable length in tokens (512, 1024, 2048 or 4096). A write at a
+	// breakpoint whose prefix is shorter is priced as input (§5.1). 0 = not set: no minimum applies.
+	MinCacheable int `json:"minCacheable,omitempty"`
 }
 
 // The enums are strings, not integers, so an unknown value from a newer operator survives a

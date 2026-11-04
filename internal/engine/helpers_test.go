@@ -72,6 +72,7 @@ type req struct {
 	fwdBPs    []Breakpoint
 	facts     EntryFacts
 	usage     Usage
+	thread    Thread // zero value = the main thread
 }
 
 func (q req) begin(ts *Trackers) *Request {
@@ -86,7 +87,11 @@ func (q req) begin(ts *Trackers) *Request {
 	if fbp == nil {
 		fbp = q.clientBPs
 	}
-	r.EndRequest(Thread{ID: "main"}, fwd, fbp, q.facts)
+	th := q.thread
+	if th.ID == "" {
+		th.ID = "main"
+	}
+	r.EndRequest(th, fwd, fbp, q.facts)
 	return r
 }
 

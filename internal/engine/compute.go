@@ -128,8 +128,10 @@ func opSpans(op Operation) []span {
 // changes nothing it is given.
 func (r *Request) calc(s ThreadState, usage Usage) (Result, ThreadState) {
 	res := Result{Version: 1, Recomputed: s.Version != r.start.Version}
+	s, seeded := r.seededFromParent(s)
 	items := r.items(s)
 	c := r.newCalc(s, items, usage)
+	c.seeded = seeded
 
 	c.phaseAndBoundary(&res)
 	if !c.skipsPricing() {
@@ -300,6 +302,7 @@ type calcState struct {
 	usage    Usage
 	noUsage  bool
 	invalid  string // the reason the usage or breakpoints cannot be trusted; "" when they can (§6.5, checks 8 to 10)
+	seeded   bool   // s.PrevPrint is the parent's fingerprint (seededFromParent), not this thread's own
 	ratio    ratio
 	hostGap  int // saved tokens that come from Size.Tokens beyond the ratio's figure (check 6)
 
@@ -552,7 +555,9 @@ func (c *calcState) pingRead() *Position {
 func (c *calcState) phaseAndBoundary(res *Result) {
 	prev, f := c.s.PrevPrint, c.r.Facts
 	c.phase = PhaseUnknown
-	if prev != nil && f.TTL > 0 && c.s.Cache.Extent != nil {
+	// A request that started before the stored one has no valid gap: the clock says nothing about the
+	// entry, so the phase is left to the usage (accountant#16). Hot from a negative gap would be a guess.
+	if prev != nil && f.TTL > 0 && c.s.Cache.Extent != nil && !c.r.Meta.At.Before(prev.At) {
 		gap := c.r.Meta.At.Sub(prev.At)
 		last := prev.At
 		if f.LastPing.After(last) {
@@ -571,7 +576,14 @@ func (c *calcState) phaseAndBoundary(res *Result) {
 			// with no ping, a gap past a minimum proves no expiry (R45)
 		default:
 			c.phase = PhaseCold
+			if gap-f.TTL <= ttlSkew && c.usage.CacheRead > 0 && c.readReaches(prev.Forwarded, mustFlat(prev.Forwarded, *c.s.Cache.Extent)) {
+				// The clock says expired by at most ttlSkew, but the provider billed a read that covers the whole previous
+				// extent (clock skew, queue time). The read is the evidence; it only lowers a saving (R45).
+				c.phase, c.prevExt = PhaseHot, mustFlat(prev.Forwarded, *c.s.Cache.Extent)
+			}
 		}
+	} else if prev != nil && c.r.Meta.At.Before(prev.At) {
+		// Out of order: the clock says nothing about the entry, so the phase is left to the usage below.
 	} else if prev != nil && f.TTL > 0 && c.r.Meta.At.Sub(prev.At) <= f.TTL && c.s.Cache.CachePhase == PhaseCold {
 		c.phase = PhaseHot // the previous request cached nothing: hot with an empty extent (§5.2)
 	} else if prev != nil && f.TTL > 0 && f.Lifetime == LifetimeExact && c.r.Meta.At.Sub(prev.At) > f.TTL {
@@ -623,11 +635,22 @@ func (c *calcState) phaseAndBoundary(res *Result) {
 	}
 }
 
-// readCoversExtent reports whether the tokens the provider read reach the previous request's cached extent,
-// with the tolerance of extent. The extent is priced at the byte ratio of this request.
-func (c *calcState) readCoversExtent(prev *Fingerprint) bool {
-	want := c.ratio.upTo(prev.Forwarded, c.prevExt)
+// ttlSkew is how far past an exact TTL a read in the usage can still overrule the clock: the clock
+// of the host and the provider differ, and a request waits in a queue before the provider stamps it.
+// A longer gap with a read stays cold, so the rule only lowers a saving (R45).
+const ttlSkew = 10 * time.Second
+
+// readReaches reports whether Usage.CacheRead covers the first bytes bytes of the previous forwarded
+// body up to position i, with the tolerance of extent (128 tokens plus 2%). The prefix is priced at the
+// byte ratio of this request, its media at the fixed media price. It is the one tolerance for the TTL-edge rule and for the B* rule (decision 7).
+func (c *calcState) readReaches(b Body, i int) bool {
+	want := c.ratio.upTo(b, i)
 	return want > 0 && want <= c.usage.CacheRead+128+c.usage.CacheRead/50
+}
+
+// readCoversExtent reports whether the tokens the provider read reach the previous request's cached extent.
+func (c *calcState) readCoversExtent(prev *Fingerprint) bool {
+	return c.readReaches(prev.Forwarded, c.prevExt)
 }
 
 // readable is the last position up to x that a request with the breakpoints bps can read. The
@@ -771,7 +794,12 @@ func (c *calcState) addBreak(res *Result, from int, changeID string) {
 		e.To = &p
 		if n := c.ratio.between(c.fwd, from, c.bstarFwd); n > 0 {
 			e.Saved.CacheRead = n
-			addWrite(&e.Caused, ttlAtOrAfter(c.fwdBPs, c.bstarFwd), n) // "" counts as 5m
+			ttl, anyBP, ok := c.writeBP(c.fwd, c.fwdBPs, c.bstarFwd)
+			if c.noCacheTokens() || (anyBP && !ok) {
+				e.Caused.Input = n // nothing is cacheable: the moved tokens are input (§5.1)
+			} else {
+				addWrite(&e.Caused, ttl, n) // "" counts as 5m
+			}
 		}
 	}
 	c.addEffect(res, e)
@@ -902,15 +930,28 @@ func ttlName(d time.Duration) string {
 	return "5m"
 }
 
-// ttlAtOrAfter is the TTL of the first breakpoint at or after p; "" when there is none.
-func ttlAtOrAfter(bps []bp, p int) string {
-	best, ttl := -1, ""
-	for _, b := range bps {
-		if b.at >= p && (best < 0 || b.at < best) {
-			best, ttl = b.at, b.ttl
+// writeBP finds the breakpoint that writes the content at flat position p of body: the first breakpoint at
+// or after p whose prefix reaches the minimum cacheable length (§5.1, §6.2). Prefixes are cumulative, so a
+// later breakpoint can cache what an earlier, too short one cannot. ttl is that breakpoint's TTL; ok is
+// false when none qualifies. anyBP says whether any breakpoint is at or after p at all.
+func (c *calcState) writeBP(body Body, bps []bp, p int) (ttl string, anyBP, ok bool) {
+	best := -1
+	for _, x := range bps {
+		if x.at < p {
+			continue
+		}
+		anyBP = true
+		if (best < 0 || x.at < best) && (c.r.Facts.MinCacheable <= 0 || c.ratio.of(body.cumBytes(x.at)) >= c.r.Facts.MinCacheable) {
+			best, ttl = x.at, x.ttl
 		}
 	}
-	return ttl
+	return ttl, anyBP, best >= 0
+}
+
+// noCacheTokens says whether the usage shows a request that read and wrote nothing although it billed
+// input: the forwarded body was uncacheable (§5.1).
+func (c *calcState) noCacheTokens() bool {
+	return !c.noUsage && c.usage.CacheRead+c.usage.CacheWrite+c.usage.CacheWrite1h == 0 && c.usage.Input > 0
 }
 
 func addWrite(t *TierTokens, ttl string, n int) {
@@ -921,13 +962,19 @@ func addWrite(t *TierTokens, ttl string, n int) {
 	}
 }
 
-// addTier adds n tokens at flat position p by the tier rule (§6.2): read at or before B*, write up
-// to the last breakpoint at the TTL of the next one, input after it or with no breakpoint.
-func addTier(t *TierTokens, p, bstar int, bps []bp, n int) {
-	switch ttl := ttlAtOrAfter(bps, p); {
+// addTier adds n tokens at flat position p by the tier rule (§6.2): read at or before B*, write at the
+// TTL of the first breakpoint at or after p that reaches the minimum cacheable length (§5.1), input
+// otherwise. forwarded is true for tokens of the forwarded body: when the usage shows no cache tokens,
+// that body was uncacheable and all its tokens are input, in the read range too. The client body is a counterfactual that the usage
+// does not describe, so only the minimum length decides its tier.
+func (c *calcState) addTier(t *TierTokens, body Body, forwarded bool, p, bstar int, bps []bp, n int) {
+	ttl, anyBP, ok := c.writeBP(body, bps, p)
+	switch {
+	case forwarded && c.noCacheTokens():
+		t.Input += n // the usage shows no read and no write: nothing was read, whatever B* says
 	case len(bps) > 0 && p <= bstar:
 		t.CacheRead += n
-	case ttl == "":
+	case !anyBP || !ok:
 		t.Input += n
 	default:
 		addWrite(t, ttl, n)
@@ -962,12 +1009,23 @@ func (c *calcState) validate(u Usage) string {
 	return ""
 }
 
-// badRatio says whether the tokens per forwarded byte are outside 0.05 to 2.0 (check 9). A usage that
+// badRatio says whether the tokens per forwarded text byte are outside 0.05 to 2.0 (check 9). Media
+// bytes are not in the denominator and the media price is not in the numerator (newRatio). A usage that
 // bills no prompt token for a body with bytes (tokens per byte 0), or tokens for an empty body (infinite),
 // is outside the range too.
 func (c *calcState) badRatio() bool {
+	last := len(c.fwd.Pos) - 1
+	if c.fwd.cumBytes(last) == 0 {
+		return true // an empty body billed for tokens, or for none
+	}
+	if c.fwd.cumMedia(last)/mediaBytesPerToken > c.usage.Input+c.usage.CacheRead+c.usage.CacheWrite {
+		return true // the bill is below the media price: check 11 fails too
+	}
 	t, n := float64(c.ratio.tokens), float64(c.ratio.bytes)
-	if t == 0 || n == 0 {
+	if n == 0 {
+		return t != 0 // all media: the bill must be the media price, and no text is left to price
+	}
+	if t == 0 {
 		return true
 	}
 	return t < minTokensPerByte*n || t > maxTokensPerByte*n
@@ -1038,19 +1096,19 @@ func (c *calcState) price(res *Result) {
 					c.hostGap += d - (c.ratio.tokensOf(sp.before.Bytes, bm) - c.ratio.tokensOf(sp.after.Bytes, am))
 				}
 				if d > 0 {
-					addTier(&p.Saved, mustFlat(c.client, sp.from), c.bstar, c.clientBPs, d)
+					c.addTier(&p.Saved, c.client, false, mustFlat(c.client, sp.from), c.bstar, c.clientBPs, d)
 				} else if d < 0 {
 					fp, _ := c.toFwd(k, sp.from)
 					if sp.before.Bytes == 0 && it.op.MessageSplice != nil {
 						fp, _ = c.toFwdSkipping(k, sp.from) // an inserted item sits in the slot its own splice opened
 					}
 					at := mustFlat(c.fwd, fp)
-					if sp.before.Bytes == 0 && c.phase == PhaseHot && c.prevExt >= 0 && at <= c.prevExt && at < c.fwdFD {
+					if sp.before.Bytes == 0 && c.phase == PhaseHot && c.prevExt >= 0 && at <= c.prevExt && at < c.fwdFD && !c.noCacheTokens() {
 						// content the operator added, which the previous request already forwarded
 						// and cached: the provider reads it, whatever B* says (§6.2)
 						p.Caused.CacheRead += -d
 					} else {
-						addTier(&p.Caused, at, c.bstarFwd, c.fwdBPs, -d)
+						c.addTier(&p.Caused, c.fwd, true, at, c.bstarFwd, c.fwdBPs, -d)
 					}
 				}
 			}
@@ -1098,7 +1156,7 @@ func tierSum(t TierTokens) int { return t.Input + t.CacheWrite5m + t.CacheWrite1
 func (c *calcState) checks(res *Result) {
 	if media := c.fwd.cumMedia(len(c.fwd.Pos)-1) / mediaBytesPerToken; !c.noUsage && media > c.usage.Input+c.usage.CacheRead+c.usage.CacheWrite {
 		res.Checks = append(res.Checks, CheckFailure{Check: "media_tokens",
-			Detail: fmt.Sprintf("media=%d tokens billed=%d: the text ratio is 0", media, c.usage.Input+c.usage.CacheRead+c.usage.CacheWrite)})
+			Detail: fmt.Sprintf("media=%d tokens billed=%d: the bill is below the media price: nothing is priced (ratio_range)", media, c.usage.Input+c.usage.CacheRead+c.usage.CacheWrite)})
 	}
 	var got [3]int
 	seen := map[string]bool{}
@@ -1186,5 +1244,10 @@ func (c *calcState) nextState() ThreadState {
 		next.Cache = CacheState{CachePhase: PhaseHot, Extent: &ext, TTL: ttlName(c.r.Facts.TTL)}
 	}
 	next.PrevPrint = fp
+	if p := c.s.PrevPrint; p != nil && !c.seeded && fp.At.Before(p.At) {
+		// An out-of-order request must not replace a newer fingerprint: the next request would be
+		// compared with an older body and a wrong gap (accountant#16).
+		next.PrevPrint, next.Cache = p, c.s.Cache
+	}
 	return next
 }

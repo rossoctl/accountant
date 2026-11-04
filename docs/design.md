@@ -57,7 +57,7 @@ and §6 the `R` numbers are written bare, to keep the comments short; they are t
 | <a id="d11"></a>D11 | What happens to a change that a later change ends? | **`Compute` finds that it has ended and stops applying it.** The context operator reports nothing after the first request (D14), so it cannot say that a change ended. No link names the change that ended it. `Compute` infers the end from the bodies and the splice (§11, question 12). The measurement at each context operator's own input ([R29](spec.md#r29)) gives the right price and stops any double count, while the change is in the state. Each change keeps the total it had until then (§4.5). |
 | <a id="d12"></a>D12 | Where does the thread ID come from? | **From the engine's `internal/thread`, in both hosts**, carried on the request. The host keeps one fingerprint per thread, keyed by `thread.Key`, and compares each request with its own thread's previous request (wiring document, W5.2). |
 | <a id="d13"></a>D13 | How does the model serve a subscription user? | **The library does not change.** It already returns tokens for each tier (D3). The request carries a `Billing` fact. The host converts tokens to dollars for an API user, and to usage-limit units for a subscription user, with an API-equivalent dollar figure beside it, marked as such (§7.1). |
-| <a id="d14"></a>D14 | Is `Compute` stateful? | **The library is stateful. `Compute` is deterministic.** A context operator reports a change once, on the first request. `Compute` applies it again on later requests until it ends, so a result depends on earlier requests. The state is a `ThreadState`, kept by the Tracker, one for each thread. `Compute` is a method of the request record. The record takes a copy of the `ThreadState` in `EndRequest`, because the thread is known only after the plugins ran (§6.1). As its last step `Compute` replaces the thread's `ThreadState` with the new one, so the host has nothing to commit and cannot forget to. A failure or a panic leaves the old `ThreadState` (see [§4.6, a request that does not reach `Compute`](#46-replays-who-remembers-past-changes)). Two requests of one thread at the same time (a retry, parallel calls of one agent) are safe: the replace is guarded by the `Version` of the `ThreadState` (optimistic locking, [R53](spec.md#r53), §6.1). `Preview` does the same calculation and stores nothing, for pricing an old request again and for a look that must not move the thread forward. A test case is a sequence of requests. Rejected alternatives are listed below the table. What the state holds is open (§11, question 11). How a change ends is decided (§11, question 12). |
+| <a id="d14"></a>D14 | Is `Compute` stateful? | **The library is stateful. `Compute` is deterministic.** A context operator reports a change once, on the first request. `Compute` applies it again on later requests until it ends, so a result depends on earlier requests. The state is a `ThreadState`, kept by the Tracker, one for each thread. `Compute` is a method of the request record. The record takes a copy of the `ThreadState` in `EndRequest`, because the thread is known only after the plugins ran (§6.1). As its last step `Compute` replaces the thread's `ThreadState` with the new one, so the host has nothing to commit and cannot forget to. A failure or a panic leaves the old `ThreadState` (see [§4.6, a request that does not reach `Compute`](#46-replays-who-remembers-past-changes)). Two requests of one thread at the same time (a retry, parallel calls of one agent) are safe: the replace is guarded by the `Version` of the `ThreadState` (optimistic locking, [R53](spec.md#r53), §6.1). `Preview` does the same calculation and stores nothing (it can differ from `Compute` only for a fork's first request, if the parent's state moved in between, [R26](spec.md#r26)), for pricing an old request again and for a look that must not move the thread forward. A test case is a sequence of requests. Rejected alternatives are listed below the table. What the state holds is open (§11, question 11). How a change ends is decided (§11, question 12). |
 
 **D14, rejected alternatives.**
 
@@ -218,6 +218,8 @@ type EntryFacts struct {
     // SharedWarm is the longest prefix of this request's forwarded body that another thread of the same
     // session read or wrote inside the TTL before this request (R54). Nil when none did.
     SharedWarm *Position
+    // MinCacheable is the model's minimum cacheable length in tokens. 0 = not set: no minimum applies.
+    MinCacheable int
 }
 
 type Kind string          // rewrite | spend | setting
@@ -277,7 +279,7 @@ and can be reported as unpriced ([R19](spec.md#r19)).
    - **Base64 media stays out of the ratio.** `NewBody` parses each position and counts the `data`
      of an image or document block whose source has `type: base64`, and the payload of a `data:...;base64,` URL
      (OpenAI form), in `PosHash.Media`. Text that only quotes "base64" is not media. `Media` above `Bytes` is capped. The ratio uses the text bytes only, over the billed tokens
-     less the media tokens (if the bill is below the media price, check `media_tokens` fails). Media is priced at a fixed 1 token for 250 bytes. A host that builds a
+     less the media tokens (if the bill is below the media price, checks `media_tokens` and `ratio_range` fail and nothing is priced). Media is priced at a fixed 1 token for 250 bytes. A host that builds a
      `Body` itself sets `PosHash.Media`. A host marks media inside a `Size` with `Size.MediaBytes`. If a size does not mark it, the library takes the
      media of the range from the client body for a before-size and from the forwarded body, over the mapped range, for an after-size (the size's bytes beyond the range's text), so an unmarked cut of an image
      message is not priced at the text ratio.
@@ -647,8 +649,14 @@ been a write.
 
 **Provider details that lower B\* further.** The formula uses the breakpoints only. Two facts in
 [`cached-prefix.md`](cached-prefix.md) can make the real read shorter: the Anthropic lookback of 20
-blocks, and the minimum cacheable length. The library applies the minimum length (a prefix shorter
-than the model's minimum caches nothing, so B\* = 0). It does not model the lookback window. A
+blocks, and the minimum cacheable length. The library applies the minimum length in the tier rule (§6.2), not in B\*. When the host sets
+`EntryFacts.MinCacheable` (512, 1024, 2048 or 4096 tokens, by model), content is written only at the first
+breakpoint at or after it whose prefix reaches that length. Prefixes are cumulative, so a later breakpoint can
+cache what an earlier, shorter one cannot. When no breakpoint reaches the minimum, the provider caches nothing
+and the content is `Input`. With `MinCacheable` = 0 the host named no minimum and nothing changes. The library
+also treats the **forwarded** body as uncacheable when its usage has `CacheRead` + `CacheWrite` +
+`CacheWrite1h` = 0 and `Input` > 0. The usage says nothing about the client body, so that rule does not
+apply to saved tokens. It does not model the lookback window. A
 breakpoint more than 20 blocks after the previous entry can miss with an unchanged prefix, and the
 library then prices too high a read. Shadow differences of this kind go to the case list ([§10.3](testing.md#103-what-makes-the-list-exhaustive) C).
 
@@ -744,9 +752,23 @@ The phase is found **before** the rows, from the gaps. It is the **cache state**
 | A previous fingerprint exists, the previous request cached nothing (its cache state was `cold`), and the request gap ≤ TTL | `hot` | empty: nothing can have been lost |
 | A previous fingerprint exists, the previous request cached nothing, the lifetime is `exact`, and the request gap > TTL | `cold` | nil |
 | A previous fingerprint exists, request gap > TTL, entry gap ≤ TTL, `PingRead` is set (or derived from `PingUsage`, below), and the lifetime is `exact` or `minimum`. The rescue also needs condition 3 of §4.4 | `hot`, and the library adds a rescue with `ChangeID = EntryFacts.PingWindow` (§4.4) | `PingRead` |
+| A previous fingerprint exists, request gap > TTL by at most 10 seconds, the lifetime is `exact`, no ping qualifies, and `Usage.CacheRead` covers the whole previous extent | `hot`, as for a request gap ≤ TTL. The provider read the entry, so clock skew or queue time moved the gap past the TTL. No rescue | `prevExtent` |
 | A previous fingerprint exists, request gap > TTL, the lifetime is `exact`, and no ping qualifies (none was sent, one was sent too late, or `PingRead` is unset and cannot be derived) | `cold`. A late ping gets no rescue | nil |
 | A previous fingerprint exists, request gap > TTL, no qualifying ping, and the lifetime is `minimum` or `unknown` | `unknown`, unless `Usage.CacheRead` proves a read (below) | nil |
 | No previous fingerprint for this thread | `unknown`, unless `Usage.CacheRead` proves a read (below) | nil |
+
+**Out-of-order `At`.** A request whose `At` is before `PrevPrint.At` has no valid gap. Its phase is
+`unknown`, unless a read in the usage proves the entry (below). `Compute` does not store its fingerprint: the
+stored one is the newer request, so the next request is compared with that one (accountant#16).
+
+**A fork reads its parent's entry.** A thread with no previous request and a `Thread.Parent` starts from the
+parent's fingerprint and cache state, when the fork's forwarded body keeps the parent's whole cached extent
+(equal hashes up to it) and the fork uses the parent's model. Otherwise the phase is `unknown`. The fork's
+own fingerprint then replaces the seed, and the parent's state does not change. The seed is used only when the fork starts at or after the parent's last request and within the TTL, so it
+can only give `hot`; otherwise the fork is `unknown` and a read in the usage makes it `hot`. A fork that
+started before the parent's last completed request is not seeded. The seed is the parent's fingerprint at the
+time of the call, and `Preview` and `Compute` can differ if the parent moved in between (R26, R54). The
+out-of-order rule applies to a thread's own previous request, never to a seed.
 
 **`PingRead` from the ping's usage.** A host may not know which position the ping read. The keeper
 replays the previous request's forwarded body, so the ping's usage bills that body, and the library
@@ -962,8 +984,8 @@ oldest threads of a process that holds more than 10,000. A thread kept hot only 
 them if it is the oldest. A request whose `At` is far before the others makes a Tracker that is among
 the first to go. A `Request` in flight is not affected. It holds its own copy of the state, and
 `Compute` makes a new, empty Tracker for the thread: `Result.Recomputed` is set and the phase is
-unknown. A thread forked from a dropped parent is no different, because `Thread.Parent` is carried and
-not read.
+unknown. A thread forked from a dropped parent is no different: with no parent state to seed from, the fork is
+`unknown` (§5.2).
 
 A missing call is not a compile error. If `EndRequest` was not called, or a fact is missing, `Compute` returns
 the result with the missing items in `Unpriced` and a reason. It does not guess.
@@ -1004,6 +1026,8 @@ forwarded space, against the forwarded breakpoints.
 | after B\*, at or before `L` | **cache write**, at the TTL of the first breakpoint at or after the position (5m or 1h) |
 | after `L` | **input** |
 | any position, with no breakpoint in the body | **input** |
+| any position, when no breakpoint at or after it ends a prefix of at least `EntryFacts.MinCacheable` tokens (§5.1) | **input**, not write |
+| a position in the forwarded body, when the usage has no cache tokens and some `Input` (§5.1) | **input**, even at or before B\* |
 
 On a cache miss, B\* = 0, so the first row matches nothing. A position is compared in hash order:
 section first (tools, system, messages), then index. For a change with `Spans`, each span is
@@ -1017,7 +1041,7 @@ write on a cold turn.
 declaration, a restore) is a cost. Its added tokens take the tier of their position, by the same
 rule: read before B\*, write after B\* and at or before `L`, input after `L`. They are `Caused`, not
 `Saved`.
-If the previous request already forwarded the added content and its prefix is unchanged, the provider reads it: it is priced at the read tier, whatever B\* says. Only the request that first adds it pays the write.
+If the previous request already forwarded the added content and its prefix is unchanged, the provider reads it: it is priced at the read tier, whatever B\* says. Only the request that first adds it pays the write. The exception is a usage with no cache tokens and some `Input` (§5.1): the provider read nothing, so these added tokens are `Input` too.
 
 **A break, and the breakpoints.** A break moves content from the read tier to the write tier. The content that moves is:
 
@@ -1083,7 +1107,8 @@ type Unpriced struct {
 
 type CheckFailure struct {
     Check    string // "sum" | "order" | "unique_change" | "spans" | "attribution" |
-                    // "conservation" | "shared_warm" | "media_tokens" | "size_tokens" (§6.5)
+                    // "conservation" | "shared_warm" | "bad_usage" | "ratio_range" | "breakpoints" |
+                    // "media_tokens" | "size_tokens" (§6.5)
     Operator string // "" when the check is not about one operator
     Detail   string // numbers only, no content
 }
@@ -1186,16 +1211,19 @@ check, the operator, the detail, and the request, session and thread IDs). `Prev
    A doubtful figure may only lower a saving.
 8. **Usage sign:** no count in `Usage` is negative, and `CacheWrite1h` is not larger than `CacheWrite` (it is part of
    it, never an addition). If one is, the check `bad_usage` fails.
-9. **Ratio range:** the tokens per forwarded byte, `(Input + CacheRead + CacheWrite) / bytes`, is from 0.05 to 2.0.
+9. **Ratio range:** the tokens per forwarded text byte, `(Input + CacheRead + CacheWrite - media price) / (bytes - media bytes)`,
+   is from 0.05 to 2.0. Base64 media bytes are not in the denominator, and the media price (1 token per 250 bytes) is not in the numerator.
    If it is outside that range, the usage does not fit the body, and the check `ratio_range` fails. A ratio of 0
-   (a body with bytes and no billed prompt token) and an infinite ratio (billed tokens and an empty body) are outside
-   the range too. Without this
+   (a body with text bytes and no billed prompt token) and an infinite ratio (billed tokens and an empty body) are outside
+   the range too. A body of media only has no text bytes: it passes when the bill covers the media price. A bill below
+   the media price fails this check as well as check 11. Without this
    check the ratio, and so the conservation check (check 6), agree with themselves for any usage.
 10. **Breakpoints:** a request has at most 4 forwarded breakpoints (the Anthropic limit), and each TTL (client and
     forwarded) is `"5m"`, `"1h"` or empty (empty counts as `5m`). Otherwise the check `breakpoints` fails.
 
 11. **Media tokens (`media_tokens`):** the fixed price of the forwarded body's media (1 token per 250 bytes) is not above the
-    billed prompt tokens. If it is, the text ratio is 0 and every text size prices at 0 tokens.
+    billed prompt tokens. If it is, the bill cannot hold the media: check 9 (`ratio_range`) fails too, nothing is priced, and
+    every operation goes to `Unpriced` with the reason `ratio_range`.
 12. **Size tokens (`size_tokens`):** a `Size.Tokens` is between 0.05 tokens for each text byte and 2.0 tokens for each byte
     of its range (the limits of check 9). If it is not, the host's count is a bug: the library ignores it, converts the
     bytes, and reports the check.

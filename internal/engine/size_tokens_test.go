@@ -275,3 +275,94 @@ func TestHostTokensOnAnAfterSizeOverMediaAreNotRejected(t *testing.T) {
 		t.Fatalf("saved = %d estimated = %v, want the host's 250, exact", got, p.Estimated)
 	}
 }
+
+// run1 runs one request and returns the result, without looking for a priced operation.
+func run1(client, fwd [][]byte, op Operation, usage Usage) Result {
+	ts := NewTrackers()
+	r := ts.BeginRequest(RequestMeta{RequestID: "r", Session: "s", At: t0}, NewBody(nil, nil, client), nil)
+	r.Add(op)
+	r.EndRequest(Thread{ID: "main"}, NewBody(nil, nil, fwd), nil, exact5m)
+	return r.Compute(usage)
+}
+
+func checkNames(res Result) []string {
+	var out []string
+	for _, c := range res.Checks {
+		out = append(out, c.Check)
+	}
+	return out
+}
+
+func noopOp() Operation {
+	return Operation{ID: "o1", Kind: KindRewrite, Operator: "mask", ChangeID: "mk", At: msg(1),
+		SizeBefore: Size{Bytes: 40}, SizeAfter: Size{Bytes: 40}}
+}
+
+// A bill below the media price fails media_tokens and ratio_range, and prices nothing.
+func TestBillBelowTheMediaPricePricesNothing(t *testing.T) {
+	body := [][]byte{imageBlock(400000), text("t", 40)} // 1600 media tokens
+	res := run1(body, body, noopOp(), Usage{Input: 100})
+	if !hasUnpriced(res, ReasonRatioRange) {
+		t.Fatalf("Unpriced = %+v, want ratio_range", res.Unpriced)
+	}
+	got := checkNames(res)
+	has := func(n string) bool {
+		for _, g := range got {
+			if g == n {
+				return true
+			}
+		}
+		return false
+	}
+	if !has("media_tokens") || !has("ratio_range") {
+		t.Fatalf("Checks = %v, want media_tokens and ratio_range", got)
+	}
+}
+
+// A bill equal to the media price leaves no text token: the text ratio is out of range (a body with
+// text bytes and no text token), but media_tokens does not fail.
+func TestBillEqualToTheMediaPriceDoesNotFailMediaTokens(t *testing.T) {
+	body := [][]byte{imageBlock(400000), text("t", 40)}
+	media := 400000 / mediaBytesPerToken
+	res := run1(body, body, noopOp(), Usage{Input: media})
+	for _, n := range checkNames(res) {
+		if n == "media_tokens" {
+			t.Fatalf("media_tokens failed at a bill equal to the media price: %v", checkNames(res))
+		}
+	}
+	// With 4 text tokens for 40 text bytes + wrapper the request prices.
+	res = run1(body, body, noopOp(), Usage{Input: media + (40+wrapper)/4})
+	noChecks(t, res)
+}
+
+// A media-heavy request is priced at the text ratio (0.25), not refused by the raw formula.
+func TestMediaHeavyRequestIsPriced(t *testing.T) {
+	img := imageBlock(400000)
+	client := [][]byte{text("a", 40000), img}
+	fwd := [][]byte{text("a", 30000), img}
+	op := Operation{ID: "o1", Kind: KindRewrite, Operator: "mask", ChangeID: "mk", At: msg(0),
+		SizeBefore: Size{Bytes: 40000}, SizeAfter: Size{Bytes: 30000}}
+	billed := 1600 + (30000+wrapper)/4
+	res := run1(client, fwd, op, Usage{Input: billed})
+	noChecks(t, res)
+	if hasUnpriced(res, ReasonRatioRange) {
+		t.Fatalf("Unpriced = %+v, the request must be priced", res.Unpriced)
+	}
+	if p := findOp(t, res, "o1"); tierSum(p.Saved) != 2500 {
+		t.Fatalf("saved = %d, want 2500", tierSum(p.Saved))
+	}
+}
+
+// A body whose positions are all media is not an empty body: it prices when the bill covers the
+// media.
+func TestAllMediaBodyIsNotRefused(t *testing.T) {
+	b := Body{Pos: []PosHash{{Hash: 1, Bytes: 2500, Media: 2500}}}
+	c := &calcState{fwd: b, usage: Usage{Input: 10}, ratio: newRatio(10, b)}
+	if c.badRatio() {
+		t.Fatal("badRatio refused a body of media only that the bill covers")
+	}
+	c = &calcState{fwd: b, usage: Usage{Input: 9}, ratio: newRatio(9, b)}
+	if !c.badRatio() {
+		t.Fatal("badRatio accepted a bill below the media price")
+	}
+}
