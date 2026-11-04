@@ -295,7 +295,8 @@ func TestAnUnknownStoredBreakpointTTLTakesTheEntryTTL(t *testing.T) {
 	}
 }
 
-// EntryTTL survives Snapshot and Restore: the restored thread judges the entry as the original does.
+// EntryTTL survives Snapshot and Restore. The phase leg also passes without EntryTTL (the 1h breakpoint
+// alone keeps the entry alive); the field check below is what pins the round trip.
 func TestEntryTTLSurvivesSnapshotRestore(t *testing.T) {
 	ts := NewTrackers()
 	req{at: t0, client: mk(nil, nil, msgs(3, 2000)), clientBPs: bpsTTL("1h", msg(2)), facts: ttlFacts(time.Hour),

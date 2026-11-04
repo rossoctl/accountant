@@ -517,9 +517,10 @@ split only when the client body would have written the tokens.
 ## 9b. Cases from accountant#40 and #41
 
 Two reviews of context-guru#768 and #893 found that the clock used one TTL for the whole request, and the TTL of the
-current request. Four cases pin the fix. Every case has messages a = 2,000, b = 3,000, c = 2,000 tokens, and a change
+current request. Six cases pin the fix. The first four have messages a = 2,000, b = 3,000, c = 2,000 tokens, and a change
 that shrinks b by 2,000 tokens. The second request adds d = 500 tokens and replays the change. Its saving is 2,000
-tokens: the read tier when the phase is hot, the write tier when it is cold. Prices are the fixture rates (read
+tokens: the read tier when the phase is hot, the write tier when it is cold. The last two cases have another shape,
+described below the table. Prices are the fixture rates (read
 $0.30/M, 5m write $3.75/M, 1h write $6.00/M).
 
 | Case ID | Issue | What the spec requires | What the library did before the fix |
@@ -528,6 +529,18 @@ $0.30/M, 5m write $3.75/M, 1h write $6.00/M).
 | `ttl/5m-entry-asked-at-1h/cold-after-30-minutes` | #41 | A 5m entry, 30 minutes, the new request asks 1h. The entry is expired: `cold`, saving 2,000 x $6.00/M = $0.01200 (1h write). | `hot`, a read: 2,000 x $0.30/M = $0.00060. |
 | `ttl/1h-entry-asked-at-5m/hot-after-10-minutes` | #41 | A 1h entry, 10 minutes, the new request has 5m marks and the provider reads 5,000. `hot`, saving $0.00060 (read). | `cold`, a 5m write: 2,000 x $3.75/M = $0.00750 (12.5 times). |
 | `clock/read-beats-clock-past-ttl/hot` | #41 | A 5m entry, a gap of 5m30s, a billed read of 5,000. `hot`, saving $0.00060 (read). | `cold`, a 5m write: $0.00750. |
+
+Two more cases came from review round 1 of the fix. They have the same a, b, c, d messages, and both are about a mixed
+entry (a 1h mark on messages[1], a 5m mark on messages[2] or messages[3]):
+
+- `ttl/mixed-dead-tail-read/hot-after-6-minutes` (#40). The change shrinks c from 2,000 to 500 tokens, so it saves
+  1,500 tokens. r0 writes 5,500 tokens, 5,000 of them at 1h. At 6 minutes the 1h head is alive and the 5m tail is dead
+  on the clock, but the provider billed a read of all 5,500 tokens. The read proves the tail was alive, so the
+  boundary is messages[2] and the saving is 1,500 x $0.30/M = $0.00045 (read). Before the fix the extent stopped at
+  the head, and the saving was a 5m write, 1,500 x $3.75/M = $0.005625 (12.5 times).
+- `ttl/mixed-fork/seeded-while-head-alive` (#40). There is no change and no saving. A subagent forks from the mixed
+  entry 10 minutes later and keeps the whole prefix. The 1h head (5,000 tokens) is alive, so the fork is seeded: hot at
+  messages[1], no `penalty_unknown`. Before the fix the seed used the 5m entry TTL only, and the phase was unknown.
 
 The case `clock/ttl-edge-past-margin/cold` (accountant#16) now bills no read at 11 seconds past the TTL. The old
 version billed a read there and expected `cold`. That rule (a 10-second margin) is gone: a billed read beats the
