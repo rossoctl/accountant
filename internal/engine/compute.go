@@ -128,6 +128,7 @@ func opSpans(op Operation) []span {
 // changes nothing it is given.
 func (r *Request) calc(s ThreadState, usage Usage) (Result, ThreadState) {
 	res := Result{Version: 1, Recomputed: s.Version != r.start.Version}
+	s = r.seededFromParent(s)
 	items := r.items(s)
 	c := r.newCalc(s, items, usage)
 
@@ -494,7 +495,11 @@ func (c *calcState) pingRead() *Position {
 func (c *calcState) phaseAndBoundary(res *Result) {
 	prev, f := c.s.PrevPrint, c.r.Facts
 	c.phase = PhaseUnknown
-	if prev != nil && f.TTL > 0 && c.s.Cache.Extent != nil {
+	// A request that started before the stored one has no valid gap: the clock says nothing about the
+	// entry, so the phase is left to the usage (accountant#16). Hot from a negative gap would be a guess.
+	if prev != nil && c.r.Meta.At.Before(prev.At) {
+		// phase stays unknown; a read in the usage may still prove the entry below
+	} else if prev != nil && f.TTL > 0 && c.s.Cache.Extent != nil {
 		gap := c.r.Meta.At.Sub(prev.At)
 		last := prev.At
 		if f.LastPing.After(last) {
@@ -513,6 +518,11 @@ func (c *calcState) phaseAndBoundary(res *Result) {
 			// with no ping, a gap past a minimum proves no expiry (R45)
 		default:
 			c.phase = PhaseCold
+			if gap-f.TTL <= ttlSkew && c.readReachesExtent(prev) {
+				// The clock says expired by at most ttlSkew, but the provider billed a read that covers the whole previous
+				// extent (clock skew, queue time). The read is the evidence; it only lowers a saving (R45).
+				c.phase, c.prevExt = PhaseHot, mustFlat(prev.Forwarded, *c.s.Cache.Extent)
+			}
 		}
 	} else if prev != nil && f.TTL > 0 && c.r.Meta.At.Sub(prev.At) <= f.TTL && c.s.Cache.CachePhase == PhaseCold {
 		c.phase = PhaseHot // the previous request cached nothing: hot with an empty extent (§5.2)
@@ -563,6 +573,25 @@ func (c *calcState) phaseAndBoundary(res *Result) {
 		res.Boundary = &p
 		c.bstarFwd = mustFlat(c.fwd, c.clientToFwd(p))
 	}
+}
+
+// ttlSkew is how far past an exact TTL a read in the usage can still overrule the clock: the clock
+// of the host and the provider differ, and a request waits in a queue before the provider stamps it.
+// A longer gap with a read stays cold, so the rule only lowers a saving (R45).
+const ttlSkew = 10 * time.Second
+
+// readReachesExtent reports whether Usage.CacheRead covers the whole cached extent of the previous
+// request, so the entry was alive when the clock says it was not.
+func (c *calcState) readReachesExtent(prev *Fingerprint) bool {
+	if c.noUsage || c.usage.CacheRead == 0 || c.s.Cache.Extent == nil {
+		return false
+	}
+	i, ok := prev.Forwarded.flat(*c.s.Cache.Extent)
+	if !ok {
+		return false
+	}
+	want := c.ratio.of(prev.Forwarded.cumBytes(i))
+	return want > 0 && want <= c.usage.CacheRead+128+c.usage.CacheRead/50
 }
 
 // readCoversExtent reports whether the tokens the provider read reach the previous request's cached extent,
@@ -1130,5 +1159,10 @@ func (c *calcState) nextState() ThreadState {
 		next.Cache = CacheState{CachePhase: PhaseHot, Extent: &ext, TTL: ttlName(c.r.Facts.TTL)}
 	}
 	next.PrevPrint = fp
+	if p := c.s.PrevPrint; p != nil && fp.At.Before(p.At) {
+		// An out-of-order request must not replace a newer fingerprint: the next request would be
+		// compared with an older body and a wrong gap (accountant#16).
+		next.PrevPrint, next.Cache = p, c.s.Cache
+	}
 	return next
 }

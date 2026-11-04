@@ -220,3 +220,31 @@ func (t *Tracker) replace(version uint64, next ThreadState) bool {
 	t.state = next
 	return true
 }
+
+// seededFromParent returns s, or, for a thread that has no previous request and names a Parent, a copy
+// that starts from the parent's fingerprint and cache state (design §4.1). A fork reads the entry its
+// parent wrote, so it is not a first turn. The seed is used only when the fork's forwarded body keeps
+// the parent's whole cached extent (the hashes match up to it) and the model is the parent's; otherwise the thread stays unknown.
+// The active operations are not inherited.
+func (r *Request) seededFromParent(s ThreadState) ThreadState {
+	if s.PrevPrint != nil || r.Thread.Parent == "" || r.Thread.Parent == r.Thread.ID {
+		return s
+	}
+	r.trackers.mu.Lock()
+	pt := r.trackers.m[ThreadKey(r.Meta.Session, Thread{ID: r.Thread.Parent})]
+	r.trackers.mu.Unlock()
+	if pt == nil {
+		return s
+	}
+	ps := pt.snapshot()
+	p := ps.PrevPrint
+	if p == nil || ps.Cache.Extent == nil {
+		return s
+	}
+	i, ok := p.Forwarded.flat(*ps.Cache.Extent)
+	if !ok || p.Model != r.Meta.Model || firstDiff(p.Forwarded, r.Forwarded) <= i {
+		return s
+	}
+	s.PrevPrint, s.Cache = p, ps.Cache
+	return s
+}

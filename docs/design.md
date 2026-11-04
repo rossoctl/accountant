@@ -738,9 +738,20 @@ The phase is found **before** the rows, from the gaps. It is the **cache state**
 | A previous fingerprint exists, the previous request cached nothing (its cache state was `cold`), and the request gap ≤ TTL | `hot` | empty: nothing can have been lost |
 | A previous fingerprint exists, the previous request cached nothing, the lifetime is `exact`, and the request gap > TTL | `cold` | nil |
 | A previous fingerprint exists, request gap > TTL, entry gap ≤ TTL, `PingRead` is set (or derived from `PingUsage`, below), and the lifetime is `exact` or `minimum`. The rescue also needs condition 3 of §4.4 | `hot`, and the library adds a rescue with `ChangeID = EntryFacts.PingWindow` (§4.4) | `PingRead` |
+| A previous fingerprint exists, request gap > TTL by at most 10 seconds, the lifetime is `exact`, no ping qualifies, and `Usage.CacheRead` covers the whole previous extent | `hot`, as for a request gap ≤ TTL. The provider read the entry, so clock skew or queue time moved the gap past the TTL. No rescue | `prevExtent` |
 | A previous fingerprint exists, request gap > TTL, the lifetime is `exact`, and no ping qualifies (none was sent, one was sent too late, or `PingRead` is unset and cannot be derived) | `cold`. A late ping gets no rescue | nil |
 | A previous fingerprint exists, request gap > TTL, no qualifying ping, and the lifetime is `minimum` or `unknown` | `unknown`, unless `Usage.CacheRead` proves a read (below) | nil |
 | No previous fingerprint for this thread | `unknown`, unless `Usage.CacheRead` proves a read (below) | nil |
+
+**Out-of-order `At`.** A request whose `At` is before `PrevPrint.At` has no valid gap. Its phase is
+`unknown`, unless a read in the usage proves the entry (below). `Compute` does not store its fingerprint: the
+stored one is the newer request, so the next request is compared with that one (accountant#16).
+
+**A fork reads its parent's entry.** A thread with no previous request and a `Thread.Parent` starts from the
+parent's fingerprint and cache state, when the fork's forwarded body keeps the parent's whole cached extent
+(equal hashes up to it) and the fork uses the parent's model. Otherwise the phase is `unknown`. The fork's
+own fingerprint then replaces the seed, and the parent's state does not change. The seed lowers a saving:
+a read is priced below a write (R45).
 
 **`PingRead` from the ping's usage.** A host may not know which position the ping read. The keeper
 replays the previous request's forwarded body, so the ping's usage bills that body, and the library
@@ -956,8 +967,8 @@ oldest threads of a process that holds more than 10,000. A thread kept hot only 
 them if it is the oldest. A request whose `At` is far before the others makes a Tracker that is among
 the first to go. A `Request` in flight is not affected. It holds its own copy of the state, and
 `Compute` makes a new, empty Tracker for the thread: `Result.Recomputed` is set and the phase is
-unknown. A thread forked from a dropped parent is no different, because `Thread.Parent` is carried and
-not read.
+unknown. A thread forked from a dropped parent is no different: with no parent state to seed from, the fork is
+`unknown` (§5.2).
 
 A missing call is not a compile error. If `EndRequest` was not called, or a fact is missing, `Compute` returns
 the result with the missing items in `Unpriced` and a reason. It does not guess.
