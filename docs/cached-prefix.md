@@ -34,6 +34,10 @@ Other OpenAI facts that the model depends on:
   `12h`, and both are minimum lifetimes. Earlier models use `prompt_cache_retention`, `in_memory` or `24h`,
   with typical lifetimes of 5 to 10 minutes and about 30 minutes, and no documented maximum. This is why
   a gap past the TTL gives `unknown` and not `cold` (R45, §5.2).
+- **One entry can hold parts with different TTLs.** Claude Code sends a 1h mark on the head and a 5m mark on the
+  tail. After 10 minutes the head is still alive and the tail is not. The library judges each part with the TTL of
+  its own breakpoint, and with the TTL the entry was written with, not the TTL of the new request (§5.2). A billed
+  read of a part is proof that the part was alive.
 - **Writes have a price from GPT-5.6.** A read costs 0.1 times the uncached input rate, a write costs
   1.25 times for 30 minutes and 2.5 times for 12 hours. These are total rates and not surcharges.
   Earlier models have a cached-input rate and no write charge.

@@ -1,0 +1,151 @@
+{
+ "id": "media/big-image-small-conversation/bill-below-media-price/5m",
+ "description": "One request: an image of 2,000,000 bytes, which the library prices at 8,000 tokens. The provider billed the whole request 2,350 tokens (text 750 + image about 1,600), so the bill is below the library price. The library cuts the media to the bill less the least the text can cost. Forwarded text: 2,000 + 1,000 = 3,000 bytes. The least is 0.05 x 3,000 = 150 tokens. The media gets 2,350 - 150 = 2,200 tokens. The text ratio is 150 / 3,000 = 0.05. The operator cuts m2 from 8,000 to 1,000 bytes: 7,000 x 0.05 = 350 tokens saved. This is the lowest figure the bill allows, so it is a floor. The check media_tokens fails to say the media price was cut. The request is not dropped: before the fix nothing was priced (unpriced ratio_range, saved 0). The baseline bill is 10,000 x 0.05 + 2,200 = 2,700 tokens: 2,700 - 2,350 = 350.",
+ "source": "issue_cases.md#accountant-42",
+ "dims": {
+  "kind": "rewrite",
+  "position": "media",
+  "cache": "unknown",
+  "ttl": "5m",
+  "lifetime": "exact",
+  "media": "bill-below-price"
+ },
+ "rates": "fixture-v1",
+ "steps": [
+  {
+   "begin": {
+    "meta": {
+     "requestId": "r0",
+     "session": "s1",
+     "model": "agent-model",
+     "at": "2026-03-02T09:00:00Z",
+     "billing": {
+      "mode": "api"
+     }
+    },
+    "client": {
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "pos": [
+      {
+       "hash": 625792648282977192,
+       "bytes": 2000
+      },
+      {
+       "hash": 17956178250200053669,
+       "bytes": 2000000,
+       "media": 2000000
+      },
+      {
+       "hash": 11100004509484968826,
+       "bytes": 8000
+      }
+     ]
+    },
+    "clientBreakpoints": [
+     {
+      "pos": {
+       "section": "messages",
+       "index": 2
+      },
+      "ttl": "5m"
+     }
+    ]
+   },
+   "add": [
+    {
+     "id": "o1",
+     "kind": "rewrite",
+     "operator": "context-guru.cmdfilter",
+     "at": {
+      "section": "messages",
+      "index": 2
+     },
+     "sizeBefore": {
+      "bytes": 8000
+     },
+     "sizeAfter": {
+      "bytes": 1000
+     },
+     "changeId": "cg:cmdfilter:c42b"
+    }
+   ],
+   "end": {
+    "thread": {
+     "id": "main"
+    },
+    "forwarded": {
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "pos": [
+      {
+       "hash": 625792648282977192,
+       "bytes": 2000
+      },
+      {
+       "hash": 17956178250200053669,
+       "bytes": 2000000,
+       "media": 2000000
+      },
+      {
+       "hash": 11100004509484968826,
+       "bytes": 1000
+      }
+     ]
+    },
+    "breakpoints": [
+     {
+      "pos": {
+       "section": "messages",
+       "index": 2
+      },
+      "ttl": "5m"
+     }
+    ],
+    "facts": {
+     "ttl": "5m",
+     "lifetime": "exact"
+    }
+   },
+   "usage": {
+    "input": 0,
+    "cacheRead": 0,
+    "cacheWrite": 2350,
+    "cacheWrite1h": 0
+   },
+   "expected": {
+    "phase": "unknown",
+    "baselineUsage": {
+     "input": 0,
+     "cacheRead": 0,
+     "cacheWrite": 2700,
+     "cacheWrite1h": 0
+    },
+    "ops": [
+     {
+      "changeId": "cg:cmdfilter:c42b",
+      "saved": {
+       "cacheWrite5m": 350
+      },
+      "caused": {},
+      "estimated": true
+     }
+    ],
+    "unpriced": [
+     {
+      "reason": "penalty_unknown"
+     }
+    ],
+    "checks": [
+     "media_tokens"
+    ]
+   }
+  }
+ ]
+}

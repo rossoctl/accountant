@@ -497,6 +497,24 @@ client moves the mark. The text did not change. These cases model it as a messag
 have this one cause. #21 asks the library to take B\* from the usage when the hashes disagree. #20 asks it to credit a
 split only when the client body would have written the tokens.
 
+### Cases from accountant#42 and #43
+
+| Case ID | Issue | What the spec requires | What the library did before the fix |
+|---|---|---|---|
+| `media/large-image-beside-text/5m` | #42 | A 250,000-byte image (1,000 tokens) beside text. The text ratio leaves the image out: 1,500 tokens over 6,000 text bytes = 0.25. Cutting 6,000 bytes saves 6,000 x 0.25 = 1,500 tokens. | Passed. It is the guard for the working case. |
+| `media/big-image-small-conversation/bill-below-media-price/5m` | #42 | A 2,000,000-byte image (8,000 tokens at the library price) in a request billed 2,350. Text forwarded: 3,000 bytes, least 0.05 x 3,000 = 150 tokens. The media gets 2,200. The text cut of 7,000 bytes x 0.05 = 350 tokens, check `media_tokens`. Baseline 10,000 x 0.05 + 2,200 = 2,700; 2,700 - 2,350 = 350. | Nothing priced (`ratio_range`, saved 0). |
+| `extent/no-breakpoint-long-body/hot/5m` | #43 | 200 messages of 100 tokens, no breakpoint. The provider read 20,000 tokens, so a 400-token message cut to 100 is past B\*: 300 tokens at the input tier, $0.0009. | The same result, in time that grew with the square of the position count. |
+
+| `media/big-image-hot-request-op-over-media/5m` | #42 | Request 1 of a thread, hot, bill 2,350 below the image price (4,000). Text 10,000 bytes, least 500 tokens, media 1,850. The rewrite over the image is unpriced (`media_tokens`). Bill difference 500 + 3,700 - 2,350 = 1,850, all of it the removed image, so check 6 leaves it out and does not fail. | `conservation` failed too. |
+| `media/big-image-host-tokens-stay-exact/5m` | #42 | The same cap, the host counted 1,600 and 800 tokens. Saved 1,600 - 800 = 800, exact, not unpriced. | New behavior, no earlier figure. |
+
+The two `media/` cases above this row are first requests, where check 6 is skipped. That is why they did not show the conservation fault; the hot case does.
+
+The shapes of #42 (Gemini `inlineData` and `inline_data`, Bedrock `source.bytes`, OpenAI `input_audio.data`, an
+uppercase `data:IMAGE/` prefix) have no case. A case holds hashes and sizes, not message text (R2), so it cannot show
+whether `NewBody` finds a payload. `TestMediaShapesAreDetected` in `internal/engine/media_shapes_test.go` holds each shape
+with a 100,000-byte payload and the expected `Media` of 100,000. The cases use the media size a detected shape gives.
+
 **Issues with no case, and why**
 
 - **#10 (no breakpoints).** With no breakpoint every position counts as a breakpoint (design §5.1, §6.2). Cases
@@ -508,13 +526,45 @@ split only when the client body would have written the tokens.
 - **#15 (minimum length).** Fixed with `EntryFacts.MinCacheable` (design §5.1, §6.2). Unit tests in
   `internal/engine/mincacheable_test.go` pin it.
 - **#19 (`Interaction`).** Design §6.2 now reports the exact case (a span before the ping's extent). The unit test `interaction_test.go` holds the issue's numbers. A generated case waits for the Q1 decision.
-- **#16 (the clock) has cases now.** It was fixed in accountant#16: a read in the usage overrules the clock up to
-  10 seconds past an `exact` TTL, an out-of-order `At` keeps the newer fingerprint, and a fork is seeded from
+- **#16 (the clock) has cases now.** It was fixed in accountant#16: a read in the usage overrules the clock (first
+  up to 10 seconds past an `exact` TTL; accountant#41 removed the limit), an out-of-order `At` keeps the newer fingerprint, and a fork is seeded from
   `Thread.Parent` (design §5.2). The cases are in `test/cases/clock-*.json`.
 - **#11, #13, #17, #18.** The fault is not a request sequence: a token count the host did not pass (#11), saved state
   (#13), the API shape (#17) and speed (#18).
 
-## 9b. Cases from accountant#44 (input validation)
+## 9b. Cases from accountant#40 and #41
+
+Two reviews of context-guru#768 and #893 found that the clock used one TTL for the whole request, and the TTL of the
+current request. Six cases pin the fix. The first four have messages a = 2,000, b = 3,000, c = 2,000 tokens, and a change
+that shrinks b by 2,000 tokens. The second request adds d = 500 tokens and replays the change. Its saving is 2,000
+tokens: the read tier when the phase is hot, the write tier when it is cold. The last two cases have another shape,
+described below the table. Prices are the fixture rates (read
+$0.30/M, 5m write $3.75/M, 1h write $6.00/M).
+
+| Case ID | Issue | What the spec requires | What the library did before the fix |
+|---|---|---|---|
+| `ttl/mixed-1h-head-5m-tail/read-after-10-minutes` | #40 | A 1h mark on b, a 5m mark on c. 10 minutes later the provider reads the 3,000-token head. Phase `hot`, saving 2,000 x $0.30/M = $0.00060 (read). | With `Facts.TTL` 5m: `cold`, a 1h write, 2,000 x $6.00/M = $0.01200 (20 times). |
+| `ttl/5m-entry-asked-at-1h/cold-after-30-minutes` | #41 | A 5m entry, 30 minutes, the new request asks 1h. The entry is expired: `cold`, saving 2,000 x $6.00/M = $0.01200 (1h write). | `hot`, a read: 2,000 x $0.30/M = $0.00060. |
+| `ttl/1h-entry-asked-at-5m/hot-after-10-minutes` | #41 | A 1h entry, 10 minutes, the new request has 5m marks and the provider reads 5,000. `hot`, saving $0.00060 (read). | `cold`, a 5m write: 2,000 x $3.75/M = $0.00750 (12.5 times). |
+| `clock/read-beats-clock-past-ttl/hot` | #41 | A 5m entry, a gap of 5m30s, a billed read of 5,000. `hot`, saving $0.00060 (read). | `cold`, a 5m write: $0.00750. |
+
+Two more cases came from review round 1 of the fix. They have the same a, b, c, d messages, and both are about a mixed
+entry (a 1h mark on messages[1], a 5m mark on messages[2] or messages[3]):
+
+- `ttl/mixed-dead-tail-read/hot-after-6-minutes` (#40). The change shrinks c from 2,000 to 500 tokens, so it saves
+  1,500 tokens. r0 writes 5,500 tokens, 5,000 of them at 1h. At 6 minutes the 1h head is alive and the 5m tail is dead
+  on the clock, but the provider billed a read of all 5,500 tokens. The read proves the tail was alive, so the
+  boundary is messages[2] and the saving is 1,500 x $0.30/M = $0.00045 (read). Before the fix the extent stopped at
+  the head, and the saving was a 5m write, 1,500 x $3.75/M = $0.005625 (12.5 times).
+- `ttl/mixed-fork/seeded-while-head-alive` (#40). There is no change and no saving. A subagent forks from the mixed
+  entry 10 minutes later and keeps the whole prefix. The 1h head (5,000 tokens) is alive, so the fork is seeded: hot at
+  messages[1], no `penalty_unknown`. Before the fix the seed used the 5m entry TTL only, and the phase was unknown.
+
+The case `clock/ttl-edge-past-margin/cold` (accountant#16) now bills no read at 11 seconds past the TTL. The old
+version billed a read there and expected `cold`. That rule (a 10-second margin) is gone: a billed read beats the
+clock at any gap.
+
+## 9c. Cases from accountant#44 (input validation)
 
 | Case ID | What the spec requires |
 |---|---|

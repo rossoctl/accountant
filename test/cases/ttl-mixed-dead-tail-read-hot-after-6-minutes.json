@@ -1,0 +1,295 @@
+{
+ "id": "ttl/mixed-dead-tail-read/hot-after-6-minutes",
+ "description": "r0 sends a 1h mark on messages[1] and a 5m mark on messages[2]. The change shrinks messages[2] from 2,000 to 500 tokens, so the forwarded body is 5,500 tokens and r0 writes 5,500, of which 5,000 at 1h. r1 comes 6 minutes later: the 1h head is alive, the 5m tail is dead on the clock. The provider billed a read of all 5,500 tokens. The billed read proves the tail was alive, so the boundary is the end of messages[2] and the replayed 1,500 tokens are READ (1,500 x $0.30/M = $0.00045). Without the read rule the library stopped at the head and booked a 5m write (1,500 x $3.75/M).",
+ "source": "issue_cases.md#40",
+ "dims": {
+  "kind": "rewrite",
+  "position": "afterBStarToL",
+  "cache": "hit",
+  "ttl": "mixed",
+  "lifetime": "exact"
+ },
+ "rates": "fixture-v1",
+ "steps": [
+  {
+   "begin": {
+    "meta": {
+     "requestId": "r0",
+     "session": "s1",
+     "model": "agent-model",
+     "at": "2026-03-02T09:00:00Z",
+     "billing": {
+      "mode": "api"
+     }
+    },
+    "client": {
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "pos": [
+      {
+       "hash": 620337896427418084,
+       "bytes": 8000
+      },
+      {
+       "hash": 12340099932563210358,
+       "bytes": 12000
+      },
+      {
+       "hash": 14899682270663221853,
+       "bytes": 8000
+      }
+     ]
+    },
+    "clientBreakpoints": [
+     {
+      "pos": {
+       "section": "messages",
+       "index": 1
+      },
+      "ttl": "1h"
+     },
+     {
+      "pos": {
+       "section": "messages",
+       "index": 2
+      },
+      "ttl": "5m"
+     }
+    ]
+   },
+   "add": [
+    {
+     "id": "o1",
+     "kind": "rewrite",
+     "operator": "mask",
+     "at": {
+      "section": "messages",
+      "index": 2
+     },
+     "sizeBefore": {
+      "bytes": 8000
+     },
+     "sizeAfter": {
+      "bytes": 2000
+     },
+     "changeId": "cg:ttl:c1"
+    }
+   ],
+   "end": {
+    "thread": {
+     "id": "main"
+    },
+    "forwarded": {
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "pos": [
+      {
+       "hash": 620337896427418084,
+       "bytes": 8000
+      },
+      {
+       "hash": 12340099932563210358,
+       "bytes": 12000
+      },
+      {
+       "hash": 7772051016788831013,
+       "bytes": 2000
+      }
+     ]
+    },
+    "breakpoints": [
+     {
+      "pos": {
+       "section": "messages",
+       "index": 1
+      },
+      "ttl": "1h"
+     },
+     {
+      "pos": {
+       "section": "messages",
+       "index": 2
+      },
+      "ttl": "5m"
+     }
+    ],
+    "facts": {
+     "ttl": "5m",
+     "lifetime": "exact"
+    }
+   },
+   "usage": {
+    "input": 0,
+    "cacheRead": 0,
+    "cacheWrite": 5500,
+    "cacheWrite1h": 5000
+   },
+   "expected": {
+    "phase": "unknown",
+    "baselineUsage": {
+     "input": 0,
+     "cacheRead": 0,
+     "cacheWrite": 7000,
+     "cacheWrite1h": 5000
+    },
+    "ops": [
+     {
+      "changeId": "cg:ttl:c1",
+      "saved": {
+       "cacheWrite5m": 1500
+      },
+      "caused": {},
+      "estimated": true,
+      "note": "first request: nothing is cached"
+     }
+    ],
+    "unpriced": [
+     {
+      "reason": "penalty_unknown"
+     }
+    ]
+   }
+  },
+  {
+   "begin": {
+    "meta": {
+     "requestId": "r1",
+     "session": "s1",
+     "model": "agent-model",
+     "at": "2026-03-02T09:06:00Z",
+     "billing": {
+      "mode": "api"
+     }
+    },
+    "client": {
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "pos": [
+      {
+       "hash": 620337896427418084,
+       "bytes": 8000
+      },
+      {
+       "hash": 12340099932563210358,
+       "bytes": 12000
+      },
+      {
+       "hash": 14899682270663221853,
+       "bytes": 8000
+      },
+      {
+       "hash": 14661398692511680033,
+       "bytes": 2000
+      }
+     ]
+    },
+    "clientBreakpoints": [
+     {
+      "pos": {
+       "section": "messages",
+       "index": 1
+      },
+      "ttl": "1h"
+     },
+     {
+      "pos": {
+       "section": "messages",
+       "index": 3
+      },
+      "ttl": "5m"
+     }
+    ]
+   },
+   "add": [],
+   "end": {
+    "thread": {
+     "id": "main"
+    },
+    "forwarded": {
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "pos": [
+      {
+       "hash": 620337896427418084,
+       "bytes": 8000
+      },
+      {
+       "hash": 12340099932563210358,
+       "bytes": 12000
+      },
+      {
+       "hash": 7772051016788831013,
+       "bytes": 2000
+      },
+      {
+       "hash": 4473895313794322537,
+       "bytes": 2000
+      }
+     ]
+    },
+    "breakpoints": [
+     {
+      "pos": {
+       "section": "messages",
+       "index": 1
+      },
+      "ttl": "1h"
+     },
+     {
+      "pos": {
+       "section": "messages",
+       "index": 3
+      },
+      "ttl": "5m"
+     }
+    ],
+    "facts": {
+     "ttl": "5m",
+     "lifetime": "exact"
+    }
+   },
+   "usage": {
+    "input": 0,
+    "cacheRead": 5500,
+    "cacheWrite": 500,
+    "cacheWrite1h": 0
+   },
+   "expected": {
+    "phase": "hot",
+    "baselineUsage": {
+     "input": 0,
+     "cacheRead": 7000,
+     "cacheWrite": 500,
+     "cacheWrite1h": 0
+    },
+    "ops": [
+     {
+      "changeId": "cg:ttl:c1",
+      "saved": {
+       "cacheRead": 1500
+      },
+      "caused": {},
+      "estimated": true,
+      "note": "the tail is dead on the clock but was billed as a read"
+     }
+    ],
+    "boundary": {
+     "section": "messages",
+     "index": 2
+    }
+   }
+  }
+ ]
+}

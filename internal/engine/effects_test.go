@@ -221,13 +221,18 @@ func TestASettingWithTheReadIntactHasNoBreak(t *testing.T) {
 
 // Example 8: a keep-alive ping at minute 24 keeps turn 9's entry alive for turn 10 at minute 28.
 func ex8(turn10 time.Duration, facts EntryFacts) Result {
+	return ex8u(turn10, facts, Usage{CacheRead: 10000, CacheWrite: 500})
+}
+
+// ex8u is ex8 with the usage of turn 10 given.
+func ex8u(turn10 time.Duration, facts EntryFacts, u Usage) Result {
 	m := msgs(6, 1000)
 	sysB := []blk{b("sys", 4000)}
 	ts := NewTrackers()
 	start := t0.Add(20 * time.Minute)
 	req{at: start, client: mk(nil, sysB, m), clientBPs: bps5(sys(0), msg(5)), facts: facts, usage: Usage{CacheWrite: 10000}}.run(ts)
 	return req{at: t0.Add(turn10), client: mk(nil, sysB, with(m, b("m6", 500))), clientBPs: bps5(sys(0), msg(6)), facts: facts,
-		usage: Usage{CacheRead: 10000, CacheWrite: 500}}.run(ts)
+		usage: u}.run(ts)
 }
 
 func pingFacts() EntryFacts {
@@ -248,8 +253,9 @@ func TestAPingThatKeptTheEntryAliveIsARescue(t *testing.T) {
 	}
 }
 
+// The provider billed no read, so nothing beats the clock: the entry gap is past the TTL.
 func TestAPingTooLateIsNoRescue(t *testing.T) {
-	res := ex8(30*time.Minute, pingFacts())
+	res := ex8u(30*time.Minute, pingFacts(), Usage{CacheWrite: 10500})
 	if res.Phase != PhaseCold {
 		t.Fatalf("phase %q, want cold", res.Phase)
 	}
@@ -537,7 +543,7 @@ func TestAPingThatRewroteTheEntryRenewsIt(t *testing.T) {
 
 // A ping that cached nothing gives no extent: no rescue, and the phase is cold.
 func TestAPingThatCachedNothingIsNoRescue(t *testing.T) {
-	res := ex8(28*time.Minute, usagePingFacts(Usage{Input: 10000}))
+	res := ex8u(28*time.Minute, usagePingFacts(Usage{Input: 10000}), Usage{CacheWrite: 10500})
 	if res.Phase != PhaseCold {
 		t.Fatalf("phase %q, want cold", res.Phase)
 	}

@@ -298,24 +298,22 @@ func noopOp() Operation {
 		SizeBefore: Size{Bytes: 40}, SizeAfter: Size{Bytes: 40}}
 }
 
-// A bill below the media price fails media_tokens and ratio_range, and prices nothing.
-func TestBillBelowTheMediaPricePricesNothing(t *testing.T) {
+// A bill below the media price fails media_tokens, but it does not drop the whole request: the
+// media is cut to the bill (#42). An operation that covers no media is still priced.
+func TestBillBelowTheMediaPriceCapsTheMedia(t *testing.T) {
 	body := [][]byte{imageBlock(400000), text("t", 40)} // 1600 media tokens
 	res := run1(body, body, noopOp(), Usage{Input: 100})
-	if !hasUnpriced(res, ReasonRatioRange) {
-		t.Fatalf("Unpriced = %+v, want ratio_range", res.Unpriced)
+	if hasUnpriced(res, ReasonRatioRange) {
+		t.Fatalf("Unpriced = %+v, ratio_range must not drop the request", res.Unpriced)
 	}
 	got := checkNames(res)
-	has := func(n string) bool {
-		for _, g := range got {
-			if g == n {
-				return true
-			}
-		}
-		return false
+	if len(got) == 0 || got[0] != "media_tokens" {
+		t.Fatalf("Checks = %v, want media_tokens first", got)
 	}
-	if !has("media_tokens") || !has("ratio_range") {
-		t.Fatalf("Checks = %v, want media_tokens and ratio_range", got)
+	for _, g := range got {
+		if g == "ratio_range" {
+			t.Fatalf("Checks = %v, ratio_range must not fail", got)
+		}
 	}
 }
 
@@ -362,7 +360,7 @@ func TestAllMediaBodyIsNotRefused(t *testing.T) {
 		t.Fatal("badRatio refused a body of media only that the bill covers")
 	}
 	c = &calcState{fwd: b, usage: Usage{Input: 9}, ratio: newRatio(9, b)}
-	if !c.badRatio() {
-		t.Fatal("badRatio accepted a bill below the media price")
+	if c.badRatio() || !c.ratio.capped || c.ratio.mediaOf(2500) != 9 {
+		t.Fatalf("a bill below the media price must cap the media at the bill: %+v", c.ratio)
 	}
 }

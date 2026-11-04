@@ -193,7 +193,10 @@ type MessageSplice struct{ At, Removed, Inserted int } // messages only
 type CacheState struct {
     CachePhase CachePhase // hot | cold | unknown
     Extent     *Position  // the last position the entry covers; nil when nothing is covered
-    TTL        string     // "5m" | "1h": the lifetime the breakpoint asks for; empty when cold or unknown
+    TTL        string     // "5m" | "1h": the longest TTL of a breakpoint that wrote the entry; empty when cold or unknown
+    // EntryTTL is EntryFacts.TTL of the request that wrote the entry. The next request judges the
+    // entry with it, not with its own EntryFacts.TTL (§5.2). Zero when unknown: the next request's TTL is used.
+    EntryTTL time.Duration
 }
 
 // EntryFacts are the facts that decide the cache phase and that only the host knows. The host passes
@@ -201,7 +204,9 @@ type CacheState struct {
 // The library finds the two gaps itself (§5.2), from `ThreadState.PrevPrint.At`, `LastPing` and the
 // time of the request, so a recompute after another request (§6.1) uses the current state.
 type EntryFacts struct {
-    TTL  time.Duration // lifetime of the entry: 5m or 1h, from the breakpoint that wrote it
+    TTL  time.Duration // lifetime of the entry THIS request writes: 5m or 1h, from the breakpoint that writes it.
+                       // The next request judges the entry with it (CacheState.EntryTTL); this request is
+                       // judged by what the previous request wrote, not by this field (§5.2)
     // Lifetime says whether TTL is a proven expiry (exact) or only a guaranteed floor
     // (minimum): Anthropic's TTL is exact; OpenAI GPT-5.6+ states only a 30-minute minimum
     // with no documented maximum (R45, §5.2). A gap past TTL proves expiry only when exact.
@@ -278,8 +283,8 @@ and can be reported as unpriced ([R19](spec.md#r19)).
    Two exceptions keep the ratio true (accountant#11):
    - **Base64 media stays out of the ratio.** `NewBody` parses each position and counts the `data`
      of an image or document block whose source has `type: base64`, and the payload of a `data:...;base64,` URL
-     (OpenAI form), in `PosHash.Media`. Text that only quotes "base64" is not media. `Media` above `Bytes` is capped. The ratio uses the text bytes only, over the billed tokens
-     less the media tokens (if the bill is below the media price, checks `media_tokens` and `ratio_range` fail and nothing is priced). Media is priced at a fixed 1 token for 250 bytes. A host that builds a
+     (OpenAI form), in `PosHash.Media`. It also counts the `data` string of a Gemini `inlineData` or `inline_data` object and of an OpenAI `input_audio` object, and the `source.bytes` string of a Bedrock Converse `image` or `document` block. The `data:` prefix and the `;base64,` marker match without regard to case (RFC 2045). Text that only quotes "base64" is not media. `Media` above `Bytes` is capped. The ratio uses the text bytes only, over the billed tokens
+     less the media tokens. Media is priced at a fixed 1 token for 250 bytes. This is not a provider rule: Anthropic bills about width x height / 750 tokens and shrinks a large image, OpenAI bills by tile, and a PDF is billed by page. So the price is right only for a medium image, and a large image shifts the text ratio for the whole request (a 2 MB PNG that Anthropic bills at 1,600 tokens is priced at 8,000, and the text ratio then absorbs the 6,400 tokens of difference: a 10,000-token saving shows as 9,358). The library cannot know the real count from the bytes. A host that needs the exact figure sets `Size.Tokens` on the range, and the library uses it as it is. If the bill is below the media price, the library cuts the media to the bill less the least the text can cost (0.05 tokens a byte, the lower limit of check 9), and prices the text at that lowest ratio, so a text saving is the lowest the bill allows. It fails the check `media_tokens`. An operation whose range covers media goes to `Unpriced` with the reason `media_tokens`, unless the host gave `Size.Tokens` on both of its sizes. Other operations are still priced and are `Estimated`. A host that builds a
      `Body` itself sets `PosHash.Media`. A host marks media inside a `Size` with `Size.MediaBytes`. If a size does not mark it, the library takes the
      media of the range from the client body for a before-size and from the forwarded body, over the mapped range, for an after-size (the size's bytes beyond the range's text), so an unmarked cut of an image
      message is not priced at the text ratio.
@@ -754,15 +759,49 @@ A host that sums cache effects into a net skips each break with `InBaseline`.
 | 5 | No diff inside `prevExtent`, and the phase is `cold` | The cache expired. Add a break with no `ChangeID`, so the expiry is on the record ([R31](spec.md#r31)). It moves no tokens: B\* = 0 already prices every position as a write (§6.2), so the range from the read extent to B\* is empty, and the expiry is not counted twice. |
 | 6 | No previous fingerprint for this thread | First turn of the thread with no `Inherits`, or a restart: no break is added. B\* is unknown (§6.4). |
 
-The phase is found **before** the rows, from the gaps. It is the **cache state** that `Compute` uses ([R36](spec.md#r36)):
+The phase is found **before** the rows, from the gaps. It is the **cache state** that `Compute` uses ([R36](spec.md#r36)).
+
+**Which TTL.** The clock judges the entry the previous request *wrote*. In the table, "TTL" is the TTL of that
+entry, not `EntryFacts.TTL` of the current request (accountant#41). A 5m entry that a request asks to keep at 1h
+is still expired after 30 minutes. A 1h entry is alive after 10 minutes, whatever TTL the new request asks for.
+`CacheState.EntryTTL` keeps the `EntryFacts.TTL` of the writing request. A state from before that field (zero)
+falls back to the current `EntryFacts.TTL`.
+
+**Mixed TTLs.** The entry has one part for each breakpoint of the previous request, and each part lives for the TTL
+of its breakpoint (`Breakpoint.TTL`, accountant#40). The prefix up to a 1h breakpoint is alive for 1h, the prefix up
+to a 5m breakpoint for 5m. After 10 minutes a 1h head is alive and a 5m tail has expired. The phase is `hot` when any
+part is alive, and the `Extent` is the end of the last live part (the head, here). The part beyond the last
+breakpoint, up to the extent, has `EntryTTL` (`EntryFacts.TTL` of the writing request). A breakpoint whose TTL is
+not "5m" or "1h" (empty, or a typo in a stored state) also takes `EntryTTL`, with no warning. With a ping, the entry
+gap is compared with the longest TTL of the entry. If one part is alive on the clock and a ping kept another part
+alive, the clock-alive part wins: the phase is hot, there is no ping rescue, and the window is under-credited (the
+safe direction).
+
+**A read extends a live head.** When some part is alive on the clock, a billed read that covers the prefix of a
+clock-dead part (the 5m tail of a mixed entry) still extends the extent to that part. The 1,500 tokens of a tail change
+that the provider read are priced at the read tier, not as a 5m write. The read only lowers a saving (R45).
+
+**A fork** is seeded when the gap is within the longest part TTL of the parent's entry, the same rule. A fork that
+keeps only the 1h head of a mixed entry (and changes the 5m tail) is not seeded: the seed needs the whole extent.
+That is the safe direction (`unknown`).
+
+**The current request's `Facts.TTL`** must be above 0 for the clock branch and for the fork seed. With 0 the phase is
+`unknown` (a read can still prove it hot), whatever the state holds.
+
+**A billed read beats the clock.** When `Usage.CacheRead` covers the prefix of a part (with the tolerance of
+decision 7), that part was alive: the provider read it. The clock then loses at any gap, not only within 10 seconds.
+Reasons: the provider measures the TTL from the end of the previous response, and the library measures from the
+start of the previous request, so a long streamed response puts the gap past the TTL while the entry is alive.
+Clock skew and queue time act in the same way. The usage is the provider's own evidence, and it can only lower a
+saving (R45).
 
 | Case | `CachePhase` | `Extent` |
 |---|---|---|
-| A previous fingerprint exists, and the request gap ≤ TTL | `hot` | `prevExtent` |
+| A previous fingerprint exists, and the request gap ≤ TTL of at least one part of the entry | `hot` | the end of the longest live part (`prevExtent` when all are live) |
 | A previous fingerprint exists, the previous request cached nothing (its cache state was `cold`), and the request gap ≤ TTL | `hot` | empty: nothing can have been lost |
 | A previous fingerprint exists, the previous request cached nothing, the lifetime is `exact`, and the request gap > TTL | `cold` | nil |
 | A previous fingerprint exists, request gap > TTL, entry gap ≤ TTL, `PingRead` is set (or derived from `PingUsage`, below), and the lifetime is `exact` or `minimum`. The rescue also needs condition 3 of §4.4 | `hot`, and the library adds a rescue with `ChangeID = EntryFacts.PingWindow` (§4.4) | `PingRead` |
-| A previous fingerprint exists, request gap > TTL by at most 10 seconds, the lifetime is `exact`, no ping qualifies, and `Usage.CacheRead` covers the whole previous extent | `hot`, as for a request gap ≤ TTL. The provider read the entry, so clock skew or queue time moved the gap past the TTL. No rescue | `prevExtent` |
+| A previous fingerprint exists, request gap > TTL of every part, the lifetime is `exact`, no ping qualifies, and `Usage.CacheRead` covers the prefix of a part | `hot`. The provider read the entry, so the clock is wrong (clock skew, queue time, a long response). No rescue | the end of the longest part the read covers |
 | A previous fingerprint exists, request gap > TTL, the lifetime is `exact`, and no ping qualifies (none was sent, one was sent too late, or `PingRead` is unset and cannot be derived) | `cold`. A late ping gets no rescue | nil |
 | A previous fingerprint exists, request gap > TTL, no qualifying ping, and the lifetime is `minimum` or `unknown` | `unknown`, unless `Usage.CacheRead` proves a read (below) | nil |
 | No previous fingerprint for this thread | `unknown`, unless `Usage.CacheRead` proves a read (below) | nil |
@@ -1130,7 +1169,7 @@ type Result struct {
 type Unpriced struct {
     OpID   string
     Reason string // "unknown_kind", "negative_size", "penalty_unknown", "ping_result_unknown", "end_request_missing",
-                  // "no_usage", "not_spend", "bad_usage", "ratio_range", "breakpoints", "size_range", ...; the host adds
+                  // "no_usage", "not_spend", "bad_usage", "ratio_range", "media_tokens", "breakpoints", "size_range", ...; the host adds
                   // "operator_not_allowed" from its own allow-list (wiring document, W5.1)
 }
 
@@ -1231,7 +1270,7 @@ check, the operator, the detail, and the request, session and thread IDs). `Prev
 3. **Unique `ChangeID`:** no two `rewrite` or `setting` context operations of one request, reported or active, have the same `ChangeID`. A `spend` or a cache effect may share the `ChangeID` of the change it belongs to.
 4. **Spans:** for a context operation with `Spans`, its `SizeBefore` and `SizeAfter` equal the sums over its spans.
 5. **Attribution:** a `break` effect's `ChangeID` is the `ChangeID` of a context operation of the same request, or empty. A `rescue`, `ttlPremium` and `ttlRescue` are exempt: their `ChangeID` is a keep-alive window or a head entry, which names no operation of this request.
-6. **Conservation:** the request total of the applied context operations and the cache effects equals the bill difference (§6.3).
+6. **Conservation:** the request total of the applied context operations and the cache effects equals the bill difference (§6.3). The ranges of operations unpriced for `media_tokens` are taken out of the bill difference (as `DryRun` operations are left out), because the operation prices none of it; every other operation stays in the check.
    Each size is compared at the request ratio, so a correct `Size.Tokens` passes (the gap between the host's tokens
    and the ratio's figure for the same bytes is taken out of the total). `DryRun` context operations are left out,
    because their content went upstream unchanged.
@@ -1245,18 +1284,22 @@ check, the operator, the detail, and the request, session and thread IDs). `Prev
    whose `Call` fails goes to `Unpriced` with `bad_usage` (its other figures are not changed), also in `ComputeStandalone`.
    A valid `Call` is passed on as the host sent it.
 9. **Ratio range:** the tokens per forwarded text byte, `(Input + CacheRead + CacheWrite - media price) / (bytes - media bytes)`,
-   is from 0.05 to 2.0. Base64 media bytes are not in the denominator, and the media price (1 token per 250 bytes) is not in the numerator.
+   is from 0.05 to 2.0. When the bill is below the media price, the media price is first cut to the bill (check 11), so this check does not fail for that reason. Base64 media bytes are not in the denominator, and the media price (1 token per 250 bytes) is not in the numerator.
    If it is outside that range, the usage does not fit the body, and the check `ratio_range` fails. A ratio of 0
    (a body with text bytes and no billed prompt token) and an infinite ratio (billed tokens and an empty body) are outside
-   the range too. A body of media only has no text bytes: it passes only when the bill equals the media price. A bill above it fails this check, because the extra tokens fit no content. A bill below
-   the media price fails this check as well as check 11. Without this
+   the range too. A body of media only has no text bytes: it passes only when the bill is at most the media price (a smaller bill is cut, check 11). A bill above it fails this check, because the extra tokens fit no content. Without this
    check the ratio, and so the conservation check (check 6), agree with themselves for any usage.
 10. **Breakpoints:** a request has at most 4 forwarded breakpoints (the Anthropic limit), and each TTL (client and
     forwarded) is `"5m"`, `"1h"` or empty (empty counts as `5m`). Otherwise the check `breakpoints` fails.
 
 11. **Media tokens (`media_tokens`):** the fixed price of the forwarded body's media (1 token per 250 bytes) is not above the
-    billed prompt tokens. If it is, the bill cannot hold the media: check 9 (`ratio_range`) fails too, nothing is priced, and
-    every operation goes to `Unpriced` with the reason `ratio_range`.
+    billed prompt tokens. If it is, the price is wrong, because the provider cannot bill less than the media costs (it
+    downscaled a large image, for example). The check fails, and the library does not drop the request. It cuts the media to
+    the bill less 0.05 tokens for each text byte, and gives the text the rest, which is the lowest text ratio that check 9
+    allows. Every saving on text is then the lowest the bill allows. An operation whose range covers media goes to
+    `Unpriced` with the reason `media_tokens`, because the bill does not say how it splits between that media and the text.
+    The tokens of such an operation's ranges are taken out of the bill difference of check 6.
+    A range with `Size.Tokens` on both sizes is exact and stays priced. Every other operation is priced and `Estimated`.
 12. **Size tokens (`size_tokens`):** a `Size.Tokens` is between 0.05 tokens for each text byte and 2.0 tokens for each byte
     of its range (the limits of check 9). If it is not, the host's count is a bug: the library ignores it, converts the
     bytes, and reports the check.

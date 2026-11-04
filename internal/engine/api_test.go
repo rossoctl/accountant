@@ -79,7 +79,7 @@ func TestEveryUnpricedReasonIsInTheDesign(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, reason := range []string{ReasonEndRequestMissing, ReasonPingResultUnknown, ReasonUnknownKind,
-		ReasonNegativeSize, ReasonPenaltyUnknown, ReasonNoUsage, ReasonNotSpend, ReasonBadUsage, ReasonRatioRange, ReasonBreakpoints, ReasonSizeRange} {
+		ReasonNegativeSize, ReasonPenaltyUnknown, ReasonNoUsage, ReasonNotSpend, ReasonBadUsage, ReasonRatioRange, ReasonMediaTokens, ReasonBreakpoints, ReasonSizeRange} {
 		if !strings.Contains(string(doc), `"`+reason+`"`) && !strings.Contains(string(doc), "`"+reason+"`") {
 			t.Errorf("reason %q is not named in docs/design.md", reason)
 		}

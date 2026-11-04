@@ -1,0 +1,260 @@
+{
+ "id": "ttl/mixed-fork/seeded-while-head-alive",
+ "description": "The main thread writes a mixed entry: a 1h mark on messages[1] (a+b = 5,000 tokens) and a 5m mark on messages[2] (7,000 tokens in all). A subagent forks 10 minutes later and keeps the whole prefix. The 5m tail is dead, the 1h head is alive, so the library seeds the fork from the parent. The phase is hot at messages[1], with no penalty_unknown. The provider read the 5,000-token head and wrote 2,500.",
+ "source": "issue_cases.md#40",
+ "dims": {
+  "kind": "none",
+  "position": "afterBStar",
+  "cache": "fork",
+  "ttl": "mixed",
+  "lifetime": "exact",
+  "threads": "2"
+ },
+ "rates": "fixture-v1",
+ "steps": [
+  {
+   "begin": {
+    "meta": {
+     "requestId": "r0",
+     "session": "s1",
+     "model": "agent-model",
+     "at": "2026-03-02T09:00:00Z",
+     "billing": {
+      "mode": "api"
+     }
+    },
+    "client": {
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "pos": [
+      {
+       "hash": 620337896427418084,
+       "bytes": 8000
+      },
+      {
+       "hash": 12340099932563210358,
+       "bytes": 12000
+      },
+      {
+       "hash": 14899682270663221853,
+       "bytes": 8000
+      }
+     ]
+    },
+    "clientBreakpoints": [
+     {
+      "pos": {
+       "section": "messages",
+       "index": 1
+      },
+      "ttl": "1h"
+     },
+     {
+      "pos": {
+       "section": "messages",
+       "index": 2
+      },
+      "ttl": "5m"
+     }
+    ]
+   },
+   "add": [],
+   "end": {
+    "thread": {
+     "id": "main"
+    },
+    "forwarded": {
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "pos": [
+      {
+       "hash": 620337896427418084,
+       "bytes": 8000
+      },
+      {
+       "hash": 12340099932563210358,
+       "bytes": 12000
+      },
+      {
+       "hash": 14899682270663221853,
+       "bytes": 8000
+      }
+     ]
+    },
+    "breakpoints": [
+     {
+      "pos": {
+       "section": "messages",
+       "index": 1
+      },
+      "ttl": "1h"
+     },
+     {
+      "pos": {
+       "section": "messages",
+       "index": 2
+      },
+      "ttl": "5m"
+     }
+    ],
+    "facts": {
+     "ttl": "5m",
+     "lifetime": "exact"
+    }
+   },
+   "usage": {
+    "input": 0,
+    "cacheRead": 0,
+    "cacheWrite": 7000,
+    "cacheWrite1h": 5000
+   },
+   "expected": {
+    "phase": "unknown",
+    "baselineUsage": {
+     "input": 0,
+     "cacheRead": 0,
+     "cacheWrite": 7000,
+     "cacheWrite1h": 5000
+    },
+    "ops": [],
+    "unpriced": [
+     {
+      "reason": "penalty_unknown"
+     }
+    ]
+   }
+  },
+  {
+   "begin": {
+    "meta": {
+     "requestId": "fork-0",
+     "session": "s1",
+     "model": "agent-model",
+     "at": "2026-03-02T09:10:00Z",
+     "billing": {
+      "mode": "api"
+     }
+    },
+    "client": {
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "pos": [
+      {
+       "hash": 620337896427418084,
+       "bytes": 8000
+      },
+      {
+       "hash": 12340099932563210358,
+       "bytes": 12000
+      },
+      {
+       "hash": 14899682270663221853,
+       "bytes": 8000
+      },
+      {
+       "hash": 14661398692511680033,
+       "bytes": 2000
+      }
+     ]
+    },
+    "clientBreakpoints": [
+     {
+      "pos": {
+       "section": "messages",
+       "index": 1
+      },
+      "ttl": "1h"
+     },
+     {
+      "pos": {
+       "section": "messages",
+       "index": 3
+      },
+      "ttl": "5m"
+     }
+    ]
+   },
+   "add": [],
+   "end": {
+    "thread": {
+     "id": "a:sub",
+     "parent": "main"
+    },
+    "forwarded": {
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "pos": [
+      {
+       "hash": 620337896427418084,
+       "bytes": 8000
+      },
+      {
+       "hash": 12340099932563210358,
+       "bytes": 12000
+      },
+      {
+       "hash": 14899682270663221853,
+       "bytes": 8000
+      },
+      {
+       "hash": 14661398692511680033,
+       "bytes": 2000
+      }
+     ]
+    },
+    "breakpoints": [
+     {
+      "pos": {
+       "section": "messages",
+       "index": 1
+      },
+      "ttl": "1h"
+     },
+     {
+      "pos": {
+       "section": "messages",
+       "index": 3
+      },
+      "ttl": "5m"
+     }
+    ],
+    "facts": {
+     "ttl": "5m",
+     "lifetime": "exact"
+    }
+   },
+   "usage": {
+    "input": 0,
+    "cacheRead": 5000,
+    "cacheWrite": 2500,
+    "cacheWrite1h": 0
+   },
+   "expected": {
+    "phase": "hot",
+    "baselineUsage": {
+     "input": 0,
+     "cacheRead": 5000,
+     "cacheWrite": 2500,
+     "cacheWrite1h": 0
+    },
+    "ops": [],
+    "boundary": {
+     "section": "messages",
+     "index": 1
+    }
+   }
+  }
+ ]
+}

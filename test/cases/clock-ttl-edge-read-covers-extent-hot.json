@@ -1,6 +1,6 @@
 {
  "id": "clock/ttl-edge-read-covers-extent/hot",
- "description": "A request arrives 2 seconds past the 5m TTL, but the usage bills a read of all 30,000 tokens of the previous extent. The provider held the entry (clock skew, queue time), so the phase is hot, not cold. The margin is 10 seconds (design 5.2).",
+ "description": "A request arrives 2 seconds past the 5m TTL, but the usage bills a read of all 30,000 tokens of the previous extent. The provider held the entry (clock skew, queue time), so the phase is hot, not cold. A billed read beats the clock (design 5.2).",
  "source": "issue_cases.md#16",
  "dims": {
   "kind": "none",

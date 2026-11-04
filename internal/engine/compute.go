@@ -19,6 +19,7 @@ const (
 	ReasonNotSpend          = "not_spend"       // a standalone RequestOps holds only spend operations (§6.1)
 	ReasonBadUsage          = "bad_usage"       // a usage count is negative: nothing is priced (§6.5, check 8)
 	ReasonRatioRange        = "ratio_range"     // tokens per byte is outside the range: nothing is priced (§6.5, check 9)
+	ReasonMediaTokens       = "media_tokens"    // the operation covers media, and the bill is below the media price: only this operation is unpriced (§6.5, check 11)
 	ReasonBreakpoints       = "breakpoints"     // more than 4 breakpoints, or an unknown TTL: nothing is priced (§6.5, check 10)
 	ReasonSizeRange         = "size_range"      // an operation reports more bytes than the client body holds: that operation is not priced (§6.5, check 13)
 )
@@ -460,6 +461,7 @@ type calcState struct {
 	invalid  string // the reason the usage or breakpoints cannot be trusted; "" when they can (§6.5, checks 8 to 10)
 	seeded   bool   // s.PrevPrint is the parent's fingerprint (seededFromParent), not this thread's own
 	ratio    ratio
+	mediaGap int // the ratio's figure for the ranges of operations unpriced for media_tokens (check 6)
 	hostGap  int // saved tokens that come from Size.Tokens beyond the ratio's figure (check 6)
 
 	client, fwd       Body
@@ -711,9 +713,18 @@ func (c *calcState) pingRead() *Position {
 }
 
 // phaseAndBoundary finds the cache phase from the gaps (§5.2) and B* (§5.1).
+//
+// The clock judges the entry the previous request WROTE, so it uses the TTL of each breakpoint of that
+// request (Breakpoint.TTL) and EntryFacts.TTL of that request (CacheState.EntryTTL), not the TTL of this
+// request (accountant#40, #41). With a 1h head and a 5m tail, the head can be alive after the tail has
+// expired: the phase is then hot with the head as the previous extent.
 func (c *calcState) phaseAndBoundary(res *Result) {
 	prev, f := c.s.PrevPrint, c.r.Facts
 	c.phase = PhaseUnknown
+	entryTTL := c.s.Cache.EntryTTL
+	if entryTTL <= 0 {
+		entryTTL = f.TTL
+	}
 	// A request that started before the stored one has no valid gap: the clock says nothing about the
 	// entry, so the phase is left to the usage (accountant#16). Hot from a negative gap would be a guess.
 	if prev != nil && f.TTL > 0 && c.s.Cache.Extent != nil && !c.r.Meta.At.Before(prev.At) {
@@ -723,29 +734,45 @@ func (c *calcState) phaseAndBoundary(res *Result) {
 			last = f.LastPing
 		}
 		entryGap := c.r.Meta.At.Sub(last)
+		segs := c.entrySegments(entryTTL)
+		longest := segs[0].ttl
+		for _, sg := range segs {
+			longest = max(longest, sg.ttl)
+		}
+		live, alive := liveExtent(segs, gap, nil)
 		switch {
-		case gap <= f.TTL:
-			c.phase, c.prevExt = PhaseHot, mustFlat(prev.Forwarded, *c.s.Cache.Extent)
+		case alive:
+			// A part the clock calls dead can still be proven alive by a billed read. That read lengthens the extent
+			// (it only lowers a saving, R45). `alive` itself stays clock-only, so a read does not preempt the ping rescue.
+			if c.usage.CacheRead > 0 {
+				if l2, ok := liveExtent(segs, gap, func(at int) bool { return c.readReaches(prev.Forwarded, at) }); ok {
+					live = max(live, l2)
+				}
+			}
+			c.phase, c.prevExt = PhaseHot, live
 		case f.Lifetime == LifetimeUnknown:
 			// an unknown lifetime cannot prove an expiry (R45)
-		case !f.LastPing.IsZero() && entryGap <= f.TTL && c.pingRead() != nil:
+		case !f.LastPing.IsZero() && entryGap <= longest && c.pingRead() != nil:
 			// a minimum counts as the lifetime for a rescue: 30 minutes is 30 minutes
 			c.phase, c.prevExt, c.pingHot = PhaseHot, mustFlat(prev.Forwarded, *c.pingRead()), true
 		case f.Lifetime == LifetimeMinimum:
 			// with no ping, a gap past a minimum proves no expiry (R45)
 		default:
 			c.phase = PhaseCold
-			if gap-f.TTL <= ttlSkew && c.usage.CacheRead > 0 && c.readReaches(prev.Forwarded, mustFlat(prev.Forwarded, *c.s.Cache.Extent)) {
-				// The clock says expired by at most ttlSkew, but the provider billed a read that covers the whole previous
-				// extent (clock skew, queue time). The read is the evidence; it only lowers a saving (R45).
-				c.phase, c.prevExt = PhaseHot, mustFlat(prev.Forwarded, *c.s.Cache.Extent)
+			// The clock says expired, but the provider billed a read that covers the prefix of a breakpoint (clock
+			// skew, queue time, a long streamed response that refreshed the entry late, a sibling that kept it
+			// warm). The read is the evidence and it beats the clock at any gap; it only lowers a saving (R45).
+			if c.usage.CacheRead > 0 {
+				if live, ok := liveExtent(segs, gap, func(at int) bool { return c.readReaches(prev.Forwarded, at) }); ok {
+					c.phase, c.prevExt = PhaseHot, live
+				}
 			}
 		}
 	} else if prev != nil && c.r.Meta.At.Before(prev.At) {
 		// Out of order: the clock says nothing about the entry, so the phase is left to the usage below.
-	} else if prev != nil && f.TTL > 0 && c.r.Meta.At.Sub(prev.At) <= f.TTL && c.s.Cache.CachePhase == PhaseCold {
+	} else if prev != nil && f.TTL > 0 && c.r.Meta.At.Sub(prev.At) <= entryTTL && c.s.Cache.CachePhase == PhaseCold {
 		c.phase = PhaseHot // the previous request cached nothing: hot with an empty extent (§5.2)
-	} else if prev != nil && f.TTL > 0 && f.Lifetime == LifetimeExact && c.r.Meta.At.Sub(prev.At) > f.TTL {
+	} else if prev != nil && f.TTL > 0 && f.Lifetime == LifetimeExact && c.r.Meta.At.Sub(prev.At) > entryTTL {
 		c.phase = PhaseCold // the previous request cached nothing, and it would have expired anyway
 	}
 
@@ -802,14 +829,67 @@ func (c *calcState) phaseAndBoundary(res *Result) {
 	}
 }
 
-// ttlSkew is how far past an exact TTL a read in the usage can still overrule the clock: the clock
-// of the host and the provider differ, and a request waits in a queue before the provider stamps it.
-// A longer gap with a read stays cold, so the rule only lowers a saving (R45).
-const ttlSkew = 10 * time.Second
+// entrySeg is the part of the cached entry that a breakpoint of the previous request wrote: the prefix up
+// to flat position at (in the previous forwarded body), alive for ttl.
+type entrySeg struct {
+	at  int
+	ttl time.Duration
+}
+
+// segTTL is the lifetime a breakpoint's TTL string gives. Any string other than "5m" and "1h" (an empty
+// one, or a typo) takes the entry's TTL, with no warning. Compute rejects an unknown TTL on the current
+// request's breakpoints (check "breakpoints"), but a stored one is not checked again.
+func segTTL(s string, entryTTL time.Duration) time.Duration {
+	switch s {
+	case "1h":
+		return time.Hour
+	case "5m":
+		return 5 * time.Minute
+	}
+	return entryTTL
+}
+
+// entrySegments splits the previous request's cached extent by the TTL of the breakpoints that wrote it,
+// in flat order of the previous forwarded body. It never returns an empty list: the extent itself is the
+// last part, at entryTTL, when no breakpoint ends it.
+func (c *calcState) entrySegments(entryTTL time.Duration) []entrySeg {
+	return entrySegs(c.s, entryTTL)
+}
+
+// entrySegs is entrySegments for a thread state. The part beyond the last breakpoint, up to the extent, has
+// the entry TTL (EntryFacts.TTL of the writing request). A breakpoint TTL other than "5m" and "1h" (empty or
+// unknown) also takes the entry TTL (segTTL). s must hold a previous fingerprint and an extent.
+func entrySegs(s ThreadState, entryTTL time.Duration) []entrySeg {
+	prev := s.PrevPrint
+	ext := mustFlat(prev.Forwarded, *s.Cache.Extent)
+	var segs []entrySeg
+	for _, b := range prev.Forwarded.breakpoints(prev.ForwardedBreakpoints) {
+		if b.at <= ext {
+			segs = append(segs, entrySeg{b.at, segTTL(b.ttl, entryTTL)})
+		}
+	}
+	if len(segs) == 0 || segs[len(segs)-1].at < ext {
+		segs = append(segs, entrySeg{ext, entryTTL})
+	}
+	return segs
+}
+
+// liveExtent is the longest prefix of the previous entry that is alive after gap: the end of the last
+// segment whose own TTL has not run out. A segment that has run out is alive too when read says the usage
+// proves a read of its prefix (read may be nil). ok is false when no segment is alive.
+func liveExtent(segs []entrySeg, gap time.Duration, read func(at int) bool) (int, bool) {
+	live, ok := -1, false
+	for _, sg := range segs {
+		if gap <= sg.ttl || (read != nil && read(sg.at)) {
+			live, ok = max(live, sg.at), true
+		}
+	}
+	return live, ok
+}
 
 // readReaches reports whether Usage.CacheRead covers the first bytes bytes of the previous forwarded
 // body up to position i, with the tolerance of extent (128 tokens plus 2%). The prefix is priced at the
-// byte ratio of this request, its media at the fixed media price. It is the one tolerance for the TTL-edge rule and for the B* rule (decision 7).
+// byte ratio of this request, its media at the fixed media price. It is the one tolerance for the read-beats-the-clock rule and for the B* rule (decision 7).
 func (c *calcState) readReaches(b Body, i int) bool {
 	want := c.ratio.upTo(b, i)
 	return want > 0 && want <= c.usage.CacheRead+128+c.usage.CacheRead/50
@@ -1184,7 +1264,8 @@ func (c *calcState) validate(u Usage) string {
 }
 
 // badRatio says whether the tokens per forwarded text byte are outside 0.05 to 2.0 (check 9). Media
-// bytes are not in the denominator and the media price is not in the numerator (newRatio). A usage that
+// bytes are not in the denominator and the media price is not in the numerator (newRatio). A media
+// price above the bill is cut to the bill (newRatio), so it does not fail this check. A usage that
 // bills no prompt token for a body with bytes (tokens per byte 0), or tokens for an empty body (infinite),
 // is outside the range too.
 func (c *calcState) badRatio() bool {
@@ -1192,12 +1273,9 @@ func (c *calcState) badRatio() bool {
 	if c.fwd.cumBytes(last) == 0 {
 		return true // an empty body billed for tokens, or for none
 	}
-	if c.fwd.cumMedia(last)/mediaBytesPerToken > c.usage.Input+c.usage.CacheRead+c.usage.CacheWrite {
-		return true // the bill is below the media price: check 11 fails too
-	}
 	t, n := float64(c.ratio.tokens), float64(c.ratio.bytes)
 	if n == 0 {
-		return t != 0 // all media: the bill must be the media price, and no text is left to price
+		return t != 0 // all media: the bill must be at most the media price (a larger one is cut to the bill), and no text is left to price
 	}
 	if t == 0 {
 		return true
@@ -1262,6 +1340,9 @@ func (c *calcState) price(res *Result) {
 			res.Unpriced = append(res.Unpriced, Unpriced{OpID: it.id, Reason: c.invalid})
 		case resultUnknown(it.op):
 			res.Unpriced = append(res.Unpriced, Unpriced{OpID: it.id, Reason: ReasonPingResultUnknown})
+		case c.mediaUnpriced(k, it):
+			c.leaveOutOfConservation(k, it)
+			res.Unpriced = append(res.Unpriced, Unpriced{OpID: it.id, Reason: ReasonMediaTokens})
 		case it.op.Kind == KindRewrite:
 			for _, sp := range it.spans {
 				bm, am := c.rangeMedia(k, sp.before, sp, true), c.rangeMedia(k, sp.after, sp, false)
@@ -1312,6 +1393,41 @@ func (c *calcState) price(res *Result) {
 	res.Ops = append(reported, active...)
 }
 
+// mediaUnpriced says whether the operation covers media while the bill is below the media price
+// (check 11). The library does not know how the bill splits between that media and the text, so it
+// does not price the operation. A span with the host's own tokens on both sizes is still exact, so
+// it does not count. An operation that covers no media is priced with the text ratio.
+func (c *calcState) mediaUnpriced(k int, it *item) bool {
+	if !c.ratio.capped || it.op.Kind != KindRewrite {
+		return false
+	}
+	for _, sp := range it.spans {
+		bm, am := c.rangeMedia(k, sp.before, sp, true), c.rangeMedia(k, sp.after, sp, false)
+		if bm == 0 && am == 0 {
+			continue
+		}
+		hostCounted := sp.before.Tokens > 0 && plausible(sp.before, bm) && sp.after.Tokens > 0 && plausible(sp.after, am)
+		if !hostCounted {
+			return true
+		}
+	}
+	return false
+}
+
+// leaveOutOfConservation adds the ratio's figure for the ranges of an operation unpriced for
+// media_tokens to mediaGap. The bill difference holds those tokens and the operation prices none of
+// them, so check 6 takes them out of the bill difference. Every other operation stays in the check
+// at full strength. Taking the whole check away would also hide a fault in those operations.
+func (c *calcState) leaveOutOfConservation(k int, it *item) {
+	if it.op.DryRun {
+		return
+	}
+	for _, sp := range it.spans {
+		bm, am := c.rangeMedia(k, sp.before, sp, true), c.rangeMedia(k, sp.after, sp, false)
+		c.mediaGap += c.ratio.tokensOf(sp.before.Bytes, bm) - c.ratio.tokensOf(sp.after.Bytes, am)
+	}
+}
+
 // interaction adds the tokens of a saved span that the rescue turned from write into read (§6.2).
 // Without the ping the span would have been written cold; with it the span is saved at the read
 // tier. The difference is neither the ping's nor the operator's, so it is attributed to nobody.
@@ -1360,7 +1476,8 @@ func (c *calcState) conservation(res *Result) {
 	}
 	billed := c.usage.Input + c.usage.CacheRead + c.usage.CacheWrite
 	want := c.ratio.upTo(c.client, len(c.client.Pos)-1) - billed
-	net -= c.hostGap // the ratio's figure: host tokens are exact and the bodies are not
+	net -= c.hostGap   // the ratio's figure: host tokens are exact and the bodies are not
+	want -= c.mediaGap // those operations are unpriced: their tokens are in the bill difference only
 	if d := want - net; d > tol+1 || d < -(tol+1) {
 		res.Checks = append(res.Checks, CheckFailure{Check: "conservation",
 			Detail: fmt.Sprintf("bill difference=%d ops=%d tokens", want, net)})
@@ -1373,9 +1490,15 @@ func tierSum(t TierTokens) int { return t.Input + t.CacheWrite5m + t.CacheWrite1
 // are not run here (conservation is, in calc): attribution holds by construction, because the library
 // only gives a break the ChangeID of one of the request's operations.
 func (c *calcState) checks(res *Result) {
-	if media := c.fwd.cumMedia(len(c.fwd.Pos)-1) / mediaBytesPerToken; !c.noUsage && media > c.usage.Input+c.usage.CacheRead+c.usage.CacheWrite {
+	if c.ratio.capped && !c.noUsage {
+		note := "the media is cut to the bill and an operation that covers media is unpriced"
+		if c.invalid != "" {
+			note = "nothing is priced"
+		}
+		media := c.fwd.cumMedia(len(c.fwd.Pos)-1) / mediaBytesPerToken
 		res.Checks = append(res.Checks, CheckFailure{Check: "media_tokens",
-			Detail: fmt.Sprintf("media=%d tokens billed=%d: the bill is below the media price: nothing is priced (ratio_range)", media, c.usage.Input+c.usage.CacheRead+c.usage.CacheWrite)})
+			Detail: fmt.Sprintf("media price=%d tokens billed=%d: the bill is below the media price: the media is cut to %d tokens: %s",
+				media, c.usage.Input+c.usage.CacheRead+c.usage.CacheWrite, c.ratio.mediaTok, note)})
 	}
 	var got [3]int
 	seen := map[string]bool{}
@@ -1456,11 +1579,17 @@ func (c *calcState) nextState() ThreadState {
 	case c.skipsPricing():
 		next.Cache = CacheState{} // unknown
 	case c.cachedFwd < 0:
-		next.Cache = CacheState{CachePhase: PhaseCold}
+		next.Cache = CacheState{CachePhase: PhaseCold, EntryTTL: c.r.Facts.TTL}
 	default:
 		fp.Cached = c.fwd.position(c.cachedFwd)
 		ext := fp.Cached
-		next.Cache = CacheState{CachePhase: PhaseHot, Extent: &ext, TTL: ttlName(c.r.Facts.TTL)}
+		ttl := ttlName(c.r.Facts.TTL)
+		for _, b := range c.fwdBPs { // a 1h breakpoint under the extent holds the head at 1h whatever Facts.TTL says
+			if b.ttl == "1h" && b.at <= c.cachedFwd {
+				ttl = "1h"
+			}
+		}
+		next.Cache = CacheState{CachePhase: PhaseHot, Extent: &ext, TTL: ttl, EntryTTL: c.r.Facts.TTL}
 	}
 	next.PrevPrint = fp
 	if p := c.s.PrevPrint; p != nil && !c.seeded && fp.At.Before(p.At) {

@@ -60,14 +60,15 @@
 //     A setting break (§5.2 row 3) starts at the last candidate before the earliest
 //     SettingChange.At; with no At it starts at the read and adds penalty_unknown. Row 3 and row 4
 //     need the read to be below the prediction by more than the tolerance of decision 3.
-//  9. Phase. With no previous fingerprint, no TTL, no cached extent inside the TTL, or a gap past a minimum or unknown
+//  9. Phase. The clock judges the entry the previous request wrote: each breakpoint of that request has its own
+//     TTL, and the phase is hot when any part is alive (accountant#40, #41). With no previous fingerprint, no TTL, no cached extent inside the TTL, or a gap past a minimum or unknown
 //     lifetime with no ping, the phase is unknown and penalty_unknown is added (§6.4); a read in the usage then
 //     makes it hot up to the read extent, with no rescue. The cold expiry adds an empty break
 //     (§5.2 row 5). Three rules let the usage or the thread tree beat the clock (accountant#16): a request
-//     whose At is before the stored fingerprint is unknown and does not replace it; a gap past an exact TTL
-//     by at most 10 seconds (ttlSkew) is still hot when CacheRead covers the whole previous extent; and a
+//     whose At is before the stored fingerprint is unknown and does not replace it; a billed CacheRead
+//     that covers the prefix of a previous breakpoint makes the phase hot at any gap; and a
 //     thread with a Parent and no history of its own is seeded from the parent's fingerprint and cache when
-//     the gap is within the TTL, the model is the same and its body keeps the parent's cached extent.
+//     the gap is within the TTL of the parent's entry, the model is the same and its body keeps the parent's cached extent.
 //  10. A rescue (§4.4) needs a ping after the previous request, a request gap past an exact or minimum TTL, an
 //     entry gap inside it, and a read in the usage. What the request wrote does not enter the rule (#9). Its tokens are the smaller of the ping's
 //     read (converted with the ratio) and Usage.CacheRead, less the prefix EntryFacts.SharedWarm names (R54:

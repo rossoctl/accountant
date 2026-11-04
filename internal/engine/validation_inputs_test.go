@@ -237,3 +237,27 @@ func TestMalformedReReportKeepsInsertionInBound(t *testing.T) {
 		t.Fatalf("state lost the active insertion: %+v", st.Active)
 	}
 }
+
+// Merge check with media_tokens (#46): a report over the image that is also above the size bound is
+// size_range (the report is a bug), not media_tokens. An honest operation next to it stays priced.
+func TestSizeRangeWinsOverMediaTokens(t *testing.T) {
+	img := imageBlock(2_000_000)
+	client := [][]byte{text("m0", 2000), img, text("m2", 8000)}
+	fwd := [][]byte{text("m0", 2000), img, text("m2", 8000)}
+	touch := Operation{ID: "touch", Kind: KindRewrite, Operator: "x", ChangeID: "t", At: msg(1),
+		SizeBefore: Size{Bytes: 50_000_000}, SizeAfter: Size{Bytes: len(img)}}
+	cut := Operation{ID: "cut", Kind: KindRewrite, Operator: "mask", ChangeID: "c", At: msg(2),
+		SizeBefore: Size{Bytes: 8000}, SizeAfter: Size{Bytes: 8000}}
+	ts := NewTrackers()
+	r := ts.BeginRequest(RequestMeta{RequestID: "r", Session: "s", At: t0}, NewBody(nil, nil, client), bps5(msg(2)))
+	r.Add(touch)
+	r.Add(cut)
+	r.EndRequest(Thread{ID: "main"}, NewBody(nil, nil, fwd), bps5(msg(2)), exact5m)
+	res := r.Compute(Usage{CacheWrite: 2350})
+	if !hasUnpricedOp(res, "touch", ReasonSizeRange) || hasUnpricedOp(res, "touch", ReasonMediaTokens) {
+		t.Fatalf("Unpriced = %+v, want touch size_range", res.Unpriced)
+	}
+	if hasUnpricedOp(res, "cut", ReasonSizeRange) {
+		t.Fatalf("Unpriced = %+v, cut is honest", res.Unpriced)
+	}
+}
