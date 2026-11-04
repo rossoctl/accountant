@@ -165,3 +165,22 @@ func TestARestoreInsideBStarWithNoCacheTokensIsInput(t *testing.T) {
 		t.Fatalf("Caused = %+v, want no read", c)
 	}
 }
+
+// Media in the prefix prices at the media rate, not the text ratio (§5.1, rule 7). The image is
+// 250,000 bytes, 1,000 tokens; the client prefix up to the breakpoint at m0 is 1000 + wrapper + 1000 + 600
+// = 2,667 tokens, below 4096. At the text ratio the image alone would count 250,000 and pass.
+func TestAMediaPrefixBelowMinCacheableIsInput(t *testing.T) {
+	sysB := content([]blk{b("sys", 1000)})
+	img := imageBlock(250000)
+	client := NewBody(nil, sysB, [][]byte{img, content([]blk{b("m0", 600)})[0]})
+	fwd := NewBody(nil, sysB, [][]byte{img, content([]blk{b("m0", 300)})[0]})
+	cbps := bps5(sys(0), msg(1))
+	res := req{at: t0, client: client, clientBPs: cbps,
+		ops: []Operation{rewrite("a", "op", "c:1", msg(1), 600, 300)},
+		fwd: fwd, fwdBPs: cbps, facts: minFacts(4096),
+		usage: Usage{CacheRead: 1000, Input: wrapper + 1000 + 300}}.run(NewTrackers())
+	noChecks(t, res)
+	if s := findOp(t, res, "a").Saved; s.Input != 300 || s.CacheWrite5m != 0 {
+		t.Fatalf("Saved = %+v, want Input=300", s)
+	}
+}

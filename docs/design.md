@@ -1228,7 +1228,7 @@ check, the operator, the detail, and the request, session and thread IDs). `Prev
    is from 0.05 to 2.0. Base64 media bytes are not in the denominator, and the media price (1 token per 250 bytes) is not in the numerator.
    If it is outside that range, the usage does not fit the body, and the check `ratio_range` fails. A ratio of 0
    (a body with text bytes and no billed prompt token) and an infinite ratio (billed tokens and an empty body) are outside
-   the range too. A body of media only has no text bytes: it passes when the bill covers the media price. A bill below
+   the range too. A body of media only has no text bytes: it passes only when the bill equals the media price. A bill above it fails this check, because the extra tokens fit no content. A bill below
    the media price fails this check as well as check 11. Without this
    check the ratio, and so the conservation check (check 6), agree with themselves for any usage.
 10. **Breakpoints:** a request has at most 4 forwarded breakpoints (the Anthropic limit), and each TTL (client and

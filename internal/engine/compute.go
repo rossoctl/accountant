@@ -941,7 +941,7 @@ func (c *calcState) writeBP(body Body, bps []bp, p int) (ttl string, anyBP, ok b
 			continue
 		}
 		anyBP = true
-		if (best < 0 || x.at < best) && (c.r.Facts.MinCacheable <= 0 || c.ratio.of(body.cumBytes(x.at)) >= c.r.Facts.MinCacheable) {
+		if (best < 0 || x.at < best) && (c.r.Facts.MinCacheable <= 0 || c.ratio.upTo(body, x.at) >= c.r.Facts.MinCacheable) {
 			best, ttl = x.at, x.ttl
 		}
 	}

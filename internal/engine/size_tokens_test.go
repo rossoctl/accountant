@@ -353,7 +353,7 @@ func TestMediaHeavyRequestIsPriced(t *testing.T) {
 	}
 }
 
-// A body whose positions are all media is not an empty body: it prices when the bill covers the
+// A body whose positions are all media is not an empty body: it prices when the bill equals the
 // media.
 func TestAllMediaBodyIsNotRefused(t *testing.T) {
 	b := Body{Pos: []PosHash{{Hash: 1, Bytes: 2500, Media: 2500}}}
