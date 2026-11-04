@@ -2077,6 +2077,51 @@ def r20():
                  DIMS("setting-breakpoint", "system", "no-effect", hash="differs"), [s0, s1])
 
 
+# accountant#44: input validation. A size above the whole client body, and a spend Call with a figure that
+# cannot be real. Usage tiers above 2^40 and NaN/Inf have no case form: a case bills what its forwarded body
+# holds, and JSON has no NaN. internal/engine/validation_inputs_test.go holds those.
+def i44_size_range():
+    sysb = [("sys", 2000)]
+    m = [(f"m{i}", 3000) for i in range(4)]  # 14,000 tokens with the system block
+    mc, mf = m + [("m4", 6000)], m + [("m4f", 1000)]
+    big, ok = "cg:cmdfilter:i44a", "cg:cmdfilter:i44b"
+    huge = 2_000_000_000_000  # tokens; 8e12 bytes, far above the 56,000-byte client body
+    over = rewrite("o1", "context-guru.cmdfilter", "messages", 2, huge, huge, big)
+    over["sizeBefore"]["tokens"] = huge
+    good = rewrite("o2", "context-guru.cmdfilter", "messages", 4, 6000, 1000, ok)
+    s0 = sim(0, "r0", ([], sysb, m), ([], sysb, m), [], "unknown")
+    s1 = sim(40, "r1", ([], sysb, mc), ([], sysb, mf), [eop(ok, saved=TT(cacheWrite5m=5000))], "hot",
+             add=[over, good], prev=(14000, 14000), boundary=P("messages", 3),
+             unpriced=[{"opId": "o1", "reason": "size_range"}], checks=["size_range"])
+    write_more("check/size-above-client-body/unpriced", "I44",
+               "An operator reports that it received 2e12 tokens (8e12 bytes) from a client body of 56,000 bytes. "
+               "That cannot be true. The operation is not priced (size_range), and no 9.2e18-token saving reaches "
+               "the totals. A second, honest operation on the same request is priced as usual: message 4 shrinks "
+               "from 6,000 to 1,000 tokens after B*, so 5,000 cache-write tokens are saved (5,000 x $3.75/M = $0.01875).",
+               DIMS("rewrite", "afterBStar", "hit", check="size_range"), [s0, s1])
+
+
+def i44_bad_call(name, field, value, text):
+    ses = f"s-i44-{name}"
+    call = spend_call(6000, 400, 0.008)
+    call["usage"][field] = value
+    s = ping_step(10, ses, "cg:extract_llm:i44", call)
+    s["expected"]["ops"] = [eop("cg:extract_llm:i44", call=call)]
+    s["expected"]["unpriced"] = [{"opId": "op1", "reason": "bad_usage"}]
+    s["expected"]["checks"] = ["bad_usage"]
+    write_more(f"check/bad-call-{name}/unpriced", "I44", text, DIMS("spend", "none", "none", check="bad_usage"), [s])
+
+
+def i44():
+    i44_size_range()
+    i44_bad_call("negative-output", "output", -5,
+                 "A model call states -5 output tokens. No response can bill that. The spend goes to Unpriced "
+                 "(bad_usage) and the check bad_usage fails. The host must not add a negative cost to its totals.")
+    i44_bad_call("negative-cost", "costUSD", -0.008,
+                 "A model call states a cost of -$0.008. The spend goes to Unpriced (bad_usage) and the check "
+                 "bad_usage fails. A valid call (case spend/without-rewrite/refused) is unchanged.")
+
+
 if __name__ == "__main__":
     os.makedirs(OUT, exist_ok=True)
     for old in os.listdir(OUT):  # the generator owns this directory: drop cases that no longer exist
@@ -2084,5 +2129,5 @@ if __name__ == "__main__":
             os.remove(os.path.join(OUT, old))
     for f in (ex12, ex3, ex4, ex5, ex67, ex8, shared_prefix_cases, ex9, c01, c02, c03_04, c05, c06, c07, c08, c09, c10, c11, c12, c_threads, c_clock, c_mix,
               c14, c15, c16, c17, c18, a1, a2, a3, a4_b3, b1_b2, b4, b5, c1_, c2_, c2b, c3_, c5, d2, d3, d4,
-              d5, d6, e2, e345, f245, h2, h5, r9, r14, r21, r20, r20b):
+              d5, d6, e2, e345, f245, h2, h5, r9, r14, r21, r20, r20b, i44):
         f()

@@ -514,6 +514,18 @@ split only when the client body would have written the tokens.
 - **#11, #13, #17, #18.** The fault is not a request sequence: a token count the host did not pass (#11), saved state
   (#13), the API shape (#17) and speed (#18).
 
+## 9b. Cases from accountant#44 (input validation)
+
+| Case ID | What the spec requires |
+|---|---|
+| `check/size-above-client-body/unpriced` | An operation reports 2e12 tokens from a 56,000-byte client body. It is `Unpriced` with `size_range`, and check 13 fails. A second operation (5,000 tokens saved at the write tier, +$0.01875) is priced as usual. No `sum` failure. |
+| `check/bad-call-negative-output/unpriced` | A spend `Call` with `output: -5` is `Unpriced` with `bad_usage`, and the check fails. |
+| `check/bad-call-negative-cost/unpriced` | A spend `Call` with `costUSD: -0.008` is `Unpriced` with `bad_usage`, and the check fails. |
+
+The case format cannot carry these inputs, so Go tests hold them (`internal/engine/validation_inputs_test.go`):
+usage tiers above 2^40 and sums that would wrap an `int` (a case bills what its forwarded body holds), and
+`NaN` or `Inf` in `CostUSD` (JSON has no such value).
+
 ## 10. Limits of this document
 
 - **The expected figures were computed by hand** from the spec's rules and the issue text. Cases 1, 3,

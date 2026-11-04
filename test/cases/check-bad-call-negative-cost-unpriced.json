@@ -1,0 +1,90 @@
+{
+ "id": "check/bad-call-negative-cost/unpriced",
+ "description": "A model call states a cost of -$0.008. The spend goes to Unpriced (bad_usage) and the check bad_usage fails. A valid call (case spend/without-rewrite/refused) is unchanged.",
+ "source": "more_examples.md#I44",
+ "dims": {
+  "kind": "spend",
+  "position": "none",
+  "cache": "none",
+  "ttl": "5m",
+  "lifetime": "exact",
+  "check": "bad_usage"
+ },
+ "rates": "fixture-v1",
+ "steps": [
+  {
+   "standalone": {
+    "version": 1,
+    "requestId": "ping-10",
+    "session": "s-i44-negative-cost",
+    "thread": {
+     "id": "main"
+    },
+    "at": "2026-03-02T09:00:10Z",
+    "billing": {
+     "mode": "api"
+    },
+    "ops": [
+     {
+      "id": "op1",
+      "kind": "spend",
+      "operator": "keeper",
+      "changeId": "cg:extract_llm:i44",
+      "call": {
+       "model": "summarizer-model",
+       "params": {
+        "effort": "low"
+       },
+       "usage": {
+        "input": 6000,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "cacheWrite1h": 0,
+        "output": 400,
+        "costUSD": -0.008
+       }
+      }
+     }
+    ]
+   },
+   "usage": {
+    "input": 0,
+    "cacheRead": 0,
+    "cacheWrite": 0,
+    "cacheWrite1h": 0
+   },
+   "expected": {
+    "ops": [
+     {
+      "changeId": "cg:extract_llm:i44",
+      "saved": {},
+      "caused": {},
+      "call": {
+       "model": "summarizer-model",
+       "params": {
+        "effort": "low"
+       },
+       "usage": {
+        "input": 6000,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "cacheWrite1h": 0,
+        "output": 400,
+        "costUSD": -0.008
+       }
+      }
+     }
+    ],
+    "unpriced": [
+     {
+      "opId": "op1",
+      "reason": "bad_usage"
+     }
+    ],
+    "checks": [
+     "bad_usage"
+    ]
+   }
+  }
+ ]
+}
