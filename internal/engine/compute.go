@@ -442,8 +442,8 @@ func prevFwdToClient(p *Fingerprint, pos Position) Position {
 // candidates are the forwarded positions where a cache entry can end: the breakpoints of this and
 // the previous request, and the previous extent. With none, every position is one.
 func (c *calcState) candidates() []bp {
-	if len(c.fwdBPs) == 0 && len(c.prevFwdBPs) == 0 {
-		return nil // no breakpoint in either body: every position is a candidate (see extent)
+	if len(c.fwdBPs) == 0 {
+		return nil // no forwarded breakpoint: every position is a candidate (see extent)
 	}
 	out := append(append([]bp(nil), c.fwdBPs...), c.prevFwdBPs...)
 	if c.prevExt >= 0 {
@@ -692,6 +692,9 @@ func (c *calcState) settingFrom(op Operation) (int, bool) {
 	}
 	if !known {
 		return c.readEnd, false
+	}
+	if len(c.fwdBPs) == 0 {
+		return at - 1, true // no forwarded breakpoint: every position is one
 	}
 	return lastAtOrBefore(c.candidates(), at-1), true
 }

@@ -645,6 +645,13 @@ every position counts as a breakpoint (§6.2): B\* is the last position at or be
 cached extents try every position. The extent tolerance absorbs the 128-token rounding. A host that passes
 an implicit breakpoint gets the breakpoint pricing (a break moves read to write), which OpenAI does not bill.
 
+Three conditions apply the rule, each with its own scope:
+- **Candidates** (read and cached extents, setting-break start): this request has no *forwarded* breakpoint.
+  The extents describe what the provider did with the forwarded body, so only that body matters.
+- **Cached extent counts Input too**: this request has no *forwarded* breakpoint. The provider then caches the
+  whole prompt it processed, read or not.
+- **B\***: this request has no *client* breakpoint. B\* is a property of the client body, so B\* = x.
+
 The host keeps one fingerprint for each thread: the most recent request of that thread (wiring document, W5.2).
 
 ```go
@@ -654,7 +661,7 @@ type Fingerprint struct {
     Client    Body      // client body, before any plugin
     Forwarded Body      // body as sent upstream
     ClientBreakpoints, ForwardedBreakpoints []Breakpoint
-    Cached    Position  // extent cached after its response: cache_read + cache_write, in forwarded space
+    Cached    Position  // extent cached after its response: cache_read + cache_write (plus input when the request has no forwarded breakpoint), in forwarded space
 }
 
 // Body lists every position in hash order: tools, then system, then messages. The slice index is

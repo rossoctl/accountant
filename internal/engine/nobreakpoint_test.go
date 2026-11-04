@@ -52,8 +52,8 @@ func TestNoBreakpointThreadStaysHotAfterABreak(t *testing.T) {
 	if st.Cache.CachePhase != PhaseHot || st.Cache.Extent == nil {
 		t.Fatalf("cache state %+v, want hot with an extent", st.Cache)
 	}
-	// Second request: the same cut as before, plus a 300-token cut at message 8. The provider read
-	// through message 8 (8704 tokens, rounded to 128).
+	// Second request: the same cut as before, plus a 300-token cut at message 8. The longest matching
+	// prefix ends at message 7: 1000 + 1000 + 200 + 5 x 1000 = 7200 tokens, read as 7168 (rounded to 128).
 	fwd := append([]blk(nil), m...)
 	fwd[2] = b("cut", 200)
 	fwd[8] = b("m8c", 700)
@@ -63,7 +63,7 @@ func TestNoBreakpointThreadStaysHotAfterABreak(t *testing.T) {
 		rewrite("op2", "test.cut", "t:cut:2", msg(8), 1000, 700),
 	}
 	res := req{at: t0.Add(2 * time.Minute), client: mk(nil, nil, with(m, b("m10", 500), b("m11", 100))), ops: ops,
-		fwd: mk(nil, nil, fwd), facts: exact5m, usage: Usage{CacheRead: 8704, Input: 796}}.run(ts)
+		fwd: mk(nil, nil, fwd), facts: exact5m, usage: Usage{CacheRead: 7168, Input: 2332}}.run(ts)
 	if res.Phase != PhaseHot || res.Boundary == nil {
 		t.Fatalf("phase %v boundary %v, want hot with a boundary", res.Phase, res.Boundary)
 	}
@@ -95,9 +95,15 @@ func TestNoBreakpointBoundaryIsTheEditWhenThePreviousHadBreakpoints(t *testing.T
 	m2 := append([]blk(nil), m...)
 	m2[4] = b("edit", 1000)
 	res := req{at: t0.Add(time.Minute), client: mk(nil, nil, m2), fwd: mk(nil, nil, m2), facts: exact5m,
-		usage: Usage{CacheRead: 4096, Input: 5904}}.run(ts)
+		usage: Usage{CacheRead: 3968, Input: 6032}}.run(ts)
 	if res.Boundary == nil || *res.Boundary != msg(3) {
 		t.Fatalf("boundary %+v, want messages[3] (the last position before the edit)", res.Boundary)
+	}
+	// The read (3968 tokens) ends at messages[3], which is B*: nothing moves.
+	for _, e := range res.CacheEffects {
+		if e.Kind == EffectBreak && (e.Saved != (TierTokens{}) || e.Caused != (TierTokens{})) {
+			t.Fatalf("break %+v, want no tokens moved (From %+v)", e, e.From)
+		}
 	}
 }
 
@@ -107,8 +113,22 @@ func TestNoBreakpointBoundaryIsTheEditWithNoBreakpointAnywhere(t *testing.T) {
 	m2 := append([]blk(nil), m...)
 	m2[4] = b("edit", 1000)
 	res := req{at: t0.Add(time.Minute), client: mk(nil, nil, m2), fwd: mk(nil, nil, m2), facts: exact5m,
-		usage: Usage{CacheRead: 4096, Input: 5904}}.run(ts)
+		usage: Usage{CacheRead: 3968, Input: 6032}}.run(ts)
 	if res.Boundary == nil || *res.Boundary != msg(3) {
 		t.Fatalf("boundary %+v, want messages[3]", res.Boundary)
+	}
+}
+
+// A setting break with a known position starts just before it when there is no breakpoint.
+func TestNoBreakpointSettingBreakStartsBeforeThePosition(t *testing.T) {
+	ts, m := noBPSetup()
+	high, low := "high", "low"
+	op := Operation{ID: "op1", Kind: KindSetting, Operator: "inference-router", ChangeID: "rt:effort-1",
+		Settings: map[string]SettingChange{"effort": {From: &high, To: &low, At: ptr(msg(5))}}}
+	res := req{at: t0.Add(time.Minute), client: mk(nil, nil, m), fwd: mk(nil, nil, m), ops: []Operation{op},
+		facts: exact5m, usage: Usage{CacheRead: 5000, Input: 5000}}.run(ts)
+	br := effect(t, res, EffectBreak)
+	if br.ChangeID != "rt:effort-1" || br.From == nil || *br.From != msg(4) {
+		t.Fatalf("break %+v, want From messages[4]", br)
 	}
 }
