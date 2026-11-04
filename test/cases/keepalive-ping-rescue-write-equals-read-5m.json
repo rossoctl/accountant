@@ -1,0 +1,342 @@
+{
+ "id": "keepalive/ping-rescue-write-equals-read/5m",
+ "description": "Turn 0 caches 6,000 tokens. A ping at minute 4 reads all 6,000. The request at minute 8 reads the same 6,000 and writes 6,000 new tokens. Without the ping the entry would have expired at minute 5, so the request would have written 6,000 + 6,000. The rescue is the smaller of what the ping read and what the request read: 6,000 x ($3.75 - $0.30) = +$0.02070, whatever the new turn wrote (design \u00a74.4 condition 4).",
+ "source": "issue_cases.md#accountant-9",
+ "dims": {
+  "kind": "rescue",
+  "position": "beforeBStar",
+  "cache": "rescue",
+  "ttl": "5m",
+  "lifetime": "exact",
+  "keepalive": "true",
+  "written": "6000"
+ },
+ "rates": "fixture-v1",
+ "steps": [
+  {
+   "begin": {
+    "meta": {
+     "requestId": "r0",
+     "session": "s-r9-6000",
+     "model": "agent-model",
+     "at": "2026-03-02T09:00:00Z",
+     "billing": {
+      "mode": "api"
+     }
+    },
+    "client": {
+     "start": [
+      0,
+      0,
+      1
+     ],
+     "pos": [
+      {
+       "hash": 15745513492897880738,
+       "bytes": 2000
+      },
+      {
+       "hash": 5508475225053360789,
+       "bytes": 11000
+      },
+      {
+       "hash": 11608045664679988289,
+       "bytes": 11000
+      }
+     ]
+    },
+    "clientBreakpoints": [
+     {
+      "pos": {
+       "section": "system",
+       "index": 0
+      },
+      "ttl": "5m"
+     },
+     {
+      "pos": {
+       "section": "messages",
+       "index": 1
+      },
+      "ttl": "5m"
+     }
+    ]
+   },
+   "add": [],
+   "end": {
+    "thread": {
+     "id": "main"
+    },
+    "forwarded": {
+     "start": [
+      0,
+      0,
+      1
+     ],
+     "pos": [
+      {
+       "hash": 15745513492897880738,
+       "bytes": 2000
+      },
+      {
+       "hash": 5508475225053360789,
+       "bytes": 11000
+      },
+      {
+       "hash": 11608045664679988289,
+       "bytes": 11000
+      }
+     ]
+    },
+    "breakpoints": [
+     {
+      "pos": {
+       "section": "system",
+       "index": 0
+      },
+      "ttl": "5m"
+     },
+     {
+      "pos": {
+       "section": "messages",
+       "index": 1
+      },
+      "ttl": "5m"
+     }
+    ],
+    "facts": {
+     "ttl": "5m",
+     "lifetime": "exact"
+    }
+   },
+   "usage": {
+    "input": 0,
+    "cacheRead": 0,
+    "cacheWrite": 6000,
+    "cacheWrite1h": 0
+   },
+   "expected": {
+    "phase": "unknown",
+    "baselineUsage": {
+     "input": 0,
+     "cacheRead": 0,
+     "cacheWrite": 6000,
+     "cacheWrite1h": 0
+    },
+    "ops": [],
+    "unpriced": [
+     {
+      "reason": "penalty_unknown"
+     }
+    ]
+   }
+  },
+  {
+   "standalone": {
+    "version": 1,
+    "requestId": "ping-240",
+    "session": "s-r9-6000",
+    "thread": {
+     "id": "main"
+    },
+    "at": "2026-03-02T09:04:00Z",
+    "billing": {
+     "mode": "api"
+    },
+    "ops": [
+     {
+      "id": "op1",
+      "kind": "spend",
+      "operator": "keeper",
+      "changeId": "ka:main:w-r9-6000",
+      "call": {
+       "host": "api.anthropic.com",
+       "model": "agent-model",
+       "usage": {
+        "input": 5,
+        "cacheRead": 6000,
+        "cacheWrite": 0,
+        "cacheWrite1h": 0,
+        "output": 1
+       }
+      }
+     }
+    ]
+   },
+   "usage": {
+    "input": 0,
+    "cacheRead": 0,
+    "cacheWrite": 0,
+    "cacheWrite1h": 0
+   },
+   "expected": {
+    "ops": [
+     {
+      "changeId": "ka:main:w-r9-6000",
+      "saved": {},
+      "caused": {},
+      "call": {
+       "host": "api.anthropic.com",
+       "model": "agent-model",
+       "usage": {
+        "input": 5,
+        "cacheRead": 6000,
+        "cacheWrite": 0,
+        "cacheWrite1h": 0,
+        "output": 1
+       }
+      }
+     }
+    ]
+   }
+  },
+  {
+   "begin": {
+    "meta": {
+     "requestId": "r1",
+     "session": "s-r9-6000",
+     "model": "agent-model",
+     "at": "2026-03-02T09:08:00Z",
+     "billing": {
+      "mode": "api"
+     }
+    },
+    "client": {
+     "start": [
+      0,
+      0,
+      1
+     ],
+     "pos": [
+      {
+       "hash": 15745513492897880738,
+       "bytes": 2000
+      },
+      {
+       "hash": 5508475225053360789,
+       "bytes": 11000
+      },
+      {
+       "hash": 11608045664679988289,
+       "bytes": 11000
+      },
+      {
+       "hash": 17195989329813874534,
+       "bytes": 24000
+      }
+     ]
+    },
+    "clientBreakpoints": [
+     {
+      "pos": {
+       "section": "system",
+       "index": 0
+      },
+      "ttl": "5m"
+     },
+     {
+      "pos": {
+       "section": "messages",
+       "index": 2
+      },
+      "ttl": "5m"
+     }
+    ]
+   },
+   "add": [],
+   "end": {
+    "thread": {
+     "id": "main"
+    },
+    "forwarded": {
+     "start": [
+      0,
+      0,
+      1
+     ],
+     "pos": [
+      {
+       "hash": 15745513492897880738,
+       "bytes": 2000
+      },
+      {
+       "hash": 5508475225053360789,
+       "bytes": 11000
+      },
+      {
+       "hash": 11608045664679988289,
+       "bytes": 11000
+      },
+      {
+       "hash": 17195989329813874534,
+       "bytes": 24000
+      }
+     ]
+    },
+    "breakpoints": [
+     {
+      "pos": {
+       "section": "system",
+       "index": 0
+      },
+      "ttl": "5m"
+     },
+     {
+      "pos": {
+       "section": "messages",
+       "index": 2
+      },
+      "ttl": "5m"
+     }
+    ],
+    "facts": {
+     "ttl": "5m",
+     "lifetime": "exact",
+     "lastPing": "2026-03-02T09:04:00Z",
+     "pingRead": {
+      "section": "messages",
+      "index": 1
+     },
+     "pingWindow": "ka:main:w-r9-6000"
+    }
+   },
+   "usage": {
+    "input": 0,
+    "cacheRead": 6000,
+    "cacheWrite": 6000,
+    "cacheWrite1h": 0
+   },
+   "expected": {
+    "phase": "hot",
+    "baselineUsage": {
+     "input": 0,
+     "cacheRead": 0,
+     "cacheWrite": 12000,
+     "cacheWrite1h": 0
+    },
+    "ops": [],
+    "effects": [
+     {
+      "kind": "rescue",
+      "changeId": "ka:main:w-r9-6000",
+      "saved": {
+       "cacheWrite5m": 6000
+      },
+      "caused": {
+       "cacheRead": 6000
+      },
+      "to": {
+       "section": "messages",
+       "index": 1
+      },
+      "note": "the ping kept 6,000 tokens alive; the request read them"
+     }
+    ],
+    "boundary": {
+     "section": "messages",
+     "index": 1
+    }
+   }
+  }
+ ]
+}
