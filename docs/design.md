@@ -71,8 +71,8 @@ and §6 the `R` numbers are written bare, to keep the comments short; they are t
 
 **Public and internal.** The listing shows the whole model. In the code, package `accountant` (`accountant.go`)
 re-exports only what a host needs to call it. `Tracker`, `ThreadState`, `ThreadKey`, `Fingerprint`,
-`PosHash` and `CacheState` are in `internal/engine` and are not part of the API. A host cannot save or
-load a `ThreadState` (Q13); making it public is a decision for when Q13 is settled.
+`PosHash` and `CacheState` are in `internal/engine` and are not part of the API. A host saves and loads
+the state of all threads with `Trackers.Snapshot` and `Trackers.Restore` (§6.1, Q13), not with `ThreadState`.
 
 ```go
 package accountant // github.com/rossoctl/accountant
@@ -824,6 +824,14 @@ type ThreadState struct {
 // Trackers holds one Tracker for each thread. It is safe for concurrent use.
 type Trackers struct{ /* map from thread.Key to *Tracker */ }
 
+// Snapshot returns the state of every thread as JSON: hashes, sizes and positions only (R2). It does
+// no I/O. The same state gives the same bytes.
+func (ts *Trackers) Snapshot() []byte
+// Restore replaces the state of every thread with a Snapshot. On an error it changes nothing.
+func (ts *Trackers) Restore(data []byte) error
+// Trimmed is the count of threads the trim has dropped since the set was made (a metric for the host).
+func (ts *Trackers) Trimmed() uint64
+
 // RequestMeta is what the host knows about the request before the pass: the fields of RequestOps
 // that are not operations.
 type RequestMeta struct {
@@ -1284,7 +1292,10 @@ Where a question has test cases, a host that compares them with its own code mar
     proposal of question 12 (the operator names its active `ChangeID`s on each request) detects the
     loss, and the operator can then report the full operations once more. Not decided.
     Partly handled: the Trackers drop the oldest threads on their own above 10,000 (§6.1, Memory), so a loss
-    now also happens there. Persistence and recovery are still not decided.
+    now also happens there. Partly decided: the host saves the state with `Trackers.Snapshot` and loads it
+    with `Restore` (§6.1), so a restart keeps the active changes. The library does no I/O: the host
+    chooses where the bytes go. `Trimmed` counts the threads the trim dropped. A trimmed thread is not
+    recovered. How the state recovers after a crash with no snapshot is still not decided.
 
 - <a id="q14"></a>**Q14. Two requests of one thread in flight.** A retry and parallel calls of one agent can overlap.
     Each opens its own request record, copies the thread's `ThreadState` in `EndRequest`, and each
