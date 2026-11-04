@@ -403,8 +403,10 @@ func TestARescueIsWhatThePingRead(t *testing.T) {
 	}
 }
 
-// §4.4 condition 3: when the provider wrote more than it read, the ping rescued nothing.
-func TestNoRescueWhenTheRequestWroteMoreThanItRead(t *testing.T) {
+// §4.4 condition 4: the rescue is the smaller of what the ping read and what the request read. What the
+// request wrote does not enter the rule (accountant#9). The ping read 10,000 tokens, the request read
+// 4,000 and wrote 6,500: the rescue is the 4,000 it read.
+func TestTheRescueIgnoresWhatTheRequestWrote(t *testing.T) {
 	m := msgs(6, 1000)
 	sysB := []blk{b("sys", 4000)}
 	ts := NewTrackers()
@@ -412,10 +414,9 @@ func TestNoRescueWhenTheRequestWroteMoreThanItRead(t *testing.T) {
 		usage: Usage{CacheWrite: 10000}}.run(ts)
 	res := req{at: t0.Add(28 * time.Minute), client: mk(nil, sysB, with(m, b("m6", 500))), clientBPs: bps5(sys(0), msg(6)),
 		facts: pingFacts(), usage: Usage{CacheRead: 4000, CacheWrite: 6500}}.run(ts)
-	for _, e := range res.CacheEffects {
-		if e.Kind == EffectRescue {
-			t.Fatalf("no rescue when write > read: %+v", e)
-		}
+	e := effect(t, res, EffectRescue)
+	if e.Saved != (TierTokens{CacheWrite5m: 4000}) || e.Caused != (TierTokens{CacheRead: 4000}) {
+		t.Fatalf("rescue %+v, want the 4,000 tokens the request read", e)
 	}
 }
 

@@ -1951,7 +1951,11 @@ def r21():
     op = rewrite("o1", "context-guru.searchfold", "messages", 2, 2000, 500, SF)
     s1 = sim(30, "r1", ([], sysb, m1c), ([], sysb, m1f), [eop(SF, saved=TT(cacheWrite5m=1500))], "hot", add=[op],
              prev=(6000, 6000), usage=U(read=6000, write=500), base=U(read=6000, write=2000),
-             cbp=bps(m1c), fbp=bps(m1f), boundary=P("messages", 1))
+             cbp=bps(m1c), fbp=bps(m1f), boundary=P("messages", 1),
+             effects=[effect("break", "", frm=P("messages", 1), to=P("messages", 1),
+                             note="the hashes show a client difference at message 1, so a break with no ChangeID is on "
+                                  "the record. The provider read all 6,000 tokens, so B* is the end of what it read and the "
+                                  "break moves no token")])
     write_review("rewrite/prefix-hash-differs-usage-shows-read/hot/5m", 21,
                  "Turn 0 caches 6,000 tokens. On turn 1 message 1 has different bytes in the host's hash but the same text "
                  "(a cache mark moved onto it), so the two bodies share a prefix only up to message 0. The provider read "
@@ -1959,6 +1963,25 @@ def r21():
                  "500. Those tokens are after everything the provider read, so they are writes: 1,500 x $3.75 = +$0.00563. "
                  "The usage is the evidence for B*: the library must not put B* before what the provider read.",
                  DIMS("rewrite", "afterBStar", "hit", hash="differs"), [s0, s1])
+
+
+# accountant#20, the plain form: nothing moved, and the previous request cached only part of the body. B* is
+# the end of system, so the unchanged tail would have been read by the client body too. The split saved nothing.
+def r20b():
+    SPL = "cg:cachesplit:r20b"
+    msgs = [("m0", 2000)]
+    op = rewrite("o1", "context-guru.cachesplit", "system", 0, 3000, 3000, SPL)
+    fsys = [("sysstable", 2500), ("sysvol", 500)]
+    cb, fb = BP(("system", 0)), BP(("system", 0))
+    s0 = sim(0, "r0", ([], [("sysblk", 3000)], msgs), ([], fsys, msgs), [], "unknown", add=[op], cbp=cb, fbp=fb,
+             usage=U(write=5000))
+    s1 = sim(30, "r1", ([], [("sysblk", 3000)], msgs), ([], fsys, msgs), [], "hot", add=[op], prev=(5000, 5000),
+             usage=U(read=5000), base=U(read=5000), cbp=cb, fbp=fb, boundary=P("system", 0))
+    write_review("split/tail-unchanged/no-effect-same-request", 20,
+                 "The same request is sent twice, 30 seconds apart. cachesplit has split the system block into a stable "
+                 "half (2,500 tokens) and a volatile half (500). Nothing changed, so the client body, with its one "
+                 "system block, would have read all 5,000 tokens too. The split saved nothing: no split effect.",
+                 DIMS("setting-breakpoint", "system", "no-effect", hash="same"), [s0, s1])
 
 
 def r20():
@@ -1970,11 +1993,11 @@ def r20():
              cbp=BP(("system", 0), ("messages", 1)), fbp=BP(("system", 0), ("messages", 1)))
     msgs1 = [("m0", 2000), ("m1x", 2000)]  # same text, different hash: a mark moved
     s1 = sim(30, "r1", ([], [("sysblk", 3000)], msgs1), ([], fsys, msgs1), [], "hot", add=[op], prev=(7000, 7000),
-             usage=U(read=7000), base=U(read=7000), boundary=P("messages", 0),
+             usage=U(read=7000), base=U(read=7000), boundary=P("messages", 1),
              cbp=BP(("system", 0), ("messages", 1)), fbp=BP(("system", 0), ("messages", 1)),
-             effects=[effect("break", "", frm=P("messages", 0), to=P("messages", 0),
-                             note="a message the client did not change has a new hash; B* is already where the provider "
-                                  "stopped reading, so no token moves")])
+             effects=[effect("break", "", frm=P("messages", 1), to=P("messages", 1),
+                             note="a message the client did not change has a new hash; the provider read all 7,000 "
+                                  "tokens, so B* is the end of what it read and no token moves")])
     write_review("split/tail-unchanged-hash-differs/no-effect", 20,
                  "cachesplit moved the breakpoint onto the stable half of the system block. The volatile tail does not "
                  "change between the two requests, so the client body would be read in full too: the split saved nothing. "
@@ -1991,5 +2014,5 @@ if __name__ == "__main__":
             os.remove(os.path.join(OUT, old))
     for f in (ex12, ex3, ex4, ex5, ex67, ex8, shared_prefix_cases, ex9, c01, c02, c03_04, c05, c06, c07, c08, c09, c10, c11, c12, c_threads, c_mix,
               c14, c15, c16, c17, c18, a1, a2, a3, a4_b3, b1_b2, b4, b5, c1_, c2_, c3_, c5, d2, d3, d4,
-              d5, d6, e2, e345, f245, h2, h5, r9, r14, r21, r20):
+              d5, d6, e2, e345, f245, h2, h5, r9, r14, r21, r20, r20b):
         f()

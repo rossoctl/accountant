@@ -38,7 +38,8 @@
 //     position.
 //  6. Active operations are stored in client space, and are applied before the reported ones in
 //     pipeline order. Result.Ops lists the reported ones first, then the active ones (§6.3).
-//  7. B* (§5.1) is the last candidate at or before x = min(prevCachedExtent, clientFirstDiff - 1),
+//  7. B* (§5.1) is the last candidate at or before x = min(prevCachedExtent, clientFirstDiff - 1), or the end of
+//     prevCachedExtent when the usage read all of it (the hashes then moved with no change in content, #21),
 //     where x is first snapped down to this request's last client breakpoint at or before it, unless
 //     a breakpoint of this request is at or after x (the provider reads only from a breakpoint). The
 //     candidates are the previous extent and the client breakpoints of this and the previous
@@ -54,7 +55,7 @@
 //     makes it hot up to the read extent, with no rescue. The cold expiry adds an empty break
 //     (§5.2 row 5).
 //  10. A rescue (§4.4) needs a ping after the previous request, a request gap past an exact or minimum TTL, an
-//     entry gap inside it, and a read larger than the write. Its tokens are the smaller of the ping's
+//     entry gap inside it, and a read in the usage. What the request wrote does not enter the rule (#9). Its tokens are the smaller of the ping's
 //     read (converted with the ratio) and Usage.CacheRead, less the prefix EntryFacts.SharedWarm names (R54:
 //     a sibling thread kept it warm), at the TTL of EntryFacts.TTL.
 //  11. A spend is never priced in tokens: its Call is passed through (D4). A setting is not priced
