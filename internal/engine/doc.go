@@ -23,8 +23,9 @@
 //     a tolerance of 128 tokens plus 2%. The candidates are the breakpoints of this and the previous
 //     request and the previous extent; with no forwarded breakpoint in this request, every position. The
 //     extent this request leaves cached (Fingerprint.Cached) is found the same way from CacheRead +
-//     CacheWrite, plus Input when this request has no forwarded breakpoint, because the provider then
-//     caches the whole prompt it processed.
+//     CacheWrite, plus Input when this request has no forwarded breakpoint and its whole prompt (Input +
+//     CacheRead + CacheWrite) reaches EntryFacts.MinCacheable, because the provider then caches the whole
+//     prompt it processed. A shorter prompt is not cached.
 //  4. The end of a change (§11 question 12). An active rewrite ends when a later splice removes
 //     its position, when the client body first differs from the previous one at or before its
 //     position (a client edit or compaction, §4.3), or when a valid rewrite or setting with the same

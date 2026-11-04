@@ -656,8 +656,10 @@ an implicit breakpoint gets the breakpoint pricing (a break moves read to write)
 Three conditions apply the rule, each with its own scope:
 - **Candidates** (read and cached extents, setting-break start): this request has no *forwarded* breakpoint.
   The extents describe what the provider did with the forwarded body, so only that body matters.
-- **Cached extent counts Input too**: this request has no *forwarded* breakpoint. The provider then caches the
-  whole prompt it processed, read or not.
+- **Cached extent counts Input too**: this request has no *forwarded* breakpoint and the whole prompt (input + cache
+  read + cache write) reaches `EntryFacts.MinCacheable`. The provider then caches the whole prompt it
+  processed, read or not. A shorter prompt is processed without caching. The minimum applies to the prompt,
+  not to the input part alone.
 - **B\***: this request has no *client* breakpoint. B\* is a property of the client body, so B\* = x.
 
 The host keeps one fingerprint for each thread: the most recent request of that thread (wiring document, W5.2).
@@ -669,7 +671,7 @@ type Fingerprint struct {
     Client    Body      // client body, before any plugin
     Forwarded Body      // body as sent upstream
     ClientBreakpoints, ForwardedBreakpoints []Breakpoint
-    Cached    Position  // extent cached after its response: cache_read + cache_write (plus input when the request has no forwarded breakpoint), in forwarded space
+    Cached    Position  // extent cached after its response: cache_read + cache_write (plus input when the request has no forwarded breakpoint and its whole prompt reaches `MinCacheable`), in forwarded space
 }
 
 // Body lists every position in hash order: tools, then system, then messages. The slice index is
@@ -1026,7 +1028,7 @@ forwarded space, against the forwarded breakpoints.
 With no breakpoint in the body (automatic prefix caching, for example OpenAI), every position counts as a
 breakpoint. B\* is then the end of the cached extent, and a position at or before it is a **cache read**. A cut
 inside the cache is a read, and the break it causes moves the later tokens from read to **input**. The
-other rows keep their meaning: the minimum length only turns a write into input, and a usage with no cache
+other rows keep their meaning: the minimum length turns a write into input and, with no breakpoint, decides whether the prompt is cached at all, and a usage with no cache
 tokens still prices the forwarded body as input.
 
 On a cache miss, B\* = 0, so the first row matches nothing. A position is compared in hash order:

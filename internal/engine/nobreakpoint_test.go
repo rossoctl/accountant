@@ -170,3 +170,41 @@ func TestNoBreakpointWithNoCacheTokensLeavesNothingCached(t *testing.T) {
 		t.Fatalf("cache state %+v, want cold with no extent", st.Cache)
 	}
 }
+
+// noBPAppendSizedCut: request 1 reads 10000; request 2 appends a message of `size` tokens (read 10000, input in2);
+// request 3 cuts that message to 200 tokens.
+func noBPAppendSizedCut(t *testing.T, min, in2, size int) Result {
+	t.Helper()
+	f := exact5m
+	f.MinCacheable = min
+	ts := NewTrackers()
+	m := msgs(10, 1000)
+	req{at: t0, client: mk(nil, nil, m), facts: f, usage: Usage{CacheRead: 10000}}.run(ts)
+	m2 := with(m, b("m10", size))
+	req{at: t0.Add(time.Minute), client: mk(nil, nil, m2), fwd: mk(nil, nil, m2), facts: f,
+		usage: Usage{CacheRead: 10000, Input: in2}}.run(ts)
+	st := stateOf(ts, "main")
+	if st.Cache.Extent == nil || *st.Cache.Extent != msg(10) {
+		t.Fatalf("extent %+v after request 2, want messages[10] (the whole body)", st.Cache.Extent)
+	}
+	f3 := with(m, b("m10c", 200))
+	op := rewrite("op1", "test.cut", "t:cut:1", msg(10), size, 200)
+	return req{at: t0.Add(2 * time.Minute), client: mk(nil, nil, m2), ops: []Operation{op},
+		fwd: mk(nil, nil, f3), facts: f, usage: Usage{CacheRead: 10200}}.run(ts)
+}
+
+// The prompt (10500) is above the minimum, so the provider caches all of it although input (500) is below it.
+func TestNoBreakpointExtentIsTheWholePromptWhenInputIsBelowMinCacheable(t *testing.T) {
+	res := noBPAppendSizedCut(t, 1024, 500, 500)
+	if p := findOp(t, res, "op1"); p.Saved.CacheRead != 300 {
+		t.Fatalf("saved %+v, want 300 read", p.Saved)
+	}
+}
+
+// Prompt 11500 is above the minimum 2048; input (1500) is below it.
+func TestNoBreakpointExtentIsTheWholePromptWithAHighMinCacheable(t *testing.T) {
+	res := noBPAppendSizedCut(t, 2048, 1500, 1500)
+	if p := findOp(t, res, "op1"); p.Saved.CacheRead != 1300 {
+		t.Fatalf("saved %+v, want 1300 read", p.Saved)
+	}
+}

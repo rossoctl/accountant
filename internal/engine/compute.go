@@ -538,8 +538,8 @@ func (c *calcState) phaseAndBoundary(res *Result) {
 	if !c.skipsPricing() {
 		c.readEnd = extent(c.fwd, c.ratio, c.usage.CacheRead, c.candidates())
 		cached := c.usage.CacheRead + c.usage.CacheWrite
-		if len(c.fwdBPs) == 0 && c.usage.Input >= c.r.Facts.MinCacheable {
-			cached += c.usage.Input // no breakpoint: the provider caches the whole prompt it processed (not below the minimum cacheable length, §5.1)
+		if len(c.fwdBPs) == 0 && c.usage.Input+c.usage.CacheRead+c.usage.CacheWrite >= c.r.Facts.MinCacheable { // CacheWrite1h is part of CacheWrite
+			cached += c.usage.Input // no breakpoint: the provider caches the whole prompt it processed (only when the whole prompt reaches the minimum cacheable length, §5.1)
 		}
 		c.cachedFwd = extent(c.fwd, c.ratio, cached, c.candidates())
 	}
