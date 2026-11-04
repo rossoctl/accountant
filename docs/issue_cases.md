@@ -475,6 +475,42 @@ the client-side token total (case 11).
 **Suggested order.** Cases 1, 3, 8 and 16 first: they use rules the spec already decides and each
 catches a fault that an issue reported. Then 13 and 2, which are the likely design findings.
 
+## 9a. Cases from the review of context-guru#768
+
+A review of rossoctl/context-guru#768 found library faults. They are issues #9 to #21 of this repository.
+Four of them are written here as cases. Each case stated the figure the spec requires and failed until its
+fix landed. **All of them pass now** (accountant#9, #14, #20 and #21 are fixed). The last column says what the
+library did before the fix.
+
+| Case ID | Issue | What the spec requires | What the library did before the fix |
+|---|---|---|---|
+| `keepalive/ping-rescue-write-equals-read/5m`, `keepalive/ping-rescue-large-turn/5m` | #9 | A ping read 6,000 tokens and the request read 6,000. The rescue is 6,000 whatever the request wrote (design §4.4 condition 3). | No rescue when the request writes 6,000 or more. |
+| `keepalive/ping-rescue-small-turn/5m` | #9 | The same, with 500 tokens written. | Passed. It is the guard that the fix keeps the working case. |
+| `keepalive/ping-rescue-ping-fresh-input-300/5m` | #14 | The ping read 3,051 tokens. Its 300 tokens of fresh input are not in the previous body, so the rescue is still 3,051. | 1,775 when the host passes only the ping's usage (`PingUsage`). It passed when the host passed `PingRead`. |
+| `keepalive/ping-rescue-ping-fresh-input-0/5m` | #14 | The same, with no fresh input. | Passed. It is the guard. |
+| `rewrite/prefix-hash-differs-usage-shows-read/hot/5m` | #21 | The provider read the whole previous body. B\* is at the end of what it read, so a cut after it is a write. | B\* is the start of the system block. |
+| `split/tail-unchanged-hash-differs/no-effect` | #20 | The volatile tail did not change, so the split saved nothing: no split effect. | A split effect of 2,500 tokens. |
+| `split/tail-unchanged/no-effect-same-request` | #20 | The same request is sent twice and nothing changed. The client body would have read the tail too, so the split saved nothing: no split effect. | A split effect for the tail. |
+
+**Why the hash differs.** A host that hashes a message with its `cache_control` field sees a new hash when the
+client moves the mark. The text did not change. These cases model it as a message with a new content id. #20 and #21
+have this one cause. #21 asks the library to take B\* from the usage when the hashes disagree. #20 asks it to credit a
+split only when the client body would have written the tokens.
+
+**Issues with no case, and why**
+
+- **#10 (no breakpoints).** Design §5.1 says a host of a model without explicit breakpoints passes one implicit
+  breakpoint at the end of the body. A body with none is outside that contract, and the table in §6.2 prices a
+  position with no breakpoint as input. A case would take a side in a question the spec has not settled.
+- **#12 (bad usage) and #15 (minimum length).** The fix is a new `Unpriced` reason or a new `EntryFacts` field. The spec
+  does not name either. A case would invent the expected result.
+- **#19 (`Interaction`).** Design §6.2 says it is not implemented in v0. A case would test a feature the spec defers.
+- **#16 (the clock).** The library does reproduce it: a request 5m2s after the last one is `cold` although the usage
+  shows a read. But design §5.2 defines the phase of an `exact` lifetime by the clock. The fix is a new margin the spec does
+  not state, so a case would invent its size.
+- **#11, #13, #17, #18.** The fault is not a request sequence: a token count the host did not pass (#11), saved state
+  (#13), the API shape (#17) and speed (#18).
+
 ## 10. Limits of this document
 
 - **The expected figures were computed by hand** from the spec's rules and the issue text. Cases 1, 3,

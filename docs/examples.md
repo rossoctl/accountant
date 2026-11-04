@@ -580,7 +580,7 @@ total is negative.
    }
    ```
 
-2. **A `rescue` cache effect, on turn 10, found by `Compute`.** It adds it after the four conditions of design §4.4 are checked. The ping facts are supplied by the host at turn 10's `EndRequest`: when the ping started, what it read (`messages[5]`), and the window ID `ka:main:w1`.
+2. **A `rescue` cache effect, on turn 10, found by `Compute`.** It adds it after the three conditions of design §4.4 are checked. The ping facts are supplied by the host at turn 10's `EndRequest`: when the ping started, what it read (`messages[5]`), and the window ID `ka:main:w1`.
    Turn 9 forwarded messages 0 to 5, so the extent is `messages[5]`. The range of the rescue is
    from the start of the prompt (`from` is absent) to `messages[5]`: 10,000 tokens. Like
    every cache effect, it has no sizes of its own, and it is in `Result.CacheEffects`.

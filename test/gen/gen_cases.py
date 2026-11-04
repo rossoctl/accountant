@@ -1873,6 +1873,140 @@ def c3_():
                       "client breakpoints as system, message 6 and the last message", BSTAR_SNAP])
 
 
+# ---------------------------------------------------------------------------------------------
+# Cases from the review of rossoctl/context-guru#768 (library issues #9, #14, #20, #21). Each case
+# states the figure the spec requires. The library does not meet it yet, so each fails today; the
+# issue named in `source` is the fix. They are written from the spec and the issue's own numbers.
+ISSUES_768 = "issue_cases.md"
+
+
+def write_review(cid, issue, description, dims, steps, open_=None):
+    write(case(cid, description, f"{ISSUES_768}#accountant-{issue}", dims, steps, open_=open_),
+          cid.replace("/", "-").replace("+", "-"))
+
+
+# accountant#9: the rescue is the smaller of what the ping read and what the request read (design
+# §4.4 condition 4). The tokens the request WRITES do not enter the rule. Condition 3 ("the provider
+# read more than it wrote") compared the read with the write of the whole request, so a long turn
+# removed a rescue the ping had earned.
+def r9():
+    for written, cid in ((500, "keepalive/ping-rescue-small-turn/5m"), (6000, "keepalive/ping-rescue-write-equals-read/5m"),
+                         (20000, "keepalive/ping-rescue-large-turn/5m")):
+        sysb, m0 = [("sys", 500)], [("m0", 2750), ("m1", 2750)]  # 6,000 tokens with the system block
+        KAW = f"ka:main:w-r9-{written}"
+        ses = f"s-r9-{written}"
+        call = ping_call(cacheRead=6000, input=5)
+        s0 = sim(0, "r0", ([], sysb, m0), ([], sysb, m0), [], "unknown", session=ses)
+        m1 = m0 + [("m2", written)]
+        facts = {"ttl": "5m", "lifetime": "exact", "lastPing": ts(240), "pingRead": P("messages", 1), "pingWindow": KAW}
+        s1 = sim(480, "r1", ([], sysb, m1), ([], sysb, m1), [], "hot", prev=(6000, 6000), facts=facts, session=ses,
+                 usage=U(read=6000, write=written), base=U(write=6000 + written), boundary=P("messages", 1),
+                 effects=[effect("rescue", KAW, saved=TT(cacheWrite5m=6000), caused=TT(cacheRead=6000), to=P("messages", 1),
+                                 note="the ping kept 6,000 tokens alive; the request read them")])
+        write_review(cid, 9,
+                     f"Turn 0 caches 6,000 tokens. A ping at minute 4 reads all 6,000. The request at minute 8 reads the "
+                     f"same 6,000 and writes {written:,} new tokens. Without the ping the entry would have expired at "
+                     f"minute 5, so the request would have written 6,000 + {written:,}. The rescue is the smaller of what the "
+                     f"ping read and what the request read: 6,000 x ($3.75 - $0.30) = +$0.02070, whatever the new turn "
+                     f"wrote (design §4.4 condition 4).",
+                     DIMS("rescue", "beforeBStar", "rescue", keepalive="true", written=str(written)),
+                     [s0, ping_step(240, ses, KAW, call), s1])
+
+
+# accountant#14: the ping's extent is what it READ from the previous body. Fresh input in the ping (a
+# sweep question, a summary request) is billed as Input but is not in that body, so it must not
+# change the extent the ping covered.
+def r14():
+    for fresh in (0, 300):
+        sysb, m0 = [("sys", 500)], [("m0", 1275), ("m1", 1276)]  # 3,051 tokens with the system block
+        KAW = f"ka:main:w-r14-{fresh}"
+        ses = f"s-r14-{fresh}"
+        call = ping_call(cacheRead=3051, input=fresh)
+        s0 = sim(0, "r0", ([], sysb, m0), ([], sysb, m0), [], "unknown", session=ses)
+        m1 = m0 + [("m2", 300)]
+        facts = {"ttl": "5m", "lifetime": "exact", "lastPing": ts(240), "pingRead": P("messages", 1), "pingWindow": KAW}
+        s1 = sim(480, "r1", ([], sysb, m1), ([], sysb, m1), [], "hot", prev=(3051, 3051), facts=facts, session=ses,
+                 usage=U(read=3051, write=300), base=U(write=3351), boundary=P("messages", 1),
+                 effects=[effect("rescue", KAW, saved=TT(cacheWrite5m=3051), caused=TT(cacheRead=3051), to=P("messages", 1),
+                                 note="the ping read the whole 3,051-token prefix")])
+        write_review(f"keepalive/ping-rescue-ping-fresh-input-{fresh}/5m", 14,
+                     f"A ping replays the 3,051-token prefix and reads all of it. It carries {fresh} tokens of fresh input "
+                     f"(a sweep question). The question is billed as Input but is not in the previous body, so it does not "
+                     f"change what the ping covered. The rescue is 3,051 x ($3.75 - $0.30) = +$0.01053 for any fresh input.",
+                     DIMS("rescue", "beforeBStar", "rescue", keepalive="true", fresh=str(fresh)),
+                     [s0, ping_step(240, ses, KAW, call), s1])
+
+
+# accountant#21 and #20 share a cause: the host's body hash differs from the previous request's on a message the
+# client did not change (it hashed a moving cache mark). The library then finds no common prefix.
+# Usage shows what the provider read, and it is the evidence the library has.
+def r21():
+    sysb = [("sys", 500)]
+    m0 = [("m0", 2750), ("m1", 2750)]  # 6,000 tokens with the system block
+    SF = "cg:searchfold:r21a"
+    s0 = sim(0, "r0", ([], sysb, m0), ([], sysb, m0), [], "unknown")
+    # The client's last message is the same text with a different hash (the mark moved onto it).
+    m1c = [("m0", 2750), ("m1x", 2750), ("m2", 2000)]
+    m1f = [("m0", 2750), ("m1x", 2750), ("m2f", 500)]
+    op = rewrite("o1", "context-guru.searchfold", "messages", 2, 2000, 500, SF)
+    s1 = sim(30, "r1", ([], sysb, m1c), ([], sysb, m1f), [eop(SF, saved=TT(cacheWrite5m=1500))], "hot", add=[op],
+             prev=(6000, 6000), usage=U(read=6000, write=500), base=U(read=6000, write=2000),
+             cbp=bps(m1c), fbp=bps(m1f), boundary=P("messages", 1),
+             effects=[effect("break", "", frm=P("messages", 1), to=P("messages", 1),
+                             note="the hashes show a client difference at message 1, so a break with no ChangeID is on "
+                                  "the record. The provider read all 6,000 tokens, so B* is the end of what it read and the "
+                                  "break moves no token")])
+    write_review("rewrite/prefix-hash-differs-usage-shows-read/hot/5m", 21,
+                 "Turn 0 caches 6,000 tokens. On turn 1 message 1 has different bytes in the host's hash but the same text "
+                 "(a cache mark moved onto it), so the two bodies share a prefix only up to message 0. The provider read "
+                 "6,000 tokens, which is the whole of the previous body. searchfold cuts the new message 2 from 2,000 tokens to "
+                 "500. Those tokens are after everything the provider read, so they are writes: 1,500 x $3.75 = +$0.00563. "
+                 "The usage is the evidence for B*: the library must not put B* before what the provider read.",
+                 DIMS("rewrite", "afterBStar", "hit", hash="differs"), [s0, s1])
+
+
+# accountant#20, the plain form: nothing moved, and the previous request cached only part of the body. B* is
+# the end of system, so the unchanged tail would have been read by the client body too. The split saved nothing.
+def r20b():
+    SPL = "cg:cachesplit:r20b"
+    msgs = [("m0", 2000)]
+    op = rewrite("o1", "context-guru.cachesplit", "system", 0, 3000, 3000, SPL)
+    fsys = [("sysstable", 2500), ("sysvol", 500)]
+    cb, fb = BP(("system", 0)), BP(("system", 0))
+    s0 = sim(0, "r0", ([], [("sysblk", 3000)], msgs), ([], fsys, msgs), [], "unknown", add=[op], cbp=cb, fbp=fb,
+             usage=U(write=5000))
+    s1 = sim(30, "r1", ([], [("sysblk", 3000)], msgs), ([], fsys, msgs), [], "hot", add=[op], prev=(5000, 5000),
+             usage=U(read=5000), base=U(read=5000), cbp=cb, fbp=fb, boundary=P("system", 0))
+    write_review("split/tail-unchanged/no-effect-same-request", 20,
+                 "The same request is sent twice, 30 seconds apart. cachesplit has split the system block into a stable "
+                 "half (2,500 tokens) and a volatile half (500). Nothing changed, so the client body, with its one "
+                 "system block, would have read all 5,000 tokens too. The split saved nothing: no split effect.",
+                 DIMS("setting-breakpoint", "system", "no-effect", hash="same"), [s0, s1])
+
+
+def r20():
+    SPL = "cg:cachesplit:r20a"
+    msgs0 = [("m0", 2000), ("m1", 2000)]
+    op = rewrite("o1", "context-guru.cachesplit", "system", 0, 3000, 3000, SPL)
+    fsys = [("sysstable", 2500), ("sysvol", 500)]
+    s0 = sim(0, "r0", ([], [("sysblk", 3000)], msgs0), ([], fsys, msgs0), [], "unknown", add=[op],
+             cbp=BP(("system", 0), ("messages", 1)), fbp=BP(("system", 0), ("messages", 1)))
+    msgs1 = [("m0", 2000), ("m1x", 2000)]  # same text, different hash: a mark moved
+    s1 = sim(30, "r1", ([], [("sysblk", 3000)], msgs1), ([], fsys, msgs1), [], "hot", add=[op], prev=(7000, 7000),
+             usage=U(read=7000), base=U(read=7000), boundary=P("messages", 1),
+             cbp=BP(("system", 0), ("messages", 1)), fbp=BP(("system", 0), ("messages", 1)),
+             effects=[effect("break", "", frm=P("messages", 1), to=P("messages", 1),
+                             note="a message the client did not change has a new hash; the provider read all 7,000 "
+                                  "tokens, so B* is the end of what it read and no token moves")])
+    write_review("split/tail-unchanged-hash-differs/no-effect", 20,
+                 "cachesplit moved the breakpoint onto the stable half of the system block. The volatile tail does not "
+                 "change between the two requests, so the client body would be read in full too: the split saved nothing. "
+                 "The host's hash of message 1 differs on turn 1 (a cache mark moved onto it) although its text is the same, "
+                 "and the provider read the whole 7,000 tokens. A split is credited only when the client body would have "
+                 "written what the forwarded body read (design §4.4). Here it would not: no split effect, a zero total.",
+                 DIMS("setting-breakpoint", "system", "no-effect", hash="differs"), [s0, s1])
+
+
 if __name__ == "__main__":
     os.makedirs(OUT, exist_ok=True)
     for old in os.listdir(OUT):  # the generator owns this directory: drop cases that no longer exist
@@ -1880,5 +2014,5 @@ if __name__ == "__main__":
             os.remove(os.path.join(OUT, old))
     for f in (ex12, ex3, ex4, ex5, ex67, ex8, shared_prefix_cases, ex9, c01, c02, c03_04, c05, c06, c07, c08, c09, c10, c11, c12, c_threads, c_mix,
               c14, c15, c16, c17, c18, a1, a2, a3, a4_b3, b1_b2, b4, b5, c1_, c2_, c3_, c5, d2, d3, d4,
-              d5, d6, e2, e345, f245, h2, h5):
+              d5, d6, e2, e345, f245, h2, h5, r9, r14, r21, r20, r20b):
         f()

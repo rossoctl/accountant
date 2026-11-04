@@ -385,13 +385,15 @@ no tokens, and the `Saved` and `Caused` tiers are zero. Five kinds cover it:
 - **`rescue`: a prefix is warmed.** The provider read an entry that a keep-alive ping kept alive, so it
   did not expire (`cold` to `hot`). The `ChangeID` is the keep-alive window.
 - **`split`: a prefix is warmed by a split.** A split of the system block means the stable half is read,
-  not written, when the volatile tail changed. The `ChangeID` is the split's `rewrite`.
+  not written, when the volatile tail changed. If the client's system section did not change since the
+  previous request, the client body would have read the same prefix, and the split saved nothing: no effect
+  (accountant#20). The `ChangeID` is the split's `rewrite`.
 - **`ttlPremium` and `ttlRescue`: a prefix is protected.** A breakpoint changes for how long content is
   cached. Example: the head of the request is held for 1h, not 5m. It has **two legs:** a cost on
   **every request that writes** the head at 1h (`ttlPremium`), and a saving on each request that reads
   the 1h entry after a gap longer than 5m (`ttlRescue`). `TTL` says which entry the effect is about.
 
-**When the library adds a rescue.** All four conditions must be true. They are the
+**When the library adds a rescue.** All three conditions must be true. They are the
 conditions of the current `keepaliveSavedUSD`:
 
 1. The keeper sent at least one ping for this thread during the gap before this request
@@ -404,10 +406,13 @@ conditions of the current `keepaliveSavedUSD`:
    `keepaliveCreditFloorMs`, which credits OpenAI GPT-5.6+ after its 30-minute minimum. With no ping,
    a gap past a `minimum` does not prove an expiry ([R45](spec.md#r45)), so it gives no rescue, and an `unknown` lifetime never gives a rescue.
    The current code uses the 5m TTL for a 1h entry, which is a `differs` entry ([§10.2](testing.md#102-one-case)).
-3. The provider read more than it wrote.
-4. The tokens are the smaller of what the last ping read and what this request read, less the prefix
+3. The tokens are the smaller of what the last ping read and what this request read, less the prefix
    named by `EntryFacts.SharedWarm` ([R54](spec.md#r54)). A sibling thread that touched that prefix inside the
    TTL kept it warm without the ping. If nothing is left, the library adds no rescue, and the request stays `hot`.
+
+What the request wrote does not enter the rule. An earlier version also required that the provider read
+more than it wrote. A long user turn or a large tool result adds to the write and does not change what the
+ping kept alive, so that condition removed a rescue the ping had earned (accountant#9).
 
 **The ping and the rescue share one `ChangeID`,** the ID of the keep-alive window. The host passes
 it in `EntryFacts.PingWindow`, built by the same rule as the ping's `spend` (wiring document, W4.6). A window whose
@@ -607,6 +612,14 @@ B* = the last client breakpoint at or before x
 B* = 0 when the cache expired, or when no client breakpoint is at or before x
 ```
 
+**The usage can overrule the hashes.** If `Usage.CacheRead` covers the whole of `prevCachedExtent`, the provider
+read everything the previous request cached, so nothing in it was broken. A difference the hashes show inside that
+extent is then not a difference in content. The host hashed something that moved, for example a cache mark on a
+message the client did not change. In that case B* is the end of `prevCachedExtent`, not the start of the body.
+Without this rule every saving replayed on the request is priced at the write rate, although the provider read
+those tokens (accountant#21). A client edit inside the extent makes the provider read less, so the rule does not
+apply to it.
+
 All three terms are in client space (§4.3). `prevCachedExtent` is the previous request's cached
 extent, mapped from its forwarded body back into its client body through its splices. That is the
 extent the client body would have left cached with no context operator: a change that shortened the
@@ -716,7 +729,7 @@ The phase is found **before** the rows, from the gaps. It is the **cache state**
 | A previous fingerprint exists, and the request gap ≤ TTL | `hot` | `prevExtent` |
 | A previous fingerprint exists, the previous request cached nothing (its cache state was `cold`), and the request gap ≤ TTL | `hot` | empty: nothing can have been lost |
 | A previous fingerprint exists, the previous request cached nothing, the lifetime is `exact`, and the request gap > TTL | `cold` | nil |
-| A previous fingerprint exists, request gap > TTL, entry gap ≤ TTL, `PingRead` is set (or derived from `PingUsage`, below), and the lifetime is `exact` or `minimum`. The rescue also needs conditions 3 and 4 of §4.4 | `hot`, and the library adds a rescue with `ChangeID = EntryFacts.PingWindow` (§4.4) | `PingRead` |
+| A previous fingerprint exists, request gap > TTL, entry gap ≤ TTL, `PingRead` is set (or derived from `PingUsage`, below), and the lifetime is `exact` or `minimum`. The rescue also needs condition 3 of §4.4 | `hot`, and the library adds a rescue with `ChangeID = EntryFacts.PingWindow` (§4.4) | `PingRead` |
 | A previous fingerprint exists, request gap > TTL, the lifetime is `exact`, and no ping qualifies (none was sent, one was sent too late, or `PingRead` is unset and cannot be derived) | `cold`. A late ping gets no rescue | nil |
 | A previous fingerprint exists, request gap > TTL, no qualifying ping, and the lifetime is `minimum` or `unknown` | `unknown`, unless `Usage.CacheRead` proves a read (below) | nil |
 | No previous fingerprint for this thread | `unknown`, unless `Usage.CacheRead` proves a read (below) | nil |
@@ -725,7 +738,9 @@ The phase is found **before** the rows, from the gaps. It is the **cache state**
 replays the previous request's forwarded body, so the ping's usage bills that body, and the library
 derives `PingRead` when it is nil and `PingUsage` is set: the last position of the previous forwarded
 body that `CacheRead + CacheWrite` covers, at the ping's own ratio (§5.3), with every position a
-candidate. A ping that found the entry gone and wrote it again renewed it, so its write counts. A ping
+candidate. The ratio is `CacheRead + CacheWrite` over the bytes of that body. The ping's `Input` is left out:
+a sweep question or a summary request is billed as input but is not in the previous body, so it would raise
+the ratio and pull the extent back to an earlier message (accountant#14). A ping that found the entry gone and wrote it again renewed it, so its write counts. A ping
 that cached nothing gives no extent, so the phase stays `cold`. An explicit `PingRead` wins. A host whose
 ping does not replay the previous body, or that has no usage for the ping, sets `PingRead` itself.
 
@@ -743,7 +758,7 @@ first request is `hot` up to that extent, not `unknown`. The same sharing can in
 sibling's request refreshes the shared head (the system prompt and the tool definitions, 20,093 tokens
 in one measured session) for every other thread, so that head is warm without any ping.
 The host reports it in `EntryFacts.SharedWarm`, and the rescue leaves it out ([R54](spec.md#r54), §4.4
-condition 4). One measured session over-credited about $2.3 of $30.81 (about 7%) before this rule
+condition 3). One measured session over-credited about $2.3 of $30.81 (about 7%) before this rule
 (context-guru#853). The host, not the library, finds the prefix: only the host sees the other threads'
 Trackers. A ping of one thread that keeps another thread's prefix warm is still not credited to the other thread.
 `SharedWarm` reduces the keep-alive `rescue` only. The `ttlRescue` of a head held at 1h is not reduced: a sibling

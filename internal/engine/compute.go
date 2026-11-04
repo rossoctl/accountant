@@ -456,7 +456,10 @@ func (c *calcState) pingRead() *Position {
 	if c.derivedPingRead == nil {
 		u := *f.PingUsage
 		// CacheWrite1h is part of CacheWrite, never an addition to it.
-		r := ratio{tokens: u.Input + u.CacheRead + u.CacheWrite, bytes: prev.Forwarded.cumBytes(len(prev.Forwarded.Pos) - 1)}
+		// Only the tokens the ping cached are in that body. Its Input after the prefix (a sweep question,
+		// a summary request) is billed but is not part of the body, so it would raise the ratio and pull
+		// the extent back to an earlier message.
+		r := ratio{tokens: u.CacheRead + u.CacheWrite, bytes: prev.Forwarded.cumBytes(len(prev.Forwarded.Pos) - 1)}
 		i := -1
 		if r.tokens > 0 { // a usage that bills no prompt token proves nothing about the extent
 			i = extent(prev.Forwarded, r, u.CacheRead+u.CacheWrite, nil)
@@ -520,6 +523,18 @@ func (c *calcState) phaseAndBoundary(res *Result) {
 				c.bstar = cand.at
 			}
 		}
+		// The usage is evidence of what the provider read. A client edit inside the cached prefix makes it read
+		// less than the previous request cached. If it read ALL of that extent, nothing in it was broken, and the
+		// difference the hashes show is not a difference in content: the host hashed something that moved
+		// (a cache mark on an unchanged message). Then B* is the end of the extent, not the start of the body,
+		// or every saving replayed on this request would be priced at the write rate although the provider read
+		// those tokens.
+		// The comparison is in tokens, not positions: a position is an index into one body, and the previous and
+		// the current forwarded bodies may differ before the extent (a block a plugin added), so equal
+		// indices would not mean equal prefixes.
+		if c.prevExt >= 0 && !c.noUsage && c.readCoversExtent(prev) && c.clientFD <= c.prevExtCli && c.prevExtCli > c.bstar {
+			c.bstar = c.prevExtCli
+		}
 	case PhaseUnknown:
 		c.unknown = true
 		res.Unpriced = append(res.Unpriced, Unpriced{Reason: ReasonPenaltyUnknown})
@@ -534,6 +549,13 @@ func (c *calcState) phaseAndBoundary(res *Result) {
 		res.Boundary = &p
 		c.bstarFwd = mustFlat(c.fwd, c.clientToFwd(p))
 	}
+}
+
+// readCoversExtent reports whether the tokens the provider read reach the previous request's cached extent,
+// with the tolerance of extent. The extent is priced at the byte ratio of this request.
+func (c *calcState) readCoversExtent(prev *Fingerprint) bool {
+	want := c.ratio.of(prev.Forwarded.cumBytes(c.prevExt))
+	return want > 0 && want <= c.usage.CacheRead+128+c.usage.CacheRead/50
 }
 
 // readable is the last position up to x that a request with the breakpoints bps can read. The
@@ -688,9 +710,11 @@ func (c *calcState) inBaseline(res *Result) {
 	res.CacheEffects[len(res.CacheEffects)-1].InBaseline = true
 }
 
-// rescue adds the keep-alive rescue when the provider read more than it wrote (§4.4).
+// rescue adds the keep-alive rescue (§4.4). The tokens are the smaller of what the ping read and what
+// this request read. What the request wrote does not enter the rule: a long turn or a large tool
+// result adds to the write, and it does not change what the ping kept alive.
 func (c *calcState) rescue(res *Result) {
-	if c.usage.CacheRead <= c.usage.CacheWrite {
+	if c.usage.CacheRead <= 0 {
 		return
 	}
 	n := min(c.ratio.of(c.fwd.cumBytes(mustFlat(c.fwd, *c.pingRead()))), c.usage.CacheRead)
@@ -758,6 +782,13 @@ func (c *calcState) split(res *Result) {
 	}
 	delivered := c.fwd.sectionEnd(1)-c.fwd.Start[1] > c.client.sectionEnd(1)-c.client.Start[1]
 	if id == "" || !delivered || c.phase != PhaseHot || c.fwdFD <= 0 || c.usage.CacheRead == 0 {
+		return
+	}
+	// The split pays only when the volatile tail changed: then the client body, with one block, would have
+	// written the whole system section again, and the forwarded body reads its stable half. If the client's
+	// system section did not change since the previous request (the first difference is after it), the
+	// client body would have read the same prefix, and the split saved nothing (accountant#20).
+	if c.s.PrevPrint == nil || c.clientFD >= c.client.sectionEnd(1) {
 		return
 	}
 	n := min(c.ratio.of(c.fwd.cumBytes(c.fwdFD-1)), c.usage.CacheRead)

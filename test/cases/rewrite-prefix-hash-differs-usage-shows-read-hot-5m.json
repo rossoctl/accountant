@@ -1,0 +1,303 @@
+{
+ "id": "rewrite/prefix-hash-differs-usage-shows-read/hot/5m",
+ "description": "Turn 0 caches 6,000 tokens. On turn 1 message 1 has different bytes in the host's hash but the same text (a cache mark moved onto it), so the two bodies share a prefix only up to message 0. The provider read 6,000 tokens, which is the whole of the previous body. searchfold cuts the new message 2 from 2,000 tokens to 500. Those tokens are after everything the provider read, so they are writes: 1,500 x $3.75 = +$0.00563. The usage is the evidence for B*: the library must not put B* before what the provider read.",
+ "source": "issue_cases.md#accountant-21",
+ "dims": {
+  "kind": "rewrite",
+  "position": "afterBStar",
+  "cache": "hit",
+  "ttl": "5m",
+  "lifetime": "exact",
+  "hash": "differs"
+ },
+ "rates": "fixture-v1",
+ "steps": [
+  {
+   "begin": {
+    "meta": {
+     "requestId": "r0",
+     "session": "s1",
+     "model": "agent-model",
+     "at": "2026-03-02T09:00:00Z",
+     "billing": {
+      "mode": "api"
+     }
+    },
+    "client": {
+     "start": [
+      0,
+      0,
+      1
+     ],
+     "pos": [
+      {
+       "hash": 15745513492897880738,
+       "bytes": 2000
+      },
+      {
+       "hash": 5508475225053360789,
+       "bytes": 11000
+      },
+      {
+       "hash": 11608045664679988289,
+       "bytes": 11000
+      }
+     ]
+    },
+    "clientBreakpoints": [
+     {
+      "pos": {
+       "section": "system",
+       "index": 0
+      },
+      "ttl": "5m"
+     },
+     {
+      "pos": {
+       "section": "messages",
+       "index": 1
+      },
+      "ttl": "5m"
+     }
+    ]
+   },
+   "add": [],
+   "end": {
+    "thread": {
+     "id": "main"
+    },
+    "forwarded": {
+     "start": [
+      0,
+      0,
+      1
+     ],
+     "pos": [
+      {
+       "hash": 15745513492897880738,
+       "bytes": 2000
+      },
+      {
+       "hash": 5508475225053360789,
+       "bytes": 11000
+      },
+      {
+       "hash": 11608045664679988289,
+       "bytes": 11000
+      }
+     ]
+    },
+    "breakpoints": [
+     {
+      "pos": {
+       "section": "system",
+       "index": 0
+      },
+      "ttl": "5m"
+     },
+     {
+      "pos": {
+       "section": "messages",
+       "index": 1
+      },
+      "ttl": "5m"
+     }
+    ],
+    "facts": {
+     "ttl": "5m",
+     "lifetime": "exact"
+    }
+   },
+   "usage": {
+    "input": 0,
+    "cacheRead": 0,
+    "cacheWrite": 6000,
+    "cacheWrite1h": 0
+   },
+   "expected": {
+    "phase": "unknown",
+    "baselineUsage": {
+     "input": 0,
+     "cacheRead": 0,
+     "cacheWrite": 6000,
+     "cacheWrite1h": 0
+    },
+    "ops": [],
+    "unpriced": [
+     {
+      "reason": "penalty_unknown"
+     }
+    ]
+   }
+  },
+  {
+   "begin": {
+    "meta": {
+     "requestId": "r1",
+     "session": "s1",
+     "model": "agent-model",
+     "at": "2026-03-02T09:00:30Z",
+     "billing": {
+      "mode": "api"
+     }
+    },
+    "client": {
+     "start": [
+      0,
+      0,
+      1
+     ],
+     "pos": [
+      {
+       "hash": 15745513492897880738,
+       "bytes": 2000
+      },
+      {
+       "hash": 5508475225053360789,
+       "bytes": 11000
+      },
+      {
+       "hash": 9190349342699842491,
+       "bytes": 11000
+      },
+      {
+       "hash": 3863221456090850064,
+       "bytes": 8000
+      }
+     ]
+    },
+    "clientBreakpoints": [
+     {
+      "pos": {
+       "section": "system",
+       "index": 0
+      },
+      "ttl": "5m"
+     },
+     {
+      "pos": {
+       "section": "messages",
+       "index": 2
+      },
+      "ttl": "5m"
+     }
+    ]
+   },
+   "add": [
+    {
+     "id": "o1",
+     "kind": "rewrite",
+     "operator": "context-guru.searchfold",
+     "at": {
+      "section": "messages",
+      "index": 2
+     },
+     "sizeBefore": {
+      "bytes": 8000
+     },
+     "sizeAfter": {
+      "bytes": 2000
+     },
+     "changeId": "cg:searchfold:r21a"
+    }
+   ],
+   "end": {
+    "thread": {
+     "id": "main"
+    },
+    "forwarded": {
+     "start": [
+      0,
+      0,
+      1
+     ],
+     "pos": [
+      {
+       "hash": 15745513492897880738,
+       "bytes": 2000
+      },
+      {
+       "hash": 5508475225053360789,
+       "bytes": 11000
+      },
+      {
+       "hash": 9190349342699842491,
+       "bytes": 11000
+      },
+      {
+       "hash": 1191280220873165894,
+       "bytes": 2000
+      }
+     ]
+    },
+    "breakpoints": [
+     {
+      "pos": {
+       "section": "system",
+       "index": 0
+      },
+      "ttl": "5m"
+     },
+     {
+      "pos": {
+       "section": "messages",
+       "index": 2
+      },
+      "ttl": "5m"
+     }
+    ],
+    "facts": {
+     "ttl": "5m",
+     "lifetime": "exact"
+    }
+   },
+   "usage": {
+    "input": 0,
+    "cacheRead": 6000,
+    "cacheWrite": 500,
+    "cacheWrite1h": 0
+   },
+   "expected": {
+    "phase": "hot",
+    "baselineUsage": {
+     "input": 0,
+     "cacheRead": 6000,
+     "cacheWrite": 2000,
+     "cacheWrite1h": 0
+    },
+    "ops": [
+     {
+      "changeId": "cg:searchfold:r21a",
+      "saved": {
+       "cacheWrite5m": 1500
+      },
+      "caused": {},
+      "estimated": true
+     }
+    ],
+    "effects": [
+     {
+      "kind": "break",
+      "changeId": "",
+      "saved": {},
+      "caused": {},
+      "inBaseline": true,
+      "from": {
+       "section": "messages",
+       "index": 1
+      },
+      "to": {
+       "section": "messages",
+       "index": 1
+      },
+      "note": "the hashes show a client difference at message 1, so a break with no ChangeID is on the record. The provider read all 6,000 tokens, so B* is the end of what it read and the break moves no token"
+     }
+    ],
+    "boundary": {
+     "section": "messages",
+     "index": 1
+    }
+   }
+  }
+ ]
+}
