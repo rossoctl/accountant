@@ -39,12 +39,13 @@ type wireBody struct {
 type wirePos struct {
 	Hash  string `json:"hash"`
 	Bytes int32  `json:"bytes"`
+	Media int32  `json:"media,omitempty"`
 }
 
 func toWireBody(b Body) wireBody {
 	w := wireBody{Start: b.Start, Pos: make([]wirePos, len(b.Pos))}
 	for i, p := range b.Pos {
-		w.Pos[i] = wirePos{Hash: strconv.FormatUint(p.Hash, 10), Bytes: p.Bytes}
+		w.Pos[i] = wirePos{Hash: strconv.FormatUint(p.Hash, 10), Bytes: p.Bytes, Media: p.Media}
 	}
 	return w
 }
@@ -59,7 +60,7 @@ func fromWireBody(w wireBody) (Body, error) {
 		if err != nil {
 			return Body{}, err
 		}
-		b.Pos[i] = PosHash{Hash: h, Bytes: p.Bytes}
+		b.Pos[i] = PosHash{Hash: h, Bytes: p.Bytes, Media: p.Media}
 	}
 	return b, nil
 }

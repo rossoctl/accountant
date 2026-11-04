@@ -178,9 +178,11 @@ type SettingChange struct {
     At *Position
 }
 
-// Size is bytes only. A context operator does not count tokens: the library converts bytes to tokens (§4.2 rule 7).
+// Size is the bytes of a range, and optionally its tokens (§4.2 rule 7).
 type Size struct {
-    Bytes int // required on rewrite; the sum check compares it with the Body sizes (§6.5)
+    Bytes      int // required on rewrite; the sum check compares it with the Body sizes (§6.5)
+    Tokens     int // the host's count; 0 = not measured, so the library converts Bytes and marks it Estimated
+    MediaBytes int // the base64 part of Bytes; priced at a fixed 250 bytes a token, apart from the text ratio
 }
 
 type MessageSplice struct{ At, Removed, Inserted int } // messages only
@@ -273,6 +275,17 @@ and can be reported as unpriced ([R19](spec.md#r19)).
    cache write). The provider bills the forwarded body, so the ratio is taken on it. If the request has no usage, the library uses a fixed fallback ratio. The library
    marks every priced result that uses this conversion as `Estimated`. No operator names a tokenizer,
    so two operators give the same tokens for the same bytes.
+   Two exceptions keep the ratio true (accountant#11):
+   - **Base64 media stays out of the ratio.** `NewBody` parses each position and counts the `data`
+     of an image or document block whose source has `type: base64`, and the payload of a `data:...;base64,` URL
+     (OpenAI form), in `PosHash.Media`. Text that only quotes "base64" is not media. `Media` above `Bytes` is capped. The ratio uses the text bytes only, over the billed tokens
+     less the media tokens (if the bill is below the media price, checks `media_tokens` and `ratio_range` fail and nothing is priced). Media is priced at a fixed 1 token for 250 bytes. A host that builds a
+     `Body` itself sets `PosHash.Media`. A host marks media inside a `Size` with `Size.MediaBytes`. If a size does not mark it, the library takes the
+     media of the range from the client body for a before-size and from the forwarded body, over the mapped range, for an after-size (the size's bytes beyond the range's text), so an unmarked cut of an image
+     message is not priced at the text ratio.
+   - **The host may pass tokens.** If a host knows the tokens of a range (a tokenizer, or a
+     count_tokens call), it sets `Size.Tokens`. The library uses them as they are, and does not mark
+     that size `Estimated`. `Tokens` 0 means not measured, and the bytes are converted.
 8. **The engine reports a change that `apply` writes, under the context operator that decided it.**
    `toolschema`, `toolfilter` and `cachesplit` are marker components: their `Reformat()` does
    nothing, and `apply` performs the rewrite (`apply/envelope.go`, `apply/prefixsplit.go`). `apply`
@@ -684,6 +697,7 @@ type Body struct {
 type PosHash struct {
     Hash  uint64 // cumulative: equal hashes mean an equal prefix up to this position
     Bytes int32
+    Media int32 // the base64 image/document part of Bytes (Anthropic source blocks and data URLs); not in the hash
 }
 ```
 
@@ -698,7 +712,7 @@ The fingerprint itself is built inside `Compute`. `Cached` comes from the usage,
 after the response, so no earlier call can build it. `Compute` keeps the result in
 `ThreadState.PrevPrint` for the next request.
 
-`PosHash` is 16 bytes in memory (8 for the hash, 4 for the size, 4 of padding). It holds hashes and sizes only ([R2](spec.md#r2)).
+`PosHash` is 16 bytes in memory (8 for the hash, 4 for the size, 4 for the media size). It holds hashes and sizes only ([R2](spec.md#r2)).
 
 ### 5.2 Classifying a break
 
@@ -819,8 +833,8 @@ cache break (§6.2), which counts forwarded content between the break and B\*. T
 Both hosts send bytes for each forwarded position (`Body`) and for each operation (`Size`). The
 library converts both with the request's own ratio (billed prompt tokens ÷ body bytes), as
 `pricing.EstimateTokensFromBytes` does today. Results that use the ratio are marked `Estimated`.
-No host sends a token count, so the same tokens in both hosts holds whenever the two hosts receive
-the same bodies and the same operations.
+A host may also send a token count in `Size.Tokens` (§4.2 rule 7). The same tokens in both hosts
+holds whenever the two hosts receive the same bodies, the same operations and send the same token counts.
 
 ## 6. The library
 
@@ -1122,7 +1136,8 @@ type Unpriced struct {
 
 type CheckFailure struct {
     Check    string // "sum" | "order" | "unique_change" | "spans" | "attribution" |
-                    // "conservation" | "shared_warm" (§6.5)
+                    // "conservation" | "shared_warm" | "bad_usage" | "ratio_range" | "breakpoints" |
+                    // "media_tokens" | "size_tokens" (§6.5)
     Operator string // "" when the check is not about one operator
     Detail   string // numbers only, no content
 }
@@ -1217,19 +1232,30 @@ check, the operator, the detail, and the request, session and thread IDs). `Prev
 4. **Spans:** for a context operation with `Spans`, its `SizeBefore` and `SizeAfter` equal the sums over its spans.
 5. **Attribution:** a `break` effect's `ChangeID` is the `ChangeID` of a context operation of the same request, or empty. A `rescue`, `ttlPremium` and `ttlRescue` are exempt: their `ChangeID` is a keep-alive window or a head entry, which names no operation of this request.
 6. **Conservation:** the request total of the applied context operations and the cache effects equals the bill difference (§6.3).
-   `DryRun` context operations are left out, because their content went upstream unchanged.
+   Each size is compared at the request ratio, so a correct `Size.Tokens` passes (the gap between the host's tokens
+   and the ratio's figure for the same bytes is taken out of the total). `DryRun` context operations are left out,
+   because their content went upstream unchanged.
 7. **Shared warm:** `EntryFacts.SharedWarm`, when set, is a position in the forwarded body. If it is not, the check fails
    with the section and index, and the keep-alive rescue of that request is not credited ([R54](spec.md#r54)).
    A doubtful figure may only lower a saving.
 8. **Usage sign:** no count in `Usage` is negative, and `CacheWrite1h` is not larger than `CacheWrite` (it is part of
    it, never an addition). If one is, the check `bad_usage` fails.
-9. **Ratio range:** the tokens per forwarded byte, `(Input + CacheRead + CacheWrite) / bytes`, is from 0.05 to 2.0.
+9. **Ratio range:** the tokens per forwarded text byte, `(Input + CacheRead + CacheWrite - media price) / (bytes - media bytes)`,
+   is from 0.05 to 2.0. Base64 media bytes are not in the denominator, and the media price (1 token per 250 bytes) is not in the numerator.
    If it is outside that range, the usage does not fit the body, and the check `ratio_range` fails. A ratio of 0
-   (a body with bytes and no billed prompt token) and an infinite ratio (billed tokens and an empty body) are outside
-   the range too. Without this
+   (a body with text bytes and no billed prompt token) and an infinite ratio (billed tokens and an empty body) are outside
+   the range too. A body of media only has no text bytes: it passes only when the bill equals the media price. A bill above it fails this check, because the extra tokens fit no content. A bill below
+   the media price fails this check as well as check 11. Without this
    check the ratio, and so the conservation check (check 6), agree with themselves for any usage.
 10. **Breakpoints:** a request has at most 4 forwarded breakpoints (the Anthropic limit), and each TTL (client and
     forwarded) is `"5m"`, `"1h"` or empty (empty counts as `5m`). Otherwise the check `breakpoints` fails.
+
+11. **Media tokens (`media_tokens`):** the fixed price of the forwarded body's media (1 token per 250 bytes) is not above the
+    billed prompt tokens. If it is, the bill cannot hold the media: check 9 (`ratio_range`) fails too, nothing is priced, and
+    every operation goes to `Unpriced` with the reason `ratio_range`.
+12. **Size tokens (`size_tokens`):** a `Size.Tokens` is between 0.05 tokens for each text byte and 2.0 tokens for each byte
+    of its range (the limits of check 9). If it is not, the host's count is a bug: the library ignores it, converts the
+    bytes, and reports the check.
 
 If check 8, 9 or 10 fails, the library prices nothing for the request. Each operation goes to `Unpriced` with the
 reason `bad_usage`, `ratio_range` or `breakpoints` (the first check that fails, in that order), no cache effect is
@@ -1303,8 +1329,9 @@ Where a question has test cases, a host that compares them with its own code mar
 - <a id="q3"></a>**Q3. Accuracy of the bytes ratio.** The request ratio is an average. Removed content (large JSON
    tool output) may have fewer bytes per token than the average request. Option: `Size` takes a
    content class (`text`, `json`, `binary`) and the library keeps a ratio for each class. Decide
-   after measuring the error on real sessions. An optional `Tokens` field on `Size`, which
-   the library would use instead of estimating, is also possible.
+   after measuring the error on real sessions. The optional `Tokens` field on `Size` is done
+   (accountant#11), as is the exclusion of base64 media from the ratio. A content class and an error
+   range for each `PricedOp` are still open.
 
 - <a id="q4"></a>**Q4. Where the previous request's hashes live.** The counterfactual needs the previous request's
    hashes on the same thread. The current design (D12, wiring document) has the host keep one

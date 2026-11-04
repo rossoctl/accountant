@@ -120,10 +120,23 @@ type SettingChange struct {
 	At   *Position `json:"at,omitempty"`
 }
 
-// Size is bytes only. A context operator does not count tokens: the library converts bytes to
-// tokens (§4.2 rule 7).
+// Size is the bytes of a range, and optionally its tokens. Bytes are required. When the host knows
+// the tokens (a tokenizer, or a count_tokens call), it sets Tokens, and the library uses them as
+// they are. Without Tokens the library converts the bytes (§4.2 rule 7).
 type Size struct {
 	Bytes int `json:"bytes,omitempty"` // required on rewrite; the sum check compares it with the Body sizes (§6.5)
+	// Tokens is the token count the host measured for the range. 0 means not measured: the library
+	// then converts Bytes and marks the result Estimated.
+	Tokens int `json:"tokens,omitempty"`
+	// MediaBytes is the part of Bytes that is base64 media (an image or a document block). The
+	// library prices it apart from the text ratio. 0 means the range has no media, or the host did
+	// not mark it.
+	MediaBytes int `json:"mediaBytes,omitempty"`
+}
+
+// invalid says whether a size cannot be real: a negative figure, or more media than bytes.
+func (s Size) invalid() bool {
+	return s.Bytes < 0 || s.Tokens < 0 || s.MediaBytes < 0 || s.MediaBytes > s.Bytes
 }
 
 // MessageSplice describes a change to the message list.

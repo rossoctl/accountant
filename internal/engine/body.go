@@ -106,14 +106,53 @@ func lastAtOrBefore(bps []bp, x int) int {
 	return r
 }
 
-// ratio converts forwarded bytes to tokens with the request's own ratio (§5.3).
+// mediaBytesPerToken is the fixed price of a media block (a base64 image or document): about one
+// token for each 250 bytes of its base64 text. Media tokens do not follow the text ratio, so the
+// request ratio leaves the media bytes out and takes the media tokens out of the billed total
+// first (§4.2 rule 7).
+const mediaBytesPerToken = 250
+
+// cumMedia returns the media bytes of positions 0..i; 0 for i < 0.
+func (b Body) cumMedia(i int) int {
+	n := 0
+	for j := 0; j <= i && j < len(b.Pos); j++ {
+		n += int(max(min(b.Pos[j].Media, b.Pos[j].Bytes), 0)) // a host-built Media outside 0..Bytes is clamped
+	}
+	return n
+}
+
+// ratio converts forwarded text bytes to tokens with the request's own ratio (§5.3). The bytes and
+// the tokens are those of the text only: media is priced apart (mediaBytesPerToken).
 type ratio struct{ tokens, bytes int }
 
+// newRatio builds the ratio of a body that the provider billed for billed prompt tokens.
+// The tokens clamp to 0 when the bill is below the media's fixed price; checks() reports that.
+func newRatio(billed int, b Body) ratio {
+	last := len(b.Pos) - 1
+	media := b.cumMedia(last)
+	return ratio{tokens: max(billed-media/mediaBytesPerToken, 0), bytes: b.cumBytes(last) - media}
+}
+
 func (r ratio) of(bytes int) int {
-	if r.bytes == 0 {
+	if r.bytes <= 0 {
 		return 0
 	}
 	return int(int64(bytes) * int64(r.tokens) / int64(r.bytes))
+}
+
+// tokensOf converts bytes of which media are media bytes: the text with the ratio, the media with
+// the fixed price.
+func (r ratio) tokensOf(bytes, media int) int {
+	return r.of(bytes-media) + media/mediaBytesPerToken
+}
+
+// upTo is the tokens of positions 0..i of b.
+func (r ratio) upTo(b Body, i int) int { return r.tokensOf(b.cumBytes(i), b.cumMedia(i)) }
+
+// between is the tokens of positions from+1..to of b (the bytes of position from are not counted
+// twice: the same difference as cumBytes(to) - cumBytes(from)).
+func (r ratio) between(b Body, from, to int) int {
+	return r.tokensOf(b.cumBytes(to)-b.cumBytes(from), b.cumMedia(to)-b.cumMedia(from))
 }
 
 // extent returns the last candidate position whose estimated prefix fits in tokens, or -1. The
@@ -126,7 +165,7 @@ func extent(b Body, r ratio, tokens int, candidates []bp) int {
 	limit := tokens + 128 + tokens/50
 	best := -1
 	try := func(i int) {
-		if i > best && r.of(b.cumBytes(i)) <= limit {
+		if i > best && r.upTo(b, i) <= limit {
 			best = i
 		}
 	}

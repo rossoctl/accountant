@@ -27,7 +27,7 @@ type Unpriced struct {
 
 // CheckFailure is a failed check (§6.5). A failure does not stop pricing.
 type CheckFailure struct {
-	Check    string // "sum" | "order" | "unique_change" | "spans" | "attribution" | "conservation" | "shared_warm"
+	Check    string // "sum" | "order" | "unique_change" | "spans" | "attribution" | "conservation" | "shared_warm" | "bad_usage" | "ratio_range" | "breakpoints" | "media_tokens" | "size_tokens"
 	Operator string // "" when the check is not about one operator
 	Detail   string // numbers only, no content
 }

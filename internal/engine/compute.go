@@ -198,11 +198,11 @@ func isChange(op Operation) bool {
 }
 
 func negative(op Operation) bool {
-	if op.SizeBefore.Bytes < 0 || op.SizeAfter.Bytes < 0 {
+	if op.SizeBefore.invalid() || op.SizeAfter.invalid() {
 		return true
 	}
 	for _, s := range op.Spans {
-		if s.SizeBefore.Bytes < 0 || s.SizeAfter.Bytes < 0 {
+		if s.SizeBefore.invalid() || s.SizeAfter.invalid() {
 			return true
 		}
 	}
@@ -236,6 +236,63 @@ func apply(p Position, s *MessageSplice, into bool) (Position, bool) {
 	return p, into
 }
 
+// plausible says whether host tokens fit the bytes of the range. media is the range's media bytes.
+func plausible(s Size, media int) bool {
+	text := s.Bytes - media
+	if float64(s.Tokens) > maxTokensPerByte*float64(s.Bytes) {
+		return false
+	}
+	return text <= 0 || float64(s.Tokens) >= minTokensPerByte*float64(text)
+}
+
+// rangeMedia is the media bytes a size covers. The host's MediaBytes wins. When it is 0, the media
+// comes from the body that holds the range: the client body for a "before" size, and the forwarded
+// body, over the range mapped by toFwd, for an "after" size. The media is the size's bytes beyond the
+// range's text, clamped to 0..media. Without this an unmarked size over an image would price its
+// base64 at the text ratio.
+func (c *calcState) rangeMedia(k int, s Size, sp span, isBefore bool) int {
+	if s.MediaBytes > 0 || s.Bytes == 0 {
+		return s.MediaBytes
+	}
+	body, from, to := c.client, sp.from, sp.to
+	if !isBefore {
+		body = c.fwd
+		var ok1, ok2 bool
+		if sp.before.Bytes == 0 && c.items[k].op.MessageSplice != nil { // an inserted item sits in its own slot
+			from, ok1 = c.toFwdSkipping(k, sp.from)
+			to, ok2 = c.toFwdSkipping(k, sp.to)
+		} else {
+			from, ok1 = c.toFwd(k, sp.from)
+			to, ok2 = c.toFwd(k, sp.to)
+		}
+		if !ok1 || !ok2 {
+			return 0
+		}
+	}
+	f, ok1 := body.flat(from)
+	t, ok2 := body.flat(to)
+	if !ok1 || !ok2 || t < f {
+		return 0
+	}
+	media := body.cumMedia(t) - body.cumMedia(f-1)
+	text := body.cumBytes(t) - body.cumBytes(f-1) - media
+	return min(max(s.Bytes-text, 0), media)
+}
+
+// sizeTokens converts one reported size to tokens. A plausible size the host counted (Tokens > 0) is
+// exact. Any other size is converted from its bytes with the request ratio, and so is an estimate. A
+// size of zero bytes is exactly zero tokens (§4.2 rule 7). bad is true when the host's tokens were
+// ignored as implausible.
+func (c *calcState) sizeTokens(s Size, media int) (tokens int, exact, bad bool) {
+	if s.Tokens > 0 {
+		if plausible(s, media) {
+			return s.Tokens, true, false
+		}
+		bad = true
+	}
+	return c.ratio.tokensOf(s.Bytes, media), s.Bytes == 0, bad
+}
+
 // calcState is the working state of one calculation.
 type calcState struct {
 	r        *Request
@@ -247,6 +304,7 @@ type calcState struct {
 	invalid  string // the reason the usage or breakpoints cannot be trusted; "" when they can (§6.5, checks 8 to 10)
 	seeded   bool   // s.PrevPrint is the parent's fingerprint (seededFromParent), not this thread's own
 	ratio    ratio
+	hostGap  int // saved tokens that come from Size.Tokens beyond the ratio's figure (check 6)
 
 	client, fwd       Body
 	clientBPs, fwdBPs []bp
@@ -278,7 +336,7 @@ func (r *Request) newCalc(s ThreadState, items []*item, usage Usage) *calcState 
 			c.splicers = append(c.splicers, j)
 		}
 	}
-	c.ratio = ratio{tokens: usage.Input + usage.CacheRead + usage.CacheWrite, bytes: r.Forwarded.cumBytes(len(r.Forwarded.Pos) - 1)}
+	c.ratio = newRatio(usage.Input+usage.CacheRead+usage.CacheWrite, r.Forwarded)
 	c.invalid = c.validate(usage)
 	c.clientBPs = c.client.breakpoints(r.ClientBreakpoints)
 	c.fwdBPs = c.fwd.breakpoints(r.Breakpoints)
@@ -479,7 +537,7 @@ func (c *calcState) pingRead() *Position {
 		// Only the tokens the ping cached are in that body. Its Input after the prefix (a sweep question,
 		// a summary request) is billed but is not part of the body, so it would raise the ratio and pull
 		// the extent back to an earlier message.
-		r := ratio{tokens: u.CacheRead + u.CacheWrite, bytes: prev.Forwarded.cumBytes(len(prev.Forwarded.Pos) - 1)}
+		r := newRatio(u.CacheRead+u.CacheWrite, prev.Forwarded)
 		i := -1
 		if r.tokens > 0 { // a usage that bills no prompt token proves nothing about the extent
 			i = extent(prev.Forwarded, r, u.CacheRead+u.CacheWrite, nil)
@@ -521,7 +579,7 @@ func (c *calcState) phaseAndBoundary(res *Result) {
 			// with no ping, a gap past a minimum proves no expiry (R45)
 		default:
 			c.phase = PhaseCold
-			if gap-f.TTL <= ttlSkew && c.usage.CacheRead > 0 && c.readReaches(prev.Forwarded.cumBytes(mustFlat(prev.Forwarded, *c.s.Cache.Extent))) {
+			if gap-f.TTL <= ttlSkew && c.usage.CacheRead > 0 && c.readReaches(prev.Forwarded, mustFlat(prev.Forwarded, *c.s.Cache.Extent)) {
 				// The clock says expired by at most ttlSkew, but the provider billed a read that covers the whole previous
 				// extent (clock skew, queue time). The read is the evidence; it only lowers a saving (R45).
 				c.phase, c.prevExt = PhaseHot, mustFlat(prev.Forwarded, *c.s.Cache.Extent)
@@ -594,16 +652,16 @@ func (c *calcState) phaseAndBoundary(res *Result) {
 const ttlSkew = 10 * time.Second
 
 // readReaches reports whether Usage.CacheRead covers the first bytes bytes of the previous forwarded
-// body, with the tolerance of extent (128 tokens plus 2%). The bytes are priced at the byte ratio of
-// this request. It is the one tolerance for the TTL-edge rule and for the B* rule (decision 7).
-func (c *calcState) readReaches(bytes int) bool {
-	want := c.ratio.of(bytes)
+// body up to position i, with the tolerance of extent (128 tokens plus 2%). The prefix is priced at the
+// byte ratio of this request, its media at the fixed media price. It is the one tolerance for the TTL-edge rule and for the B* rule (decision 7).
+func (c *calcState) readReaches(b Body, i int) bool {
+	want := c.ratio.upTo(b, i)
 	return want > 0 && want <= c.usage.CacheRead+128+c.usage.CacheRead/50
 }
 
 // readCoversExtent reports whether the tokens the provider read reach the previous request's cached extent.
 func (c *calcState) readCoversExtent(prev *Fingerprint) bool {
-	return c.readReaches(prev.Forwarded.cumBytes(c.prevExt))
+	return c.readReaches(prev.Forwarded, c.prevExt)
 }
 
 // readable is the last position up to x that a request with the breakpoints bps can read. The
@@ -672,7 +730,7 @@ func (c *calcState) cacheEffects(res *Result) {
 		// past the 5m TTL only the entries held at 1h are still alive: a 5m part past the head expired
 		expect = min(expect, c.headEnd())
 	}
-	predicted := c.ratio.of(c.fwd.cumBytes(expect))
+	predicted := c.ratio.upTo(c.fwd, expect)
 	low := c.usage.CacheRead+128+predicted/50 < predicted // the one-block tolerance (row 4)
 	if !low {
 		return
@@ -752,7 +810,7 @@ func (c *calcState) addBreak(res *Result, from int, changeID string) {
 	if c.bstarFwd >= 0 {
 		p := c.fwd.position(c.bstarFwd)
 		e.To = &p
-		if n := c.ratio.of(c.fwd.cumBytes(c.bstarFwd) - c.fwd.cumBytes(from)); n > 0 {
+		if n := c.ratio.between(c.fwd, from, c.bstarFwd); n > 0 {
 			e.Saved.CacheRead = n
 			ttl, anyBP, ok := c.writeBP(c.fwd, c.fwdBPs, c.bstarFwd)
 			if c.noCacheTokens() || (anyBP && !ok) || len(c.fwdBPs) == 0 {
@@ -777,7 +835,7 @@ func (c *calcState) rescue(res *Result) {
 	if c.usage.CacheRead <= 0 {
 		return
 	}
-	n := min(c.ratio.of(c.fwd.cumBytes(mustFlat(c.fwd, *c.pingRead()))), c.usage.CacheRead)
+	n := min(c.ratio.upTo(c.fwd, mustFlat(c.fwd, *c.pingRead())), c.usage.CacheRead)
 	if w := c.r.Facts.SharedWarm; w != nil {
 		i, ok := c.fwd.flat(*w)
 		if !ok { // a host bug: a doubtful figure may only lower a saving, so credit nothing (R54)
@@ -787,7 +845,7 @@ func (c *calcState) rescue(res *Result) {
 		}
 		// a sibling kept this part warm without the ping (R54). Two floors, so n can be 1 token off the single
 		// conversion: the same tolerance the conservation check allows.
-		n -= c.ratio.of(c.fwd.cumBytes(i))
+		n -= c.ratio.upTo(c.fwd, i)
 	}
 	if n <= 0 {
 		return
@@ -823,7 +881,7 @@ func (c *calcState) headTTL(res *Result) {
 	if head < 0 {
 		return
 	}
-	n := min(c.ratio.of(c.fwd.cumBytes(head)), c.usage.CacheRead)
+	n := min(c.ratio.upTo(c.fwd, head), c.usage.CacheRead)
 	e := CacheEffect{Kind: EffectTTLRescue, ChangeID: id, TTL: "1h", Estimated: true}
 	e.Saved.CacheWrite5m, e.Caused.CacheRead = n, n
 	c.addEffect(res, e)
@@ -851,9 +909,9 @@ func (c *calcState) split(res *Result) {
 	if c.s.PrevPrint == nil || c.clientFD >= c.client.sectionEnd(1) {
 		return
 	}
-	n := min(c.ratio.of(c.fwd.cumBytes(c.fwdFD-1)), c.usage.CacheRead)
+	n := min(c.ratio.upTo(c.fwd, c.fwdFD-1), c.usage.CacheRead)
 	if c.bstarFwd >= 0 { // the client body would have read up to B* anyway: only the rest is the split's
-		n -= c.ratio.of(c.fwd.cumBytes(c.bstarFwd))
+		n -= c.ratio.upTo(c.fwd, c.bstarFwd)
 	}
 	if n <= 0 {
 		return
@@ -901,7 +959,7 @@ func (c *calcState) writeBP(body Body, bps []bp, p int) (ttl string, anyBP, ok b
 			continue
 		}
 		anyBP = true
-		if (best < 0 || x.at < best) && (c.r.Facts.MinCacheable <= 0 || c.ratio.of(body.cumBytes(x.at)) >= c.r.Facts.MinCacheable) {
+		if (best < 0 || x.at < best) && (c.r.Facts.MinCacheable <= 0 || c.ratio.upTo(body, x.at) >= c.r.Facts.MinCacheable) {
 			best, ttl = x.at, x.ttl
 		}
 	}
@@ -945,7 +1003,7 @@ func (c *calcState) addTier(t *TierTokens, body Body, forwarded bool, p, bstar i
 // breakpoints failed check 8, 9 or 10 (§6.5).
 func (c *calcState) skipsPricing() bool { return c.noUsage || c.invalid != "" }
 
-// Limits of check 9 and check 10 (§6.5).
+// Limits of check 9 and check 10 (§6.5). Check 12 (size_tokens) uses the two token limits too.
 const (
 	minTokensPerByte = 0.05
 	maxTokensPerByte = 2.0
@@ -969,12 +1027,23 @@ func (c *calcState) validate(u Usage) string {
 	return ""
 }
 
-// badRatio says whether the tokens per forwarded byte are outside 0.05 to 2.0 (check 9). A usage that
+// badRatio says whether the tokens per forwarded text byte are outside 0.05 to 2.0 (check 9). Media
+// bytes are not in the denominator and the media price is not in the numerator (newRatio). A usage that
 // bills no prompt token for a body with bytes (tokens per byte 0), or tokens for an empty body (infinite),
 // is outside the range too.
 func (c *calcState) badRatio() bool {
+	last := len(c.fwd.Pos) - 1
+	if c.fwd.cumBytes(last) == 0 {
+		return true // an empty body billed for tokens, or for none
+	}
+	if c.fwd.cumMedia(last)/mediaBytesPerToken > c.usage.Input+c.usage.CacheRead+c.usage.CacheWrite {
+		return true // the bill is below the media price: check 11 fails too
+	}
 	t, n := float64(c.ratio.tokens), float64(c.ratio.bytes)
-	if t == 0 || n == 0 {
+	if n == 0 {
+		return t != 0 // all media: the bill must be the media price, and no text is left to price
+	}
+	if t == 0 {
 		return true
 	}
 	return t < minTokensPerByte*n || t > maxTokensPerByte*n
@@ -1015,6 +1084,7 @@ func (c *calcState) price(res *Result) {
 			continue
 		}
 		p := priced(it.op, it.id)
+		estimated := false // true when a size is converted from bytes (§4.2 rule 7)
 		switch {
 		case it.bad != "":
 			res.Unpriced = append(res.Unpriced, Unpriced{OpID: it.id, Reason: it.bad})
@@ -1025,9 +1095,24 @@ func (c *calcState) price(res *Result) {
 		case resultUnknown(it.op):
 			res.Unpriced = append(res.Unpriced, Unpriced{OpID: it.id, Reason: ReasonPingResultUnknown})
 		case it.op.Kind == KindRewrite:
-			p.Estimated = true // the tokens come from the bytes ratio (§4.2 rule 7)
 			for _, sp := range it.spans {
-				d := c.ratio.of(sp.before.Bytes) - c.ratio.of(sp.after.Bytes)
+				bm, am := c.rangeMedia(k, sp.before, sp, true), c.rangeMedia(k, sp.after, sp, false)
+				bt, bx, bbad := c.sizeTokens(sp.before, bm)
+				at, ax, abad := c.sizeTokens(sp.after, am)
+				if bbad || abad {
+					res.Checks = append(res.Checks, CheckFailure{Check: "size_tokens", Operator: it.op.Operator,
+						Detail: fmt.Sprintf("tokens=%d/%d bytes=%d/%d: outside %g..%g tokens a byte, bytes used",
+							sp.before.Tokens, sp.after.Tokens, sp.before.Bytes, sp.after.Bytes, minTokensPerByte, maxTokensPerByte)})
+				}
+				if !bx || !ax {
+					estimated = true
+				}
+				d := bt - at
+				if !it.op.DryRun {
+					// what the host's tokens add to the saving beyond the ratio's figure: the
+					// conservation check compares at the ratio (check 6)
+					c.hostGap += d - (c.ratio.tokensOf(sp.before.Bytes, bm) - c.ratio.tokensOf(sp.after.Bytes, am))
+				}
 				if d > 0 {
 					c.addTier(&p.Saved, c.client, false, mustFlat(c.client, sp.from), c.bstar, c.clientBPs, d)
 					if !it.op.DryRun {
@@ -1049,6 +1134,7 @@ func (c *calcState) price(res *Result) {
 				}
 			}
 		}
+		p.Estimated = p.Estimated || estimated
 		if it.active {
 			active = append(active, p)
 		} else {
@@ -1105,7 +1191,8 @@ func (c *calcState) conservation(res *Result) {
 		tol++
 	}
 	billed := c.usage.Input + c.usage.CacheRead + c.usage.CacheWrite
-	want := c.ratio.of(c.client.cumBytes(len(c.client.Pos)-1)) - billed
+	want := c.ratio.upTo(c.client, len(c.client.Pos)-1) - billed
+	net -= c.hostGap // the ratio's figure: host tokens are exact and the bodies are not
 	if d := want - net; d > tol+1 || d < -(tol+1) {
 		res.Checks = append(res.Checks, CheckFailure{Check: "conservation",
 			Detail: fmt.Sprintf("bill difference=%d ops=%d tokens", want, net)})
@@ -1118,6 +1205,10 @@ func tierSum(t TierTokens) int { return t.Input + t.CacheWrite5m + t.CacheWrite1
 // are not run here (conservation is, in calc): attribution holds by construction, because the library
 // only gives a break the ChangeID of one of the request's operations.
 func (c *calcState) checks(res *Result) {
+	if media := c.fwd.cumMedia(len(c.fwd.Pos)-1) / mediaBytesPerToken; !c.noUsage && media > c.usage.Input+c.usage.CacheRead+c.usage.CacheWrite {
+		res.Checks = append(res.Checks, CheckFailure{Check: "media_tokens",
+			Detail: fmt.Sprintf("media=%d tokens billed=%d: the bill is below the media price: nothing is priced (ratio_range)", media, c.usage.Input+c.usage.CacheRead+c.usage.CacheWrite)})
+	}
 	var got [3]int
 	seen := map[string]bool{}
 	for _, it := range c.items {
