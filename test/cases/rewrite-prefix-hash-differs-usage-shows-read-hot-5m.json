@@ -275,6 +275,24 @@
       "estimated": true
      }
     ],
+    "effects": [
+     {
+      "kind": "break",
+      "changeId": "",
+      "saved": {},
+      "caused": {},
+      "inBaseline": true,
+      "from": {
+       "section": "messages",
+       "index": 1
+      },
+      "to": {
+       "section": "messages",
+       "index": 1
+      },
+      "note": "the hashes show a client difference at message 1, so a break with no ChangeID is on the record. The provider read all 6,000 tokens, so B* is the end of what it read and the break moves no token"
+     }
+    ],
     "boundary": {
      "section": "messages",
      "index": 1

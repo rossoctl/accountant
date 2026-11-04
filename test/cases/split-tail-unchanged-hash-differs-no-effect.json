@@ -292,18 +292,18 @@
       "inBaseline": true,
       "from": {
        "section": "messages",
-       "index": 0
+       "index": 1
       },
       "to": {
        "section": "messages",
-       "index": 0
+       "index": 1
       },
-      "note": "a message the client did not change has a new hash; B* is already where the provider stopped reading, so no token moves"
+      "note": "a message the client did not change has a new hash; the provider read all 7,000 tokens, so B* is the end of what it read and no token moves"
      }
     ],
     "boundary": {
      "section": "messages",
-     "index": 0
+     "index": 1
     }
    }
   }
