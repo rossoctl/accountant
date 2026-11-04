@@ -120,4 +120,7 @@ const (
 	ReasonPenaltyUnknown    = engine.ReasonPenaltyUnknown
 	ReasonNoUsage           = engine.ReasonNoUsage
 	ReasonNotSpend          = engine.ReasonNotSpend
+	ReasonBadUsage          = engine.ReasonBadUsage
+	ReasonRatioRange        = engine.ReasonRatioRange
+	ReasonBreakpoints       = engine.ReasonBreakpoints
 )
