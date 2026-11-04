@@ -1173,6 +1173,41 @@ def c_ttl():
                 "The billed read is the evidence, and it beats the clock at any gap: the phase is hot and the replayed "
                 "2,000 tokens are read (2,000 x $0.30/M). Before the fix the margin was 10 seconds and the phase was cold.",
                 DIMS("rewrite", "afterBStarToL", "hit"), [s0, s1])
+    # 5. Review round 1: the 1h head is alive, the 5m tail is dead on the clock, and the read covers the tail.
+    # r0: a=2000, b=3000, c=2000 -> c shrinks to c2=500. Forwarded 5500 (5000 at 1h). Client would write 7000.
+    c2m = [("a", 2000), ("b", 3000), ("c2", 500)]
+    mk0 = bpl((1, "1h"), (2, "5m"))
+    mk1 = bpl((1, "1h"), (3, "5m"))
+    op2 = rewrite("o1", "mask", "messages", 2, 2000, 500, CH)
+    s0 = step(0, "r0", body([], [], cm), body([], [], c2m), mk0, mk0, [op2], U(write=5500, w1h=5000),
+              expect("unknown", U(write=7000, w1h=5000),
+                     [eop(CH, saved=TT(cacheWrite5m=1500), note="first request: nothing is cached")],
+                     unpriced=[{"reason": "penalty_unknown"}]), facts=facts("5m"))
+    s1 = step(360, "r1", body([], [], c1m), body([], [], c2m + [("d", 500)]), mk1, mk1, [], U(read=5500, write=500),
+              expect("hot", U(read=7000, write=500),
+                     [eop(CH, saved=TT(cacheRead=1500), note="the tail is dead on the clock but was billed as a read")],
+                     boundary=P("messages", 2)), facts=facts("5m"))
+    write_issue("ttl/mixed-dead-tail-read/hot-after-6-minutes", 40,
+                "r0 sends a 1h mark on messages[1] and a 5m mark on messages[2]. The change shrinks messages[2] from 2,000 "
+                "to 500 tokens, so the forwarded body is 5,500 tokens and r0 writes 5,500, of which 5,000 at 1h. r1 comes "
+                "6 minutes later: the 1h head is alive, the 5m tail is dead on the clock. The provider billed a read of "
+                "all 5,500 tokens. The billed read proves the tail was alive, so the boundary is the end of messages[2] "
+                "and the replayed 1,500 tokens are READ (1,500 x $0.30/M = $0.00045). Without the read rule the library "
+                "stopped at the head and booked a 5m write (1,500 x $3.75/M).",
+                DIMS("rewrite", "afterBStarToL", "hit", ttl="mixed"), [s0, s1])
+
+    # 6. Review round 1: a fork of a mixed entry, 10 minutes later. The 1h head is alive, so the fork is seeded.
+    sub = {"id": "a:sub", "parent": "main"}
+    s0 = step(0, "r0", body([], [], cm), body([], [], cm), mark0, mark0, [], U(write=7000, w1h=5000),
+              expect("unknown", U(write=7000, w1h=5000), [], unpriced=[{"reason": "penalty_unknown"}]), facts=facts("5m"))
+    s1 = step(600, "fork-0", body([], [], c1m), body([], [], c1m), mark1, mark1, [], U(read=5000, write=2500),
+              expect("hot", U(read=5000, write=2500), [], boundary=P("messages", 1)), facts=facts("5m"), thread=sub)
+    write_issue("ttl/mixed-fork/seeded-while-head-alive", 40,
+                "The main thread writes a mixed entry: a 1h mark on messages[1] (a+b = 5,000 tokens) and a 5m mark on "
+                "messages[2] (7,000 tokens in all). A subagent forks 10 minutes later and keeps the whole prefix. The "
+                "5m tail is dead, the 1h head is alive, so the library seeds the fork from the parent. The phase is hot "
+                "at messages[1], with no penalty_unknown. The provider read the 5,000-token head and wrote 2,500.",
+                DIMS("none", "afterBStar", "fork", threads="2", ttl="mixed"), [s0, s1])
 
 
 # Three cases that mix sessions, threads and models.

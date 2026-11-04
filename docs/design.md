@@ -770,8 +770,23 @@ falls back to the current `EntryFacts.TTL`.
 **Mixed TTLs.** The entry has one part for each breakpoint of the previous request, and each part lives for the TTL
 of its breakpoint (`Breakpoint.TTL`, accountant#40). The prefix up to a 1h breakpoint is alive for 1h, the prefix up
 to a 5m breakpoint for 5m. After 10 minutes a 1h head is alive and a 5m tail has expired. The phase is `hot` when any
-part is alive, and the `Extent` is the end of the last live part (the head, here). A breakpoint with no TTL takes
-`EntryFacts.TTL` of the writing request. With a ping, the entry gap is compared with the longest TTL of the entry.
+part is alive, and the `Extent` is the end of the last live part (the head, here). The part beyond the last
+breakpoint, up to the extent, has `EntryTTL` (`EntryFacts.TTL` of the writing request). A breakpoint whose TTL is
+not "5m" or "1h" (empty, or a typo in a stored state) also takes `EntryTTL`, with no warning. With a ping, the entry
+gap is compared with the longest TTL of the entry. If one part is alive on the clock and a ping kept another part
+alive, the clock-alive part wins: the phase is hot, there is no ping rescue, and the window is under-credited (the
+safe direction).
+
+**A read extends a live head.** When some part is alive on the clock, a billed read that covers the prefix of a
+clock-dead part (the 5m tail of a mixed entry) still extends the extent to that part. The 1,500 tokens of a tail change
+that the provider read are priced at the read tier, not as a 5m write. The read only lowers a saving (R45).
+
+**A fork** is seeded when the gap is within the longest part TTL of the parent's entry, the same rule. A fork that
+keeps only the 1h head of a mixed entry (and changes the 5m tail) is not seeded: the seed needs the whole extent.
+That is the safe direction (`unknown`).
+
+**The current request's `Facts.TTL`** must be above 0 for the clock branch and for the fork seed. With 0 the phase is
+`unknown` (a read can still prove it hot), whatever the state holds.
 
 **A billed read beats the clock.** When `Usage.CacheRead` covers the prefix of a part (with the tolerance of
 decision 7), that part was alive: the provider read it. The clock then loses at any gap, not only within 10 seconds.

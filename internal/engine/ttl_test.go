@@ -182,3 +182,137 @@ func TestAForkIsSeededByTheParentsTTL(t *testing.T) {
 		t.Fatalf("phase %q: a 1h ask must not seed a fork from a 5m entry that is 30 minutes old", res.Phase)
 	}
 }
+
+// partlyDead runs the scenario of review round 1, finding 1. One token per byte.
+//
+//	r0: messages a=2000, b=3000, c=2000. Marks: messages[1] 1h, messages[2] 5m. Facts.TTL 5m.
+//	    A change shrinks c from 2000 to 500, so the forwarded bodies hold 2000+3000+500 = 5500 tokens.
+//	    r0 writes 5500, of which the 1h head (a+b = 5000) at 1h.
+//	r1, 6 minutes later: adds d=500. The 5m tail (c) is dead on the clock, the 1h head is alive.
+//	    The provider read all 5500 tokens (the tail too: it was refreshed late) and wrote d: 500.
+//	The replayed saving is 1500 tokens, inside the tail. Those tokens were READ: 1500 x $0.30/M.
+//	The boundary is the end of the read, messages[2].
+func partlyDead(withRead bool) (Result, PricedOp) {
+	ts := NewTrackers()
+	b0 := []Breakpoint{bpTTL(msg(1), "1h"), bpTTL(msg(2), "5m")}
+	req{at: t0, client: mk(nil, nil, []blk{b("a", 2000), b("b", 3000), b("c", 2000)}), clientBPs: b0,
+		ops: []Operation{rewrite("o", "mask", "c1", msg(2), 2000, 500)},
+		fwd: mk(nil, nil, []blk{b("a", 2000), b("b", 3000), b("c2", 500)}), fwdBPs: b0,
+		facts: ttlFacts(5 * time.Minute), usage: Usage{CacheWrite: 5500, CacheWrite1h: 5000}}.run(ts)
+	b1 := []Breakpoint{bpTTL(msg(1), "1h"), bpTTL(msg(3), "5m")}
+	u := Usage{CacheRead: 5000, CacheWrite: 1000}
+	if withRead {
+		u = Usage{CacheRead: 5500, CacheWrite: 500}
+	}
+	res := req{at: t0.Add(6 * time.Minute), client: mk(nil, nil, []blk{b("a", 2000), b("b", 3000), b("c", 2000), b("d", 500)}), clientBPs: b1,
+		fwd: mk(nil, nil, []blk{b("a", 2000), b("b", 3000), b("c2", 500), b("d", 500)}), fwdBPs: b1,
+		facts: ttlFacts(5 * time.Minute), usage: u}.run(ts)
+	return res, opC1(res)
+}
+
+// A billed read of the dead 5m tail beats the clock for that tail, though the 1h head is alive.
+func TestABilledReadProvesADeadTailWhileTheHeadIsAlive(t *testing.T) {
+	res, op := partlyDead(true)
+	if res.Phase != PhaseHot || op.Saved != (TierTokens{CacheRead: 1500}) {
+		t.Fatalf("phase %q saved %+v, want hot, 1500 read", res.Phase, op.Saved)
+	}
+	if res.Boundary == nil || *res.Boundary != msg(2) {
+		t.Fatalf("boundary %v, want messages[2]", res.Boundary)
+	}
+}
+
+// Without a read of the tail, only the head is alive: the tail change is a write at the 5m tier.
+func TestADeadTailWithNoReadIsAWrite(t *testing.T) {
+	res, op := partlyDead(false)
+	if res.Phase != PhaseHot || op.Saved != (TierTokens{CacheWrite5m: 1500}) {
+		t.Fatalf("phase %q saved %+v, want hot, 1500 written at 5m", res.Phase, op.Saved)
+	}
+	if res.Boundary == nil || *res.Boundary != msg(1) {
+		t.Fatalf("boundary %v, want messages[1]", res.Boundary)
+	}
+}
+
+// Finding 2. A fork of a mixed entry 10 minutes later: the 1h head is alive, so the fork is seeded and hot,
+// as the same state is in a thread.
+func TestAForkOfAMixedEntryIsSeededWhileTheHeadIsAlive(t *testing.T) {
+	ts := NewTrackers()
+	b0 := []Breakpoint{bpTTL(msg(1), "1h"), bpTTL(msg(2), "5m")}
+	req{at: t0, client: mk(nil, nil, msgs(3, 2000)), clientBPs: b0, facts: ttlFacts(5 * time.Minute),
+		usage: Usage{CacheWrite: 6000, CacheWrite1h: 4000}}.run(ts)
+	b1 := []Breakpoint{bpTTL(msg(1), "1h"), bpTTL(msg(3), "5m")}
+	res := req{at: t0.Add(10 * time.Minute), client: mk(nil, nil, msgs(4, 2000)), clientBPs: b1, facts: ttlFacts(5 * time.Minute),
+		thread: Thread{ID: "sub", Parent: "main"}, usage: Usage{CacheRead: 4000, CacheWrite: 4000}}.run(ts)
+	if res.Phase != PhaseHot || hasUnpriced(res, ReasonPenaltyUnknown) {
+		t.Fatalf("phase %q unpriced %+v, want hot with no penalty_unknown", res.Phase, res.Unpriced)
+	}
+	if res.Boundary == nil || *res.Boundary != msg(1) {
+		t.Fatalf("boundary %v, want messages[1] (the live head)", res.Boundary)
+	}
+}
+
+// Past every part (1h + 1 minute) the fork is not seeded.
+func TestAForkOfAMixedEntryPastEveryPartIsNotSeeded(t *testing.T) {
+	ts := NewTrackers()
+	b0 := []Breakpoint{bpTTL(msg(1), "1h"), bpTTL(msg(2), "5m")}
+	req{at: t0, client: mk(nil, nil, msgs(3, 2000)), clientBPs: b0, facts: ttlFacts(5 * time.Minute),
+		usage: Usage{CacheWrite: 6000, CacheWrite1h: 4000}}.run(ts)
+	b1 := []Breakpoint{bpTTL(msg(1), "1h"), bpTTL(msg(3), "5m")}
+	res := req{at: t0.Add(61 * time.Minute), client: mk(nil, nil, msgs(4, 2000)), clientBPs: b1, facts: ttlFacts(5 * time.Minute),
+		thread: Thread{ID: "sub", Parent: "main"}, usage: Usage{CacheWrite: 8000}}.run(ts)
+	if res.Phase != PhaseUnknown {
+		t.Fatalf("phase %q, want unknown", res.Phase)
+	}
+}
+
+// Finding 3. The host reports Facts.TTL 5m, but the head has a 1h mark. CacheState.TTL becomes "1h", so the
+// next request that reads the head after 5 minutes gets the ttlRescue. This is right: the head was written
+// at 1h, the 5m tail would have expired, and the read of the head is worth what a write would have cost.
+// r0: head sys 1255 (1h), m0 13 (5m). r1 at +10m reads the head: 1255 x ($3.75 - $0.30) is the rescue.
+func TestAOneHourMarkUnderAFiveMinuteFactGivesTheTTLRescue(t *testing.T) {
+	facts := ttlFacts(5 * time.Minute)
+	bps0 := []Breakpoint{{Pos: sys(0), TTL: "1h"}, {Pos: msg(0), TTL: "5m"}}
+	bps1 := []Breakpoint{{Pos: sys(0), TTL: "1h"}, {Pos: msg(1), TTL: "5m"}}
+	head := rewrite("op2", "headttl", "headttl:s1:sys", sys(0), 1255, 1255)
+	sysB := []blk{b("sys", 1255)}
+	ts := NewTrackers()
+	req{at: t0, client: mk(nil, sysB, []blk{b("m0", 13)}), clientBPs: bps0, facts: facts, ops: []Operation{head},
+		usage: Usage{CacheWrite: 1268, CacheWrite1h: 1255}}.run(ts)
+	res := req{at: t0.Add(10 * time.Minute), client: mk(nil, sysB, []blk{b("m0", 13), b("m1", 100)}), clientBPs: bps1,
+		facts: facts, ops: []Operation{head}, usage: Usage{CacheRead: 1255, CacheWrite: 113}}.run(ts)
+	e := effect(t, res, EffectTTLRescue)
+	if e.Saved != (TierTokens{CacheWrite5m: 1255}) || e.Caused != (TierTokens{CacheRead: 1255}) {
+		t.Fatalf("ttlRescue %+v, want 1255 write -> read", e)
+	}
+}
+
+// An unknown breakpoint TTL string takes the entry TTL (segTTL), here 5m: 10 minutes later the part is dead.
+func TestAnUnknownStoredBreakpointTTLTakesTheEntryTTL(t *testing.T) {
+	if got := segTTL("2h", 5*time.Minute); got != 5*time.Minute {
+		t.Fatalf("segTTL(2h) = %v, want the entry TTL", got)
+	}
+	if got := segTTL("", time.Hour); got != time.Hour {
+		t.Fatalf("segTTL(empty) = %v, want the entry TTL", got)
+	}
+}
+
+// EntryTTL survives Snapshot and Restore: the restored thread judges the entry as the original does.
+func TestEntryTTLSurvivesSnapshotRestore(t *testing.T) {
+	ts := NewTrackers()
+	req{at: t0, client: mk(nil, nil, msgs(3, 2000)), clientBPs: bpsTTL("1h", msg(2)), facts: ttlFacts(time.Hour),
+		usage: Usage{CacheWrite: 6000, CacheWrite1h: 6000}}.run(ts)
+	restored := NewTrackers()
+	if err := restored.Restore(mustSnap(t, ts)); err != nil {
+		t.Fatal(err)
+	}
+	next := req{at: t0.Add(30 * time.Minute), client: mk(nil, nil, msgs(4, 2000)), clientBPs: bpsTTL("5m", msg(3)),
+		facts: ttlFacts(5 * time.Minute), usage: Usage{CacheRead: 6000, CacheWrite: 2000}}
+	st := restored.tracker(ThreadKey("s1", Thread{ID: "main"}), t0).snapshot()
+	if st.Cache.EntryTTL != time.Hour {
+		t.Fatalf("EntryTTL %v, want 1h", st.Cache.EntryTTL)
+	}
+	for name, set := range map[string]*Trackers{"original": ts, "restored": restored} {
+		if got := next.run(set).Phase; got != PhaseHot {
+			t.Errorf("%s: phase %q, want hot (a 1h entry, 30 minutes)", name, got)
+		}
+	}
+}

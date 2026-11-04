@@ -584,6 +584,13 @@ func (c *calcState) phaseAndBoundary(res *Result) {
 		live, alive := liveExtent(segs, gap, nil)
 		switch {
 		case alive:
+			// A part the clock calls dead can still be proven alive by a billed read. That read lengthens the extent
+			// (it only lowers a saving, R45). `alive` itself stays clock-only, so a read does not preempt the ping rescue.
+			if c.usage.CacheRead > 0 {
+				if l2, ok := liveExtent(segs, gap, func(at int) bool { return c.readReaches(prev.Forwarded, at) }); ok {
+					live = max(live, l2)
+				}
+			}
 			c.phase, c.prevExt = PhaseHot, live
 		case f.Lifetime == LifetimeUnknown:
 			// an unknown lifetime cannot prove an expiry (R45)
@@ -671,7 +678,9 @@ type entrySeg struct {
 	ttl time.Duration
 }
 
-// segTTL is the lifetime a breakpoint's TTL string gives; an empty string takes the entry's TTL.
+// segTTL is the lifetime a breakpoint's TTL string gives. Any string other than "5m" and "1h" (an empty
+// one, or a typo) takes the entry's TTL, with no warning. Compute rejects an unknown TTL on the current
+// request's breakpoints (check "breakpoints"), but a stored one is not checked again.
 func segTTL(s string, entryTTL time.Duration) time.Duration {
 	switch s {
 	case "1h":
@@ -686,8 +695,15 @@ func segTTL(s string, entryTTL time.Duration) time.Duration {
 // in flat order of the previous forwarded body. It never returns an empty list: the extent itself is the
 // last part, at entryTTL, when no breakpoint ends it.
 func (c *calcState) entrySegments(entryTTL time.Duration) []entrySeg {
-	prev := c.s.PrevPrint
-	ext := mustFlat(prev.Forwarded, *c.s.Cache.Extent)
+	return entrySegs(c.s, entryTTL)
+}
+
+// entrySegs is entrySegments for a thread state. The part beyond the last breakpoint, up to the extent, has
+// the entry TTL (EntryFacts.TTL of the writing request). A breakpoint TTL other than "5m" and "1h" (empty or
+// unknown) also takes the entry TTL (segTTL). s must hold a previous fingerprint and an extent.
+func entrySegs(s ThreadState, entryTTL time.Duration) []entrySeg {
+	prev := s.PrevPrint
+	ext := mustFlat(prev.Forwarded, *s.Cache.Extent)
 	var segs []entrySeg
 	for _, b := range prev.Forwarded.breakpoints(prev.ForwardedBreakpoints) {
 		if b.at <= ext {

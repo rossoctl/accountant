@@ -250,6 +250,11 @@ func (r *Request) seededFromParent(s ThreadState) (ThreadState, bool) {
 	if ttl <= 0 {
 		ttl = r.Facts.TTL
 	}
+	if ps.Cache.Extent != nil { // the longest part decides, as in phaseAndBoundary: a 1h head outlives a 5m tail
+		for _, sg := range entrySegs(ps, ttl) {
+			ttl = max(ttl, sg.ttl)
+		}
+	}
 	if gap := r.Meta.At.Sub(p.At); gap < 0 || gap > ttl {
 		return s, false
 	}
