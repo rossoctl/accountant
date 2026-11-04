@@ -112,7 +112,9 @@ func TestASummaryBreaksTheCacheOnceThenIsRead(t *testing.T) {
 
 // Example 7: coref changes message 5, inside the cached prefix. The last breakpoint before it is the
 // end of system, so everything after system is written again.
-func ex7(clientBPs []Breakpoint, usage Usage) Result {
+func ex7(clientBPs []Breakpoint, usage Usage) Result { return ex7Facts(clientBPs, usage, exact5m) }
+
+func ex7Facts(clientBPs []Breakpoint, usage Usage, facts EntryFacts) Result {
 	tools, sysB := []blk{b("t", 12300)}, []blk{b("sys", 3000)}
 	m := []blk{b("m0", 3000), b("m1", 2000), b("m2", 2000), b("m3", 2060), b("m4", 2000), b("m5", 20000),
 		b("m6", 1500), b("m7", 1500), b("m8", 1000), b("m9", 1000), b("m10", 1400), b("m11", 1500)}
@@ -124,7 +126,7 @@ func ex7(clientBPs []Breakpoint, usage Usage) Result {
 	fwd = append(fwd, m[6:]...)
 	op := rewrite("op12", "context-guru.coref", "cg:coref:5e2d", msg(5), 20000, 50)
 	return req{at: t0.Add(time.Minute), client: mk(tools, sysB, with(m, b("m12", 2000))), clientBPs: clientBPs,
-		ops: []Operation{op}, fwd: mk(tools, sysB, with(fwd, b("m12", 2000))), facts: exact5m, usage: usage}.run(ts)
+		ops: []Operation{op}, fwd: mk(tools, sysB, with(fwd, b("m12", 2000))), facts: facts, usage: usage}.run(ts)
 }
 
 func TestAChangeInsideTheCachedPrefixBreaksFromTheLastBreakpoint(t *testing.T) {

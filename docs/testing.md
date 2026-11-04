@@ -105,7 +105,6 @@ drops the combinations that cannot occur, and states the reason for each drop in
 | Billing | `api`, `subscription`, `unknown` ([§7.1](design.md#71-billing-plans)) |
 | Model tier | below and above a long-context threshold (the host prices; the library returns the same tokens) |
 | Provider rounding | explicit breakpoints; implicit, rounded to 128 tokens ([§5.1](design.md#51-the-counterfactual-boundary-b)) |
-| Prefix length | at or above the model's minimum cacheable length; below it (B\* = 0) |
 
 **B. Hand-written cases.** These test how context operations interact, which a cross product cannot do:
 
@@ -157,6 +156,9 @@ drops the combinations that cannot occur, and states the reason for each drop in
 26. A request that fails before `Compute`: the reported change is still active on the next request ([§4.6](design.md#46-replays-who-remembers-past-changes)). Pinned by `TestAChangeReportedOnARequestWithoutComputeStaysActive`; a repeated report writes nothing.
 27. Two requests of one thread in flight: the second `Compute` sets `Recomputed` ([R53](spec.md#r53)); `Preview` returns the figure `Compute` returns and stores nothing ([R26](spec.md#r26)).
 28. Two tenants with one session ID: the host's key prefix keeps the `ThreadState`s apart ([§6.1](design.md#61-call)).
+29. The minimum cacheable length (`EntryFacts.MinCacheable`, §5.1 and §6.2): a write below it is input; a later
+    breakpoint that reaches it still writes; a usage with no cache tokens makes the forwarded body input, read range
+    included. Unit tests in `internal/engine/mincacheable_test.go`; not a generated dimension.
 
 **C. Cases from real traffic.** For each difference that a shadow step ([`cortex-wiring.md`](cortex-wiring.md), migration steps 5 and 8) logs and
 no case matches, add a case. Then decide: it is a bug in `accountant`, or a new `differs` entry with a
