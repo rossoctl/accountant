@@ -1,6 +1,9 @@
 package engine
 
-import "sort"
+import (
+	"math"
+	"sort"
+)
 
 // Helpers on Body positions. Inside the library a position is a flat index into Body.Pos, because
 // the flat order is the provider's hash order (§4.3). -1 means "before the first position".
@@ -146,15 +149,33 @@ func (b Body) cumMedia(i int) int {
 }
 
 // ratio converts forwarded text bytes to tokens with the request's own ratio (§5.3). The bytes and
-// the tokens are those of the text only: media is priced apart (mediaBytesPerToken).
-type ratio struct{ tokens, bytes int }
+// the tokens are those of the text only: media is priced apart. A media block costs mediaTok tokens
+// for each mediaPer bytes of its base64 text: 1 for each mediaBytesPerToken, unless the bill is below
+// that price (newRatio).
+type ratio struct {
+	tokens, bytes      int
+	mediaTok, mediaPer int
+	capped             bool // the media price was above the bill and was cut to fit it
+}
 
 // newRatio builds the ratio of a body that the provider billed for billed prompt tokens.
-// The tokens clamp to 0 when the bill is below the media's fixed price; checks() reports that.
+//
+// When the fixed media price is above the bill, the price is wrong, because the provider cannot bill
+// more than billed. The library then gives the media the bill less the least the text can cost
+// (minTokensPerByte for each text byte), and the text that least. The text ratio is then at its floor,
+// so a saving on text is the lowest it can be (a doubtful figure may only lower a saving). The ratio
+// is marked capped: the operations that cover media are unpriced, and all others are estimates.
 func newRatio(billed int, b Body) ratio {
 	last := len(b.Pos) - 1
 	media := b.cumMedia(last)
-	return ratio{tokens: max(billed-media/mediaBytesPerToken, 0), bytes: b.cumBytes(last) - media}
+	text := b.cumBytes(last) - media
+	r := ratio{tokens: billed - media/mediaBytesPerToken, bytes: text, mediaTok: 1, mediaPer: mediaBytesPerToken}
+	if r.tokens >= 0 {
+		return r
+	}
+	floor := int(math.Ceil(minTokensPerByte * float64(max(text, 0))))
+	mediaTokens := max(billed-floor, 0)
+	return ratio{tokens: max(billed, 0) - mediaTokens, bytes: text, mediaTok: mediaTokens, mediaPer: media, capped: true}
 }
 
 func (r ratio) of(bytes int) int {
@@ -164,10 +185,18 @@ func (r ratio) of(bytes int) int {
 	return int(int64(bytes) * int64(r.tokens) / int64(r.bytes))
 }
 
+// mediaOf is the tokens of media bytes of base64 text.
+func (r ratio) mediaOf(media int) int {
+	if r.mediaPer <= 0 {
+		return 0
+	}
+	return int(int64(media) * int64(r.mediaTok) / int64(r.mediaPer))
+}
+
 // tokensOf converts bytes of which media are media bytes: the text with the ratio, the media with
-// the fixed price.
+// the media price.
 func (r ratio) tokensOf(bytes, media int) int {
-	return r.of(bytes-media) + media/mediaBytesPerToken
+	return r.of(bytes-media) + r.mediaOf(media)
 }
 
 // upTo is the tokens of positions 0..i of b.

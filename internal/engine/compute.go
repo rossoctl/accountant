@@ -18,6 +18,7 @@ const (
 	ReasonNotSpend          = "not_spend"       // a standalone RequestOps holds only spend operations (§6.1)
 	ReasonBadUsage          = "bad_usage"       // a usage count is negative: nothing is priced (§6.5, check 8)
 	ReasonRatioRange        = "ratio_range"     // tokens per byte is outside the range: nothing is priced (§6.5, check 9)
+	ReasonMediaTokens       = "media_tokens"    // the operation covers media, and the bill is below the media price: only this operation is unpriced (§6.5, check 11)
 	ReasonBreakpoints       = "breakpoints"     // more than 4 breakpoints, or an unknown TTL: nothing is priced (§6.5, check 10)
 )
 
@@ -1028,16 +1029,14 @@ func (c *calcState) validate(u Usage) string {
 }
 
 // badRatio says whether the tokens per forwarded text byte are outside 0.05 to 2.0 (check 9). Media
-// bytes are not in the denominator and the media price is not in the numerator (newRatio). A usage that
+// bytes are not in the denominator and the media price is not in the numerator (newRatio). A media
+// price above the bill is cut to the bill (newRatio), so it does not fail this check. A usage that
 // bills no prompt token for a body with bytes (tokens per byte 0), or tokens for an empty body (infinite),
 // is outside the range too.
 func (c *calcState) badRatio() bool {
 	last := len(c.fwd.Pos) - 1
 	if c.fwd.cumBytes(last) == 0 {
 		return true // an empty body billed for tokens, or for none
-	}
-	if c.fwd.cumMedia(last)/mediaBytesPerToken > c.usage.Input+c.usage.CacheRead+c.usage.CacheWrite {
-		return true // the bill is below the media price: check 11 fails too
 	}
 	t, n := float64(c.ratio.tokens), float64(c.ratio.bytes)
 	if n == 0 {
@@ -1094,6 +1093,8 @@ func (c *calcState) price(res *Result) {
 			res.Unpriced = append(res.Unpriced, Unpriced{OpID: it.id, Reason: c.invalid})
 		case resultUnknown(it.op):
 			res.Unpriced = append(res.Unpriced, Unpriced{OpID: it.id, Reason: ReasonPingResultUnknown})
+		case c.mediaUnpriced(k, it):
+			res.Unpriced = append(res.Unpriced, Unpriced{OpID: it.id, Reason: ReasonMediaTokens})
 		case it.op.Kind == KindRewrite:
 			for _, sp := range it.spans {
 				bm, am := c.rangeMedia(k, sp.before, sp, true), c.rangeMedia(k, sp.after, sp, false)
@@ -1142,6 +1143,27 @@ func (c *calcState) price(res *Result) {
 		}
 	}
 	res.Ops = append(reported, active...)
+}
+
+// mediaUnpriced says whether the operation covers media while the bill is below the media price
+// (check 11). The library does not know how the bill splits between that media and the text, so it
+// does not price the operation. A span with the host's own tokens on both sizes is still exact, so
+// it does not count. An operation that covers no media is priced with the text ratio.
+func (c *calcState) mediaUnpriced(k int, it *item) bool {
+	if !c.ratio.capped || it.op.Kind != KindRewrite {
+		return false
+	}
+	for _, sp := range it.spans {
+		bm, am := c.rangeMedia(k, sp.before, sp, true), c.rangeMedia(k, sp.after, sp, false)
+		if bm == 0 && am == 0 {
+			continue
+		}
+		hostCounted := sp.before.Tokens > 0 && plausible(sp.before, bm) && sp.after.Tokens > 0 && plausible(sp.after, am)
+		if !hostCounted {
+			return true
+		}
+	}
+	return false
 }
 
 // interaction adds the tokens of a saved span that the rescue turned from write into read (§6.2).
@@ -1205,9 +1227,11 @@ func tierSum(t TierTokens) int { return t.Input + t.CacheWrite5m + t.CacheWrite1
 // are not run here (conservation is, in calc): attribution holds by construction, because the library
 // only gives a break the ChangeID of one of the request's operations.
 func (c *calcState) checks(res *Result) {
-	if media := c.fwd.cumMedia(len(c.fwd.Pos)-1) / mediaBytesPerToken; !c.noUsage && media > c.usage.Input+c.usage.CacheRead+c.usage.CacheWrite {
+	if c.ratio.capped && !c.noUsage {
+		media := c.fwd.cumMedia(len(c.fwd.Pos)-1) / mediaBytesPerToken
 		res.Checks = append(res.Checks, CheckFailure{Check: "media_tokens",
-			Detail: fmt.Sprintf("media=%d tokens billed=%d: the bill is below the media price: nothing is priced (ratio_range)", media, c.usage.Input+c.usage.CacheRead+c.usage.CacheWrite)})
+			Detail: fmt.Sprintf("media price=%d tokens billed=%d: the bill is below the media price: the media is cut to %d tokens and any operation that covers media is estimated",
+				media, c.usage.Input+c.usage.CacheRead+c.usage.CacheWrite, c.ratio.mediaTok)})
 	}
 	var got [3]int
 	seen := map[string]bool{}

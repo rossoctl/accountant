@@ -122,5 +122,6 @@ const (
 	ReasonNotSpend          = engine.ReasonNotSpend
 	ReasonBadUsage          = engine.ReasonBadUsage
 	ReasonRatioRange        = engine.ReasonRatioRange
+	ReasonMediaTokens       = engine.ReasonMediaTokens
 	ReasonBreakpoints       = engine.ReasonBreakpoints
 )
