@@ -47,6 +47,12 @@ func TestAContentChangeWithNoRescueHasNoInteraction(t *testing.T) {
 // The limits of design §6.2 "The limit". Each test below starts from the exact case of issue 19
 // (a mask removes 1201 tokens, the rescue books 1255) and changes one fact. Each expects no
 // interaction: a doubtful figure may only lower a saving (R45).
+//
+// The scenario: the earlier request wrote the client body (2569 tokens: 1255 system, 1214 for
+// messages[0], 100 for messages[1]). The mask cuts messages[0] to 13, so on the rescued request the
+// provider reads the 1255 system tokens the ping kept and writes the other 113. A reported mask is
+// the one exception: its replay has the same forwarded prefix as the earlier request, so the
+// provider reads 1368 and writes nothing. The rescue books 1255 in the first case.
 
 type interactionCase struct {
 	facts   EntryFacts
@@ -74,8 +80,10 @@ func (c interactionCase) run() Result {
 	}
 	first.run(ts)
 	second := req{at: t0.Add(28 * time.Minute), client: client, clientBPs: c.bps, facts: c.facts, fwd: fwd,
-		usage: Usage{CacheRead: 1368}}
-	if !c.reports {
+		usage: Usage{CacheRead: 1255, CacheWrite: 113}}
+	if c.reports {
+		second.usage = Usage{CacheRead: 1368}
+	} else {
 		second.ops = []Operation{c.op}
 	}
 	return second.run(ts)
@@ -114,16 +122,43 @@ func TestNoInteractionWhenTheMaskIsAfterThePingExtent(t *testing.T) {
 	wantNoInteraction(t, c.run())
 }
 
+// A sibling kept sys[0] warm, so the rescue credits only the 255 tokens after it (R54). The rescue
+// stays positive, so only the SharedWarm guard keeps the interaction out. The system has two blocks
+// here so that the rescue is not zero.
 func TestNoInteractionWhenASiblingKeptTheHeadWarm(t *testing.T) {
 	c := exactInteraction()
 	c.facts.SharedWarm = ptr(sys(0))
-	wantNoInteraction(t, c.run())
+	c.bps = bps5(sys(1), msg(1))
+	sysB := []blk{b("sys0", 1000), b("sys1", 255)}
+	client := mk(nil, sysB, []blk{b("m0", 1214), b("m1", 100)})
+	fwd := mk(nil, sysB, []blk{b("m0", 13), b("m1", 100)})
+	ts := NewTrackers()
+	req{at: t0.Add(20 * time.Minute), client: client, clientBPs: c.bps, facts: c.facts, usage: Usage{CacheWrite: 2569}}.run(ts)
+	res := req{at: t0.Add(28 * time.Minute), client: client, clientBPs: c.bps, facts: c.facts, fwd: fwd,
+		ops: []Operation{c.op}, usage: Usage{CacheRead: 1255, CacheWrite: 113}}.run(ts)
+	noChecks(t, res)
+	if e := effect(t, res, EffectRescue); e.Saved != (TierTokens{CacheWrite5m: 255}) {
+		t.Fatalf("setup: rescue %+v, want 255 tokens", e.Saved)
+	}
+	wantNoInteraction(t, res)
 }
 
+// A DryRun mask is computed but not sent (R12): the forwarded body is the client body, and the
+// provider reads all 2569 tokens. price still books the mask, so the DryRun guard is exercised.
 func TestNoInteractionForADryRunMask(t *testing.T) {
 	c := exactInteraction()
 	c.op.DryRun = true
-	wantNoInteraction(t, c.run())
+	sysB := []blk{b("sys", 1255)}
+	client := mk(nil, sysB, []blk{b("m0", 1214), b("m1", 100)})
+	ts := NewTrackers()
+	req{at: t0.Add(20 * time.Minute), client: client, clientBPs: c.bps, facts: c.facts, usage: Usage{CacheWrite: 2569}}.run(ts)
+	res := req{at: t0.Add(28 * time.Minute), client: client, clientBPs: c.bps, facts: c.facts, fwd: client,
+		ops: []Operation{c.op}, usage: Usage{CacheRead: 2569}}.run(ts)
+	noChecks(t, res)
+	if p := findOp(t, res, "op1"); !p.DryRun || p.Saved == (TierTokens{}) {
+		t.Fatalf("setup: dry-run mask %+v, want it priced", p)
+	}
+	wantNoInteraction(t, res)
 }
 
 // A 1h head entry read after the 5m TTL is a ttlRescue, not a ping rescue. There is no ping, so
@@ -141,7 +176,7 @@ func TestNoInteractionOnATTLRescueWithNoPing(t *testing.T) {
 	fwd := mk(nil, sysB, []blk{b("m0", 13), b("m1", 100)})
 	ts := NewTrackers()
 	req{at: t0, client: client0, clientBPs: bps0, fwdBPs: bps0, facts: facts, ops: []Operation{head, mask}, fwd: fwd0,
-		usage: Usage{CacheWrite1h: 1255, CacheWrite: 13}}.run(ts)
+		usage: Usage{CacheWrite: 1268, CacheWrite1h: 1255}}.run(ts)
 	res := req{at: t0.Add(10 * time.Minute), client: client, clientBPs: bps1, fwdBPs: bps1, facts: facts,
 		ops: []Operation{head, mask}, fwd: fwd, usage: Usage{CacheRead: 1255, CacheWrite: 113}}.run(ts)
 	effect(t, res, EffectTTLRescue)
