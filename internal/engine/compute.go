@@ -529,14 +529,12 @@ func (c *calcState) phaseAndBoundary(res *Result) {
 		// (a cache mark on an unchanged message). Then B* is the end of the extent, not the start of the body,
 		// or every saving replayed on this request would be priced at the write rate although the provider read
 		// those tokens.
-		if c.prevExt >= 0 && c.readEnd >= c.prevExt && c.clientFD <= c.prevExtCli && c.prevExtCli > c.bstar {
+		// The comparison is in tokens, not positions: a position is an index into one body, and the previous and
+		// the current forwarded bodies may differ before the extent (a block a plugin added), so equal
+		// indices would not mean equal prefixes.
+		if c.prevExt >= 0 && !c.noUsage && c.readCoversExtent(prev) && c.clientFD <= c.prevExtCli && c.prevExtCli > c.bstar {
 			c.bstar = c.prevExtCli
 		}
-		// The read in the usage is evidence, as it is for an unknown phase. The provider read at least that
-		// much of the client body. A host whose body hashes differ from the previous request's for a
-		// message the client did not change (it hashed a cache mark that moved) shows no common prefix,
-		// and B* would fall to the start: every saving replayed on this request would then be priced
-		// at the write rate although the provider read those tokens. The read is a lower bound for B*.
 	case PhaseUnknown:
 		c.unknown = true
 		res.Unpriced = append(res.Unpriced, Unpriced{Reason: ReasonPenaltyUnknown})
@@ -551,6 +549,13 @@ func (c *calcState) phaseAndBoundary(res *Result) {
 		res.Boundary = &p
 		c.bstarFwd = mustFlat(c.fwd, c.clientToFwd(p))
 	}
+}
+
+// readCoversExtent reports whether the tokens the provider read reach the previous request's cached extent,
+// with the tolerance of extent. The extent is priced at the byte ratio of this request.
+func (c *calcState) readCoversExtent(prev *Fingerprint) bool {
+	want := c.ratio.of(prev.Forwarded.cumBytes(c.prevExt))
+	return want > 0 && want <= c.usage.CacheRead+128+c.usage.CacheRead/50
 }
 
 // readable is the last position up to x that a request with the breakpoints bps can read. The

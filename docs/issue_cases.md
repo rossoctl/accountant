@@ -478,17 +478,19 @@ catches a fault that an issue reported. Then 13 and 2, which are the likely desi
 ## 9a. Cases from the review of context-guru#768
 
 A review of rossoctl/context-guru#768 found library faults. They are issues #9 to #21 of this repository.
-Four of them are written here as cases. **Each case fails today.** It states the figure the spec requires,
-so the fix for its issue turns it green. The case does not change before the fix.
+Four of them are written here as cases. Each case stated the figure the spec requires and failed until its
+fix landed. **All of them pass now** (accountant#9, #14, #20 and #21 are fixed). The last column says what the
+library did before the fix.
 
-| Case ID | Issue | What the spec requires | What the library does today |
+| Case ID | Issue | What the spec requires | What the library did before the fix |
 |---|---|---|---|
-| `keepalive/ping-rescue-write-equals-read/5m`, `keepalive/ping-rescue-large-turn/5m` | #9 | A ping read 6,000 tokens and the request read 6,000. The rescue is 6,000 whatever the request wrote (design §4.4 condition 4). | No rescue when the request writes 6,000 or more. |
-| `keepalive/ping-rescue-small-turn/5m` | #9 | The same, with 500 tokens written. | Passes. It is the guard that the fix keeps the working case. |
-| `keepalive/ping-rescue-ping-fresh-input-300/5m` | #14 | The ping read 3,051 tokens. Its 300 tokens of fresh input are not in the previous body, so the rescue is still 3,051. | 1,775 when the host passes only the ping's usage (`PingUsage`). It passes when the host passes `PingRead`. |
-| `keepalive/ping-rescue-ping-fresh-input-0/5m` | #14 | The same, with no fresh input. | Passes. It is the guard. |
+| `keepalive/ping-rescue-write-equals-read/5m`, `keepalive/ping-rescue-large-turn/5m` | #9 | A ping read 6,000 tokens and the request read 6,000. The rescue is 6,000 whatever the request wrote (design §4.4 condition 3). | No rescue when the request writes 6,000 or more. |
+| `keepalive/ping-rescue-small-turn/5m` | #9 | The same, with 500 tokens written. | Passed. It is the guard that the fix keeps the working case. |
+| `keepalive/ping-rescue-ping-fresh-input-300/5m` | #14 | The ping read 3,051 tokens. Its 300 tokens of fresh input are not in the previous body, so the rescue is still 3,051. | 1,775 when the host passes only the ping's usage (`PingUsage`). It passed when the host passed `PingRead`. |
+| `keepalive/ping-rescue-ping-fresh-input-0/5m` | #14 | The same, with no fresh input. | Passed. It is the guard. |
 | `rewrite/prefix-hash-differs-usage-shows-read/hot/5m` | #21 | The provider read the whole previous body. B\* is at the end of what it read, so a cut after it is a write. | B\* is the start of the system block. |
 | `split/tail-unchanged-hash-differs/no-effect` | #20 | The volatile tail did not change, so the split saved nothing: no split effect. | A split effect of 2,500 tokens. |
+| `split/tail-unchanged/no-effect-same-request` | #20 | The same request is sent twice and nothing changed. The client body would have read the tail too, so the split saved nothing: no split effect. | A split effect for the tail. |
 
 **Why the hash differs.** A host that hashes a message with its `cache_control` field sees a new hash when the
 client moves the mark. The text did not change. These cases model it as a message with a new content id. #20 and #21

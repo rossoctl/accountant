@@ -393,7 +393,7 @@ func TestASummaryAfterTheReducerKeepsItsCredit(t *testing.T) {
 	}
 }
 
-// §4.4 condition 4: the rescue is the smaller of what the ping read and what this request read.
+// §4.4 condition 3: the rescue is the smaller of what the ping read and what this request read.
 func TestARescueIsWhatThePingRead(t *testing.T) {
 	f := pingFacts()
 	f.PingRead = ptr(msg(1)) // the ping read system and messages 0 to 1: 6,000
@@ -403,7 +403,7 @@ func TestARescueIsWhatThePingRead(t *testing.T) {
 	}
 }
 
-// §4.4 condition 4: the rescue is the smaller of what the ping read and what the request read. What the
+// §4.4 condition 3: the rescue is the smaller of what the ping read and what the request read. What the
 // request wrote does not enter the rule (accountant#9). The ping read 10,000 tokens, the request read
 // 4,000 and wrote 6,500: the rescue is the 4,000 it read.
 func TestTheRescueIgnoresWhatTheRequestWrote(t *testing.T) {
@@ -599,5 +599,60 @@ func TestApplyClearsAStalePingUsage(t *testing.T) {
 	PingFacts{}.Apply(&f)
 	if f.PingUsage != nil {
 		t.Fatalf("stale PingUsage kept: %+v", *f.PingUsage)
+	}
+}
+
+// bstarBody is the body of the B* tests: a 4,000-byte system block and six 1,000-byte messages, with a
+// breakpoint on system and on the last message.
+func bstarBody(m []blk) Body { return mk(nil, []blk{b("sys", 4000)}, m) }
+
+// accountant#21: the provider read all 10,000 tokens of the previous extent, but the client moved a cache mark
+// onto message 1 and the host's hash of it changed. B* is the end of the extent, not the start of the body.
+func TestBStarIsTheEndOfWhatTheProviderRead(t *testing.T) {
+	m := msgs(6, 1000)
+	ts := NewTrackers()
+	req{at: t0, client: bstarBody(m), clientBPs: bps5(sys(0), msg(5)), facts: exact5m, usage: Usage{CacheWrite: 10000}}.run(ts)
+	m2 := append([]blk(nil), m...)
+	m2[1] = b("m1x", 1000)
+	res := req{at: t0.Add(time.Minute), client: bstarBody(m2), clientBPs: bps5(sys(0), msg(5)), facts: exact5m,
+		usage: Usage{CacheRead: 10000}}.run(ts)
+	if res.Phase != PhaseHot || !samePos(res.Boundary, ptr(msg(5))) {
+		t.Fatalf("phase %q boundary %v, want hot at messages[5]", res.Phase, res.Boundary)
+	}
+}
+
+// The same scene, but the provider read only 5,000 tokens: a client edit did break the prefix, so B* stays
+// before the edit. The rule compares tokens, not positions.
+func TestBStarIsNotRaisedWhenTheReadFallsShort(t *testing.T) {
+	m := msgs(6, 1000)
+	ts := NewTrackers()
+	req{at: t0, client: bstarBody(m), clientBPs: bps5(sys(0), msg(5)), facts: exact5m, usage: Usage{CacheWrite: 10000}}.run(ts)
+	m2 := append([]blk(nil), m...)
+	m2[1] = b("m1x", 1000)
+	res := req{at: t0.Add(time.Minute), client: bstarBody(m2), clientBPs: bps5(sys(0), msg(5)), facts: exact5m,
+		usage: Usage{CacheRead: 5000, CacheWrite: 5000}}.run(ts)
+	if res.Boundary == nil || *res.Boundary == msg(5) {
+		t.Fatalf("boundary %v, want one before messages[5]", res.Boundary)
+	}
+}
+
+// A plugin added blocks before the extent, so the forwarded bodies differ in length. Eight tiny
+// blocks put the index of the read extent at the index of the previous extent, but the provider read 5,900
+// of 10,000 tokens. Equal indices must not raise B*.
+func TestBStarIgnoresIndicesOfDifferentBodies(t *testing.T) {
+	m := msgs(6, 1000)
+	ts := NewTrackers()
+	req{at: t0, client: bstarBody(m), clientBPs: bps5(sys(0), msg(5)), facts: exact5m, usage: Usage{CacheWrite: 10000}}.run(ts)
+	m2 := append([]blk(nil), m...)
+	m2[1] = b("m1x", 1000)
+	extra := []blk{b("sys", 4000)}
+	for i := 1; i <= 8; i++ {
+		extra = append(extra, b("e"+itoa(i), 10))
+	}
+	res := req{at: t0.Add(time.Minute), client: bstarBody(m2), clientBPs: bps5(sys(0), msg(5)),
+		fwd: mk(nil, extra, m2), fwdBPs: bps5(sys(8), msg(5)), facts: exact5m,
+		usage: Usage{CacheRead: 5900, CacheWrite: 4100}}.run(ts)
+	if res.Boundary == nil || *res.Boundary == msg(5) {
+		t.Fatalf("boundary %v, want one before messages[5]", res.Boundary)
 	}
 }

@@ -393,7 +393,7 @@ no tokens, and the `Saved` and `Caused` tiers are zero. Five kinds cover it:
   **every request that writes** the head at 1h (`ttlPremium`), and a saving on each request that reads
   the 1h entry after a gap longer than 5m (`ttlRescue`). `TTL` says which entry the effect is about.
 
-**When the library adds a rescue.** All four conditions must be true. They are the
+**When the library adds a rescue.** All three conditions must be true. They are the
 conditions of the current `keepaliveSavedUSD`:
 
 1. The keeper sent at least one ping for this thread during the gap before this request
@@ -729,7 +729,7 @@ The phase is found **before** the rows, from the gaps. It is the **cache state**
 | A previous fingerprint exists, and the request gap ≤ TTL | `hot` | `prevExtent` |
 | A previous fingerprint exists, the previous request cached nothing (its cache state was `cold`), and the request gap ≤ TTL | `hot` | empty: nothing can have been lost |
 | A previous fingerprint exists, the previous request cached nothing, the lifetime is `exact`, and the request gap > TTL | `cold` | nil |
-| A previous fingerprint exists, request gap > TTL, entry gap ≤ TTL, `PingRead` is set (or derived from `PingUsage`, below), and the lifetime is `exact` or `minimum`. The rescue also needs conditions 3 and 4 of §4.4 | `hot`, and the library adds a rescue with `ChangeID = EntryFacts.PingWindow` (§4.4) | `PingRead` |
+| A previous fingerprint exists, request gap > TTL, entry gap ≤ TTL, `PingRead` is set (or derived from `PingUsage`, below), and the lifetime is `exact` or `minimum`. The rescue also needs condition 3 of §4.4 | `hot`, and the library adds a rescue with `ChangeID = EntryFacts.PingWindow` (§4.4) | `PingRead` |
 | A previous fingerprint exists, request gap > TTL, the lifetime is `exact`, and no ping qualifies (none was sent, one was sent too late, or `PingRead` is unset and cannot be derived) | `cold`. A late ping gets no rescue | nil |
 | A previous fingerprint exists, request gap > TTL, no qualifying ping, and the lifetime is `minimum` or `unknown` | `unknown`, unless `Usage.CacheRead` proves a read (below) | nil |
 | No previous fingerprint for this thread | `unknown`, unless `Usage.CacheRead` proves a read (below) | nil |
@@ -758,7 +758,7 @@ first request is `hot` up to that extent, not `unknown`. The same sharing can in
 sibling's request refreshes the shared head (the system prompt and the tool definitions, 20,093 tokens
 in one measured session) for every other thread, so that head is warm without any ping.
 The host reports it in `EntryFacts.SharedWarm`, and the rescue leaves it out ([R54](spec.md#r54), §4.4
-condition 4). One measured session over-credited about $2.3 of $30.81 (about 7%) before this rule
+condition 3). One measured session over-credited about $2.3 of $30.81 (about 7%) before this rule
 (context-guru#853). The host, not the library, finds the prefix: only the host sees the other threads'
 Trackers. A ping of one thread that keeps another thread's prefix warm is still not credited to the other thread.
 `SharedWarm` reduces the keep-alive `rescue` only. The `ttlRescue` of a head held at 1h is not reduced: a sibling
