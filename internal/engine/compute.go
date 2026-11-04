@@ -88,12 +88,12 @@ func ComputeStandalone(ops RequestOps) Result {
 
 // maxTierTokens is the largest count one Usage field may hold (check 8). It is far above any real
 // prompt, and three of them cannot overflow an int.
-const maxTierTokens = 1 << 40
+const maxTierTokens int64 = 1 << 40
 
 // badUsage says whether a usage is negative, above the cap, or has CacheWrite1h above CacheWrite (check 8).
 func badUsage(u Usage) bool {
 	for _, n := range []int{u.Input, u.CacheRead, u.CacheWrite, u.CacheWrite1h} {
-		if n < 0 || n > maxTierTokens {
+		if n < 0 || int64(n) > maxTierTokens {
 			return true
 		}
 	}
@@ -107,7 +107,7 @@ func badCall(op Operation) bool {
 		return false
 	}
 	u := op.Call.Usage
-	return badUsage(u.Usage) || u.Output < 0 || u.Output > maxTierTokens || u.CostUSD < 0 || math.IsNaN(u.CostUSD) || math.IsInf(u.CostUSD, 0)
+	return badUsage(u.Usage) || u.Output < 0 || int64(u.Output) > maxTierTokens || u.CostUSD < 0 || math.IsNaN(u.CostUSD) || math.IsInf(u.CostUSD, 0)
 }
 
 func callDetail(op Operation) string {
@@ -115,21 +115,116 @@ func callDetail(op Operation) string {
 	return fmt.Sprintf("call usage=%d/%d/%d/%d output=%d costUSD=%g", u.Input, u.CacheRead, u.CacheWrite, u.CacheWrite1h, u.Output, u.CostUSD)
 }
 
-// tooBig says whether an operation reports that it received more bytes than the whole client body holds (check 13).
-func tooBig(op Operation, clientBytes int) bool {
-	if op.Kind != KindRewrite {
-		return false
+// limits are the two bounds of check 13, in bytes.
+//
+//   - before: the most an operation can have received. An operator receives the body the operators before
+//     it left, which is the client body plus what the inserting operators added. So the bound is the
+//     client total plus the sum of max(0, SizeAfter.Bytes - SizeBefore.Bytes) over the rewrites, those
+//     reported now and those applied again.
+//   - after: the most an operation can have produced. Its output either stays in the forwarded body or
+//     is removed by a later operator. So the bound is the forwarded total plus the sum of
+//     max(0, SizeBefore.Bytes - SizeAfter.Bytes) over the rewrites. Before EndRequest the client total
+//     stands in for the forwarded one.
+//
+// A report that fails a bound adds to neither sum: one bogus report must not raise the bound for itself
+// or for the others. So the bounds are found by repetition: start with every reported rewrite, drop the
+// ones that fail, and repeat until none drops (at most one drop for each operation). A DryRun operation
+// changed no byte, so it adds to neither sum. Sums saturate.
+type limits struct{ before, after int }
+
+func (r *Request) limits(s ThreadState) limits {
+	client := r.Client.cumBytes(len(r.Client.Pos) - 1)
+	fwd := client
+	if r.ended {
+		fwd = r.Forwarded.cumBytes(len(r.Forwarded.Pos) - 1)
 	}
-	if op.SizeBefore.Bytes > clientBytes {
-		return true
-	}
-	for _, s := range op.Spans {
-		if s.SizeBefore.Bytes > clientBytes {
-			return true
+	reported := map[string]bool{}
+	for _, op := range r.Ops {
+		if op.ChangeID != "" && (op.Kind == KindRewrite || op.Kind == KindSetting) {
+			reported[op.ChangeID] = true
 		}
 	}
-	return false
+	type entry struct {
+		op     Operation
+		active bool
+		out    bool // dropped: it failed a bound
+	}
+	var es []*entry // the rewrites: active ones no report replaces, then the reported ones
+	for _, op := range s.Active {
+		if !reported[op.ChangeID] {
+			es = append(es, &entry{op: op, active: true})
+		}
+	}
+	for _, op := range r.Ops {
+		es = append(es, &entry{op: op})
+	}
+	sat := func(a, d int) int {
+		if a > math.MaxInt-d {
+			return math.MaxInt
+		}
+		return a + d
+	}
+	var l limits
+	for {
+		l = limits{before: client, after: fwd}
+		for _, e := range es {
+			if e.out || e.op.Kind != KindRewrite || e.op.DryRun || negative(e.op) {
+				continue
+			}
+			add := func(b, a Size) {
+				if d := a.Bytes - b.Bytes; d > 0 {
+					l.before = sat(l.before, d)
+				} else if d < 0 {
+					l.after = sat(l.after, -d)
+				}
+			}
+			if len(e.op.Spans) == 0 {
+				add(e.op.SizeBefore, e.op.SizeAfter)
+			}
+			for _, sp := range e.op.Spans {
+				add(sp.SizeBefore, sp.SizeAfter)
+			}
+		}
+		dropped := false
+		for _, e := range es {
+			if !e.out && !e.active && tooBig(e.op, l) {
+				e.out, dropped = true, true
+			}
+		}
+		if !dropped {
+			return l
+		}
+	}
 }
+
+// tooBig says whether a rewrite reports a size above a bound of check 13, on the operation or on a span.
+func tooBig(op Operation, l limits) bool {
+	_, ok := bigSize(op, l)
+	return ok
+}
+
+// bigSize returns the first size pair above a bound: the operation's, or the span's that failed.
+func bigSize(op Operation, l limits) ([2]Size, bool) {
+	if op.Kind != KindRewrite {
+		return [2]Size{}, false
+	}
+	over := func(b, a Size) bool {
+		return b.Bytes > l.before || (!op.DryRun && a.Bytes > l.after) || (op.DryRun && a.Bytes > l.before)
+	}
+	if over(op.SizeBefore, op.SizeAfter) {
+		return [2]Size{op.SizeBefore, op.SizeAfter}, true
+	}
+	for _, sp := range op.Spans {
+		if over(sp.SizeBefore, sp.SizeAfter) {
+			return [2]Size{sp.SizeBefore, sp.SizeAfter}, true
+		}
+	}
+	return [2]Size{}, false
+}
+
+// malformed says whether a report is a bug: a negative size, or a size above limit. A malformed report
+// is priced as nothing and replaces nothing.
+func malformed(op Operation, l limits) bool { return negative(op) || tooBig(op, l) }
 
 // resultUnknown says whether a spend's call has no usage at all: the call was sent and may have been
 // billed, but the host has no response to read the bill from. The cost is then missing, not zero.
@@ -200,13 +295,13 @@ func (r *Request) calc(s ThreadState, usage Usage) (Result, ThreadState) {
 // earlier requests, then the reported ones. A reported operation with the ChangeID of an active one
 // replaces it (the observe-to-enforce switch, §4.6, or an operator that changes its own change).
 func (r *Request) items(s ThreadState) []*item {
+	l := r.limits(s)
 	reported := map[string]bool{} // a spend may share the ChangeID of its change (§6.5 check 3)
 	for _, op := range r.Ops {
-		if isChange(op) {
+		if isChange(op, l) {
 			reported[op.ChangeID] = true
 		}
 	}
-	clientBytes := r.Client.cumBytes(len(r.Client.Pos) - 1)
 	var items []*item
 	for _, op := range s.Active {
 		if !reported[op.ChangeID] {
@@ -220,7 +315,7 @@ func (r *Request) items(s ThreadState) []*item {
 			it.bad = ReasonUnknownKind
 		case negative(op):
 			it.bad = ReasonNegativeSize
-		case tooBig(op, clientBytes):
+		case tooBig(op, l):
 			it.bad = ReasonSizeRange
 		case badCall(op):
 			it.bad = ReasonBadUsage
@@ -248,10 +343,10 @@ func (r *Request) items(s ThreadState) []*item {
 }
 
 // isChange reports whether op is a change the Tracker keeps and replays: a rewrite or a setting with a
-// ChangeID, and a well-formed size. A malformed report is not a change, so it must not replace an
+// ChangeID, and a well-formed size (not negative, not above a bound of check 13). A malformed report is not a change, so it must not replace an
 // active one (§4.6). items and EndRequest both use it, so they cannot disagree.
-func isChange(op Operation) bool {
-	return op.ChangeID != "" && (op.Kind == KindRewrite || op.Kind == KindSetting) && !negative(op)
+func isChange(op Operation, l limits) bool {
+	return op.ChangeID != "" && (op.Kind == KindRewrite || op.Kind == KindSetting) && !malformed(op, l)
 }
 
 func negative(op Operation) bool {
@@ -1124,13 +1219,14 @@ func (c *calcState) badBreakpoints() bool {
 
 // checkUsage reports the failed check 8, 9 or 10 in Result.Checks.
 func (c *calcState) checkUsage(res *Result) {
+	l := c.r.limits(c.s)
 	for _, it := range c.items {
 		switch {
 		case it.ended || it.active:
 		case it.bad == ReasonSizeRange:
+			sz, _ := bigSize(it.op, l)
 			res.Checks = append(res.Checks, CheckFailure{Check: ReasonSizeRange, Operator: it.op.Operator,
-				Detail: fmt.Sprintf("op bytes=%d/%d client bytes=%d: the operation is not priced",
-					it.op.SizeBefore.Bytes, it.op.SizeAfter.Bytes, c.client.cumBytes(len(c.client.Pos)-1))})
+				Detail: fmt.Sprintf("size bytes=%d/%d limits=%d/%d: the operation is not priced", sz[0].Bytes, sz[1].Bytes, l.before, l.after)})
 		case it.bad == ReasonBadUsage:
 			res.Checks = append(res.Checks, CheckFailure{Check: ReasonBadUsage, Operator: it.op.Operator, Detail: callDetail(it.op)})
 		}

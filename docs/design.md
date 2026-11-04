@@ -517,7 +517,7 @@ holds for the Tracker. It is the risk of the new rule. What the new design does 
    the check fails on that request. The conservation check (check 6) fails too.
 2. **What the checks do not catch.** A check works on sizes for each section. Two errors of the same
    size in one section cancel out. The checks also do not say which change is wrong. And a failed check
-   does not stop pricing: the figure is still produced, with the failure in `Result.Checks`. (Exception: an operation larger than the client body is not priced, §6.5 check 13.)
+   does not stop pricing: the figure is still produced, with the failure in `Result.Checks`. (Exception: an operation with a size above the bounds of §6.5 check 13 is not priced.)
 3. **The end rule is an inference.** `Compute` must find by itself that a change has ended, because the
    context operator reports nothing after the first request (§11, question 12). A change that ends
    with bytes identical to the changed form is not found. For that case the guard in point 1 is the
@@ -1239,7 +1239,7 @@ check, the operator, the detail, and the request, session and thread IDs). `Prev
    with the section and index, and the keep-alive rescue of that request is not credited ([R54](spec.md#r54)).
    A doubtful figure may only lower a saving.
 8. **Usage sign and cap:** no count in `Usage` is negative or above 2^40 (about 1.1e12 tokens), and `CacheWrite1h` is not
-   larger than `CacheWrite` (it is part of it, never an addition). The cap keeps the sum of the tiers from wrapping an `int`.
+   larger than `CacheWrite` (it is part of it, never an addition). The cap keeps the sum of the tiers from wrapping an `int` (on a 32-bit `int` no count can reach it). `Facts.PingUsage` is not checked here.
    If one count is out of range, the check `bad_usage` fails. The same rule applies to the `Usage` of a spend's `Call`;
    there `Output` must not be negative or above the cap, and `CostUSD` must not be negative, NaN or infinite. A spend
    whose `Call` fails goes to `Unpriced` with `bad_usage` (its other figures are not changed), also in `ComputeStandalone`.
@@ -1260,12 +1260,24 @@ check, the operator, the detail, and the request, session and thread IDs). `Prev
 12. **Size tokens (`size_tokens`):** a `Size.Tokens` is between 0.05 tokens for each text byte and 2.0 tokens for each byte
     of its range (the limits of check 9). If it is not, the host's count is a bug: the library ignores it, converts the
     bytes, and reports the check.
-13. **Size range (`size_range`):** a rewrite's `SizeBefore.Bytes` (and each span's) is not above the client body's total
-    size. The operator cannot have received more bytes than the client sent. If it did, the report is a bug. That one
-    operation goes to `Unpriced` with `size_range`, and the check reports it. The other operations are priced as usual,
-    and the `sum` check still runs. This is the narrow exception to "a failure does not stop pricing": the `sum` check
-    alone cannot tell a wrong report from a wrong guess, but a size above the whole body is wrong in every case, and
-    its tokens would otherwise reach the totals unbounded.
+13. **Size range (`size_range`):** the sizes of a rewrite are inside two bounds, on the operation and on each span.
+    - `SizeBefore.Bytes` is at most the largest body the operator could have received: the client body total plus
+      the sum of `max(0, SizeAfter.Bytes - SizeBefore.Bytes)` over the request's rewrites (an operator before it may
+      have inserted content, for example retrieval).
+    - `SizeAfter.Bytes` is at most the forwarded body total plus the sum of `max(0, SizeBefore.Bytes - SizeAfter.Bytes)`
+      over the rewrites (a later operator may have removed part of its output).
+    - A report that fails a bound adds to neither sum, so one bogus report cannot raise the bound for itself. A
+      `DryRun` operation adds to neither sum.
+
+    If a bound fails, the report is a bug. That one operation goes to `Unpriced` with `size_range`, and the check
+    reports the failing span's sizes and the two bounds. The other operations are priced as usual, and the `sum`
+    check still runs. Like a negative size, a `size_range` report is not a change: it replaces no active change with
+    its `ChangeID` and is not stored (§4.6). This is the narrow exception to "a failure does not stop pricing": the
+    `sum` check alone cannot tell a wrong report from a wrong guess, but a size above every possible body is wrong
+    in every case, and its tokens would otherwise reach the totals unbounded. Active operations are not checked
+    again: if a client compacts its body below an active size, the `sum` check flags it.
+    Positions: `NewBody` saturates the byte count of one position (and its media bytes) at the largest `int32`, so a
+    position over 2 GiB does not wrap negative.
 
 If check 8, 9 or 10 fails, the library prices nothing for the request. Each operation goes to `Unpriced` with the
 reason `bad_usage`, `ratio_range` or `breakpoints` (the first check that fails, in that order), no cache effect is
@@ -1319,7 +1331,7 @@ missing, report too little and say why.
 | Situation | Result |
 |---|---|
 | `accountant.Compute` panics | The host recovers, writes no saving for the request, and increments `ops_price_panics`. The request and its spend record are unchanged. |
-| A malformed context operation (unknown kind, negative size, a size above the client body, a spend whose `Call` has a negative or non-finite figure) | Goes to `Unpriced` with a reason (`unknown_kind`, `negative_size`, `size_range`, `bad_usage`). The other context operations are priced. |
+| A malformed context operation (unknown kind, negative size, a size above the bounds of check 13, a spend whose `Call` has a negative or non-finite figure) | Goes to `Unpriced` with a reason (`unknown_kind`, `negative_size`, `size_range`, `bad_usage`). The other context operations are priced. |
 | A `spend` whose `Call` has no usage (a ping that timed out: the host sent it and read no response) | `Unpriced` with `ping_result_unknown`. The cost is missing, not zero, so the window must not show its rescue as a net gain. The rescue is still credited from the read on the request that follows (§4.4) |
 | Usage is negative, does not fit the body (tokens per byte outside 0.05 to 2.0), or the request has more than 4 breakpoints or an unknown TTL | Nothing is priced. Every operation goes to `Unpriced` with `bad_usage`, `ratio_range` or `breakpoints`, and a check of the same name fails (§6.5, checks 8 to 10). |
 | Sum check fails | Pricing goes on. A warning is logged. The failure is counted for each plugin on `/v1/pipeline`. |

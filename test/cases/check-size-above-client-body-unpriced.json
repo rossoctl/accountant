@@ -1,6 +1,6 @@
 {
  "id": "check/size-above-client-body/unpriced",
- "description": "An operator reports that it received 2e12 tokens (8e12 bytes) from a client body of 56,000 bytes. That cannot be true. The operation is not priced (size_range), and no 9.2e18-token saving reaches the totals. A second, honest operation on the same request is priced as usual: message 4 shrinks from 6,000 to 1,000 tokens after B*, so 5,000 cache-write tokens are saved (5,000 x $3.75/M = $0.01875).",
+ "description": "An operator reports that it received 2e12 tokens (8e12 bytes) and produced as many, but the client body of this request holds 80,000 bytes (20,000 tokens) and the forwarded body 60,000. Both sizes are above every bound of check 13, so the operation is not priced (size_range) and the check is reported. (Without the check this report would save 0 tokens; the 9.2e18-token saving of an unbounded SizeBefore is in the Go test.) A second, honest operation on the same request is priced as usual: message 4 shrinks from 6,000 to 1,000 tokens after B*, so 5,000 cache-write tokens are saved (5,000 x $3.75/M = $0.01875).",
  "source": "more_examples.md#I44",
  "dims": {
   "kind": "rewrite",

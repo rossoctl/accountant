@@ -187,8 +187,9 @@ func (r *Request) EndRequest(thread Thread, forwarded Body, breakpoints []Breakp
 // active one with its ChangeID. The other active operations stay: whether they ended is for Compute.
 func (r *Request) withReported(s ThreadState) ([]Operation, bool) {
 	reported := map[string]bool{}
+	l := r.limits(s)
 	for _, op := range r.Ops {
-		if isChange(op) {
+		if isChange(op, l) {
 			reported[op.ChangeID] = true
 		}
 	}

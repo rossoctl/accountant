@@ -518,7 +518,9 @@ split only when the client body would have written the tokens.
 
 | Case ID | What the spec requires |
 |---|---|
-| `check/size-above-client-body/unpriced` | An operation reports 2e12 tokens from a 56,000-byte client body. It is `Unpriced` with `size_range`, and check 13 fails. A second operation (5,000 tokens saved at the write tier, +$0.01875) is priced as usual. No `sum` failure. |
+| `check/size-above-client-body/unpriced` | An operation reports 2e12 tokens (8e12 bytes) before and after, from a request whose client body is 80,000 bytes. It is `Unpriced` with `size_range`, and check 13 fails. A second operation (5,000 tokens saved at the write tier, +$0.01875) is priced as usual. |
+| `check/size-above-client-body/keeps-active-change` | A change is active. A later request reports the same `ChangeID` with an impossible size. The bad report is `Unpriced` (`size_range`) and the active change is still applied again: 5,000 read tokens, $0.00150. |
+| `check/size-after-inserting-operator/priced` | A retrieval operator inserts 25,000 tokens. The cmdfilter after it reports a `SizeBefore` of 100,000 bytes, above the 32,000-byte client body but inside the bound (132,000). It stays priced: net -5,000 write tokens, -$0.01875. |
 | `check/bad-call-negative-output/unpriced` | A spend `Call` with `output: -5` is `Unpriced` with `bad_usage`, and the check fails. |
 | `check/bad-call-negative-cost/unpriced` | A spend `Call` with `costUSD: -0.008` is `Unpriced` with `bad_usage`, and the check fails. |
 

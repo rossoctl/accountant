@@ -2094,11 +2094,55 @@ def i44_size_range():
              add=[over, good], prev=(14000, 14000), boundary=P("messages", 3),
              unpriced=[{"opId": "o1", "reason": "size_range"}], checks=["size_range"])
     write_more("check/size-above-client-body/unpriced", "I44",
-               "An operator reports that it received 2e12 tokens (8e12 bytes) from a client body of 56,000 bytes. "
-               "That cannot be true. The operation is not priced (size_range), and no 9.2e18-token saving reaches "
-               "the totals. A second, honest operation on the same request is priced as usual: message 4 shrinks "
+               "An operator reports that it received 2e12 tokens (8e12 bytes) and produced as many, but the client body "
+               "of this request holds 80,000 bytes (20,000 tokens) and the forwarded body 60,000. Both sizes are above "
+               "every bound of check 13, so the operation is not priced (size_range) and the check is reported. (Without "
+               "the check this report would save 0 tokens; the 9.2e18-token saving of an unbounded SizeBefore is in the "
+               "Go test.) A second, honest operation on the same request is priced as usual: message 4 shrinks "
                "from 6,000 to 1,000 tokens after B*, so 5,000 cache-write tokens are saved (5,000 x $3.75/M = $0.01875).",
                DIMS("rewrite", "afterBStar", "hit", check="size_range"), [s0, s1])
+
+
+def i44_keeps_active():
+    sysb = [("sys", 2000)]
+    m = [(f"m{i}", 3000) for i in range(4)]
+    mc, mf = m + [("m4", 6000)], m + [("m4f", 1000)]
+    ch = "cg:cmdfilter:i44c"
+    good = rewrite("o1", "context-guru.cmdfilter", "messages", 4, 6000, 1000, ch)
+    bad = rewrite("o2", "context-guru.cmdfilter", "messages", 4, 2_000_000_000_000, 0, ch)
+    s0 = sim(0, "r0", ([], sysb, m), ([], sysb, m), [], "unknown")
+    s1 = sim(40, "r1", ([], sysb, mc), ([], sysb, mf), [eop(ch, saved=TT(cacheWrite5m=5000))], "hot",
+             add=[good], prev=(14000, 14000), boundary=P("messages", 3))
+    mc2, mf2 = mc + [("m5", 500)], mf + [("m5", 500)]
+    s2 = sim(80, "r2", ([], sysb, mc2), ([], sysb, mf2), [eop(ch, saved=TT(cacheRead=5000), note="applied again")], "hot",
+             add=[bad], prev=(20000, 15000), boundary=P("messages", 4),
+             unpriced=[{"opId": "o2", "reason": "size_range"}], checks=["size_range"])
+    write_more("check/size-above-client-body/keeps-active-change", "I44",
+               "A change is reported once (request 1) and applied again later. On request 2 a bug reports the same "
+               "ChangeID with a size of 2e12 tokens. The bad report is not priced (size_range) and it replaces "
+               "nothing: the active change is still applied again, 5,000 tokens at the read tier (the client body "
+               "would have been cached up to message 4): 5,000 x $0.30/M = $0.00150.",
+               DIMS("rewrite", "beforeBStar", "hit", check="size_range", replay="true"), [s0, s1, s2])
+
+
+def i44_after_insert():
+    sysb = [("sys", 2000)]
+    m = [("m0", 3000), ("m1", 3000)]
+    ins = rewrite("o1", "context-guru.retrieve", "messages", 1, 0, 25000, "cg:retrieve:i44d",
+                  splice={"at": 1, "removed": 0, "inserted": 1})
+    # the downstream operator receives the 25,000-token insertion (100,000 bytes): above the client body
+    # (32,000 bytes) but inside client + inserted (132,000). It cuts it to 5,000 tokens.
+    down = rewrite("o2", "context-guru.cmdfilter", "messages", 1, 25000, 5000, "cg:cmdfilter:i44d")
+    cf = m[:1] + [("ins", 5000)] + m[1:]
+    s0 = sim(0, "r0", ([], sysb, m), ([], sysb, cf), [eop("cg:retrieve:i44d", caused=TT(cacheWrite5m=25000)),
+                                                         eop("cg:cmdfilter:i44d", saved=TT(cacheWrite5m=20000))],
+             "unknown", add=[ins, down], unpriced=[{"reason": "penalty_unknown"}])
+    write_more("check/size-after-inserting-operator/priced", "I44",
+               "A retrieval operator inserts 25,000 tokens (100,000 bytes) into a 32,000-byte client body. A cmdfilter after "
+               "it receives that insertion and reports SizeBefore of 100,000 bytes: above the client body, but inside the "
+               "bound of check 13 (client + inserted bytes = 132,000). The report stays priced: no size_range check fails. "
+               "Retrieve caused 25,000 write tokens, cmdfilter saved 20,000: net -5,000 x $3.75/M = -$0.01875.",
+               DIMS("rewrite", "mixed", "miss", operations="2", splice="true"), [s0], open_=[BSTAR_SNAP])
 
 
 def i44_bad_call(name, field, value, text):
@@ -2114,6 +2158,8 @@ def i44_bad_call(name, field, value, text):
 
 def i44():
     i44_size_range()
+    i44_keeps_active()
+    i44_after_insert()
     i44_bad_call("negative-output", "output", -5,
                  "A model call states -5 output tokens. No response can bill that. The spend goes to Unpriced "
                  "(bad_usage) and the check bad_usage fails. The host must not add a negative cost to its totals.")

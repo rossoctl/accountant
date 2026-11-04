@@ -2,8 +2,20 @@ package engine
 
 import (
 	"math"
+	"strconv"
 	"testing"
 )
+
+// overCap is the first count above the cap. On a 32-bit int no count can reach it.
+func overCap(t *testing.T) int {
+	t.Helper()
+	if strconv.IntSize < 64 {
+		t.Skip("a 32-bit int cannot hold a count above the cap")
+	}
+	capv := maxTierTokens
+	v := capv + 1
+	return int(v)
+}
 
 // Issue #44: input validation gaps.
 
@@ -24,11 +36,12 @@ func TestOpLargerThanClientBodyIsNotPriced(t *testing.T) {
 
 // A usage tier above the cap is bad_usage, and the sum of tiers cannot wrap.
 func TestHugeUsageIsBadUsage(t *testing.T) {
+	over := overCap(t)
 	for name, u := range map[string]Usage{
 		"maxint":    {Input: math.MaxInt, CacheRead: math.MaxInt, CacheWrite: math.MaxInt},
-		"overCap":   {Input: maxTierTokens + 1},
-		"cacheRead": {CacheRead: maxTierTokens + 1},
-		"write1h":   {CacheWrite: maxTierTokens + 1, CacheWrite1h: maxTierTokens + 1},
+		"overCap":   {Input: over},
+		"cacheRead": {CacheRead: over},
+		"write1h":   {CacheWrite: over, CacheWrite1h: over},
 	} {
 		client := mk(nil, nil, []blk{b("a", 8000)})
 		q := req{at: t0, client: client, clientBPs: bps5(msg(0)), facts: exact5m, usage: u,
@@ -74,7 +87,94 @@ func TestCallUsageValidatedInRequest(t *testing.T) {
 }
 
 func TestClamp32(t *testing.T) {
-	if clamp32(math.MaxInt32+5) != math.MaxInt32 || clamp32(7) != 7 {
+	if strconv.IntSize < 64 {
+		t.Skip("a 32-bit int cannot exceed the int32 maximum")
+	}
+	big := int64(math.MaxInt32) + 5
+	if clamp32(int(big)) != math.MaxInt32 || clamp32(7) != 7 {
 		t.Fatal("clamp32 does not saturate")
+	}
+}
+
+// A tier at the cap is accepted by the sign and cap rule (the body then decides: ratio_range here).
+func TestUsageAtCapIsNotBadUsage(t *testing.T) {
+	if strconv.IntSize < 64 {
+		t.Skip("a 32-bit int cannot hold the cap")
+	}
+	capv := maxTierTokens
+	at := int(capv)
+	client := mk(nil, nil, []blk{b("a", 8000)})
+	q := req{at: t0, client: client, clientBPs: bps5(msg(0)), facts: exact5m, usage: Usage{Input: at}}
+	if res := q.run(NewTrackers()); hasUnpriced(res, ReasonBadUsage) {
+		t.Fatalf("Unpriced = %+v, a tier at the cap is not bad_usage", res.Unpriced)
+	}
+}
+
+// A too-big report replaces nothing: the active change stays priced and stays in the state (finding 1).
+func TestSizeRangeReportKeepsActiveChange(t *testing.T) {
+	sysb := []blk{b("sys", 2000)}
+	m := msgs(4, 3000)
+	mc, mf := append(append([]blk{}, m...), b("m4", 6000)), append(append([]blk{}, m...), b("m4f", 1000))
+	ts := NewTrackers()
+	req{at: t0, client: mk(nil, sysb, m), fwd: mk(nil, sysb, m), clientBPs: bps5(msg(3)), facts: exact5m, usage: Usage{CacheWrite: 14000}}.run(ts)
+	good := rewrite("o1", "trim", "c1", msg(4), 6000, 1000)
+	req{at: t0.Add(10), client: mk(nil, sysb, mc), fwd: mk(nil, sysb, mf), clientBPs: bps5(msg(4)), facts: exact5m,
+		ops: []Operation{good}, usage: Usage{CacheRead: 14000, CacheWrite: 1000}}.run(ts)
+	bad := rewrite("o2", "trim", "c1", msg(4), math.MaxInt/2, 0)
+	mc2, mf2 := append(append([]blk{}, mc...), b("m5", 1000)), append(append([]blk{}, mf...), b("m5", 1000))
+	res := req{at: t0.Add(20), client: mk(nil, sysb, mc2), fwd: mk(nil, sysb, mf2), clientBPs: bps5(msg(5)), facts: exact5m,
+		ops: []Operation{bad}, usage: Usage{CacheRead: 15000, CacheWrite: 1000}}.run(ts)
+	if !hasUnpriced(res, ReasonSizeRange) {
+		t.Fatalf("Unpriced = %+v, want size_range", res.Unpriced)
+	}
+	if p := findOp(t, res, "active:c1"); tierSum(p.Saved) == 0 {
+		t.Fatalf("active op not priced: %+v", p)
+	}
+	st := ts.tracker(ThreadKey("s1", Thread{ID: "main"}), t0).snapshot()
+	if len(st.Active) != 1 || st.Active[0].SizeBefore.Bytes != 6000 {
+		t.Fatalf("state keeps %+v, want the original c1", st.Active)
+	}
+}
+
+// An operator after an inserting operator receives a body larger than the client body (finding 3).
+func TestSizeRangeBoundIncludesInsertedBytes(t *testing.T) {
+	client := mk(nil, nil, []blk{b("a", 4000), b("b", 4000)})
+	insert := Operation{ID: "i", Kind: KindRewrite, Operator: "retrieve", ChangeID: "ci", At: msg(1),
+		SizeBefore: Size{Bytes: 0}, SizeAfter: Size{Bytes: 100000}, MessageSplice: &MessageSplice{At: 1, Removed: 0, Inserted: 1}}
+	run := func(before int) Result {
+		down := rewrite("d", "trim", "cd", msg(1), before, 100)
+		q := req{at: t0, client: client, clientBPs: bps5(msg(1)), facts: exact5m, ops: []Operation{insert, down}, usage: Usage{Input: 2000}}
+		q.fwd = mk(nil, nil, []blk{b("a", 4000), b("ins", 100000), b("b", 4000)}) // the insertion stays in the body
+		return q.run(NewTrackers())
+	}
+	if res := run(90000); hasUnpriced(res, ReasonSizeRange) {
+		t.Fatalf("a report inside client+inserted must stay priced: %+v", res.Unpriced)
+	}
+	if res := run(8000 + 100000 + 1); !hasUnpriced(res, ReasonSizeRange) {
+		t.Fatalf("a report above client+inserted must be size_range: %+v", res.Unpriced)
+	}
+}
+
+// SizeAfter is bounded the same way, on the operation and on a span (finding 4).
+func TestSizeAfterAboveLimitIsNotPriced(t *testing.T) {
+	client := mk(nil, nil, []blk{b("a", 2000)})
+	if strconv.IntSize < 64 {
+		t.Skip("sizes above 2^32 need a 64-bit int")
+	}
+	hugeBytes, hugeTokens, bigBytes := int64(8_000_000_000_000), int64(16_000_000_000_000), int64(1)<<40
+	op := rewrite("o1", "trim", "c1", msg(0), 2000, int(hugeBytes))
+	op.SizeAfter.Tokens = int(hugeTokens)
+	spanned := Operation{ID: "o2", Kind: KindRewrite, Operator: "trim", ChangeID: "c2", At: msg(0),
+		Spans:      []Span{{Section: SectionMessages, From: 0, To: 0, SizeBefore: Size{Bytes: 2000}, SizeAfter: Size{Bytes: int(bigBytes)}}},
+		SizeBefore: Size{Bytes: 2000}, SizeAfter: Size{Bytes: int(bigBytes)}}
+	if strconv.IntSize < 64 {
+		t.Skip("sizes above 2^32 need a 64-bit int")
+	}
+	q := req{at: t0, client: client, clientBPs: bps5(msg(0)), facts: exact5m, ops: []Operation{op, spanned}, usage: Usage{Input: 2000}}
+	res := q.run(NewTrackers())
+	for _, id := range []string{"o1", "o2"} {
+		if !hasUnpriced(res, ReasonSizeRange) || tierSum(findOp(t, res, id).Caused) != 0 {
+			t.Fatalf("%s: Unpriced=%+v Caused=%+v", id, res.Unpriced, findOp(t, res, id).Caused)
+		}
 	}
 }
