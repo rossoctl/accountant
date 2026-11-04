@@ -824,10 +824,12 @@ type ThreadState struct {
 // Trackers holds one Tracker for each thread. It is safe for concurrent use.
 type Trackers struct{ /* map from thread.Key to *Tracker */ }
 
-// Snapshot returns the state of every thread as JSON: hashes, sizes and positions only (R2). It does
-// no I/O. The same state gives the same bytes.
-func (ts *Trackers) Snapshot() []byte
-// Restore replaces the state of every thread with a Snapshot. On an error it changes nothing.
+// Snapshot returns the state of every thread as JSON. It holds no content (R2): no message text.
+// It holds hashes (as decimal strings), sizes, positions, and the IDs and names the state needs. It
+// does no I/O. The same state gives the same bytes. It returns an error when a time cannot be encoded.
+func (ts *Trackers) Snapshot() ([]byte, error)
+// Restore replaces the state of every thread with a Snapshot. On an error it changes nothing. An
+// EndRequest in flight during Restore can be lost.
 func (ts *Trackers) Restore(data []byte) error
 // Trimmed is the count of threads the trim has dropped since the set was made (a metric for the host).
 func (ts *Trackers) Trimmed() uint64
@@ -1258,8 +1260,8 @@ Where a question has test cases, a host that compares them with its own code mar
 - <a id="q11"></a>**Q11. What the Tracker's state holds.** `ThreadState` has three parts (§6.1): the active context
     operations, the previous fingerprint (`PrevPrint`), and the cache state. The active context
     operations are decided. The other two are in `ThreadState` in this design, and not in what the host
-    passes in, so a restart loses them. Whether `ThreadState` is kept in memory or persisted is not
-    decided (question 13). Whether the cache state belongs in `ThreadState` at all, or is only derived
+    passes in. A restart keeps all three if the host saves and loads them with `Trackers.Snapshot` and
+    `Restore` (question 13, §6.1). Without a snapshot a restart loses them. Whether the cache state belongs in `ThreadState` at all, or is only derived
     from `PrevPrint` and the gap, is not decided.
 
 - <a id="q12"></a>**Q12. How a context operation ends (decided, kept here for the record).** Decided: `Compute` infers the end from the bodies and the splice.
