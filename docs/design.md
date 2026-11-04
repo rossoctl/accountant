@@ -216,6 +216,8 @@ type EntryFacts struct {
     // SharedWarm is the longest prefix of this request's forwarded body that another thread of the same
     // session read or wrote inside the TTL before this request (R54). Nil when none did.
     SharedWarm *Position
+    // MinCacheable is the model's minimum cacheable length in tokens. 0 = not set: no minimum applies.
+    MinCacheable int
 }
 
 type Kind string          // rewrite | spend | setting
@@ -634,8 +636,12 @@ been a write.
 
 **Provider details that lower B\* further.** The formula uses the breakpoints only. Two facts in
 [`cached-prefix.md`](cached-prefix.md) can make the real read shorter: the Anthropic lookback of 20
-blocks, and the minimum cacheable length. The library applies the minimum length (a prefix shorter
-than the model's minimum caches nothing, so B\* = 0). It does not model the lookback window. A
+blocks, and the minimum cacheable length. The library applies the minimum length in the tier rule (§6.2), not in B\*. When the host sets
+`EntryFacts.MinCacheable` (1024, 2048 or 4096 tokens, by model), a write at a breakpoint whose prefix is
+shorter than that is priced as `Input`, because the provider caches nothing. With `MinCacheable` = 0 the host
+named no minimum and nothing changes. The library also treats a request as uncacheable when its usage has
+`CacheRead` + `CacheWrite` + `CacheWrite1h` = 0 and `Input` > 0: the provider wrote nothing, so no cut was a write.
+It does not model the lookback window. A
 breakpoint more than 20 blocks after the previous entry can miss with an unchanged prefix, and the
 library then prices too high a read. Shadow differences of this kind go to the case list ([§10.3](testing.md#103-what-makes-the-list-exhaustive) C).
 

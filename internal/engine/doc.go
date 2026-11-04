@@ -43,8 +43,9 @@
 //     where x is first snapped down to this request's last client breakpoint at or before it, unless
 //     a breakpoint of this request is at or after x (the provider reads only from a breakpoint). The
 //     candidates are the previous extent and the client breakpoints of this and the previous
-//     request. The row-4 prediction snaps the same way, with the forwarded breakpoints. The minimum cacheable length and the 128-token rounding of older OpenAI models are
-//     not modelled.
+//     request. The row-4 prediction snaps the same way, with the forwarded breakpoints. The 128-token rounding of older OpenAI models is not modelled. The minimum cacheable
+//     length (EntryFacts.MinCacheable) turns a write below it into input, and so does a usage with no cache tokens
+//     and some input (§5.1).
 //  8. A break moves the forwarded tokens after the read extent, up to B* as forwarded, from read to
 //     write, at the TTL of the first forwarded breakpoint at or after B* (5m when there is none).
 //     A setting break (§5.2 row 3) starts at the last candidate before the earliest
@@ -75,7 +76,7 @@
 //   - Result.Interaction on a rescued request (§6.2). It is always zero.
 //   - The order check (§6.5 check 2). The attribution check (5) holds by
 //     construction: a break only takes the ChangeID of an operation of the same request.
-//   - The minimum cacheable length and the 20-block lookback (§5.1), and the long-context tier.
+//   - The 20-block lookback (§5.1), and the long-context tier.
 //   - MessageSplice moves message positions only. A rewrite that removes or adds whole tools or
 //     system blocks moves no later position in its section (§4.3 gives no splice for them).
 package engine

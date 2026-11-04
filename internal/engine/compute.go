@@ -858,16 +858,38 @@ func addWrite(t *TierTokens, ttl string, n int) {
 }
 
 // addTier adds n tokens at flat position p by the tier rule (§6.2): read at or before B*, write up
-// to the last breakpoint at the TTL of the next one, input after it or with no breakpoint.
-func addTier(t *TierTokens, p, bstar int, bps []bp, n int) {
+// to the last breakpoint at the TTL of the next one, input after it or with no breakpoint. A write
+// needs a cacheable prefix (§5.1): when the next breakpoint ends a prefix below the minimum cacheable
+// length, the provider writes nothing and the tokens are input.
+func (c *calcState) addTier(t *TierTokens, body Body, p, bstar int, bps []bp, n int) {
 	switch ttl := ttlAtOrAfter(bps, p); {
 	case len(bps) > 0 && p <= bstar:
 		t.CacheRead += n
-	case ttl == "":
+	case ttl == "" || c.uncacheable(body, bps, p):
 		t.Input += n
 	default:
 		addWrite(t, ttl, n)
 	}
+}
+
+// uncacheable says whether a write at the first breakpoint at or after p caches nothing (§5.1): the
+// host named a minimum length and the prefix up to that breakpoint is shorter, or the usage shows
+// that the provider read and wrote nothing although it billed input.
+func (c *calcState) uncacheable(body Body, bps []bp, p int) bool {
+	if !c.noUsage && c.usage.CacheRead+c.usage.CacheWrite+c.usage.CacheWrite1h == 0 && c.usage.Input > 0 {
+		return true
+	}
+	min := c.r.Facts.MinCacheable
+	if min <= 0 {
+		return false
+	}
+	best := -1
+	for _, b := range bps {
+		if b.at >= p && (best < 0 || b.at < best) {
+			best = b.at
+		}
+	}
+	return best >= 0 && c.ratio.of(body.cumBytes(best)) < min
 }
 
 // price prices each operation: the saved tokens in client space, the added tokens in forwarded
@@ -891,7 +913,7 @@ func (c *calcState) price(res *Result) {
 			for _, sp := range it.spans {
 				d := c.ratio.of(sp.before.Bytes) - c.ratio.of(sp.after.Bytes)
 				if d > 0 {
-					addTier(&p.Saved, mustFlat(c.client, sp.from), c.bstar, c.clientBPs, d)
+					c.addTier(&p.Saved, c.client, mustFlat(c.client, sp.from), c.bstar, c.clientBPs, d)
 				} else if d < 0 {
 					fp, _ := c.toFwd(k, sp.from)
 					if sp.before.Bytes == 0 && it.op.MessageSplice != nil {
@@ -903,7 +925,7 @@ func (c *calcState) price(res *Result) {
 						// and cached: the provider reads it, whatever B* says (§6.2)
 						p.Caused.CacheRead += -d
 					} else {
-						addTier(&p.Caused, at, c.bstarFwd, c.fwdBPs, -d)
+						c.addTier(&p.Caused, c.fwd, at, c.bstarFwd, c.fwdBPs, -d)
 					}
 				}
 			}
