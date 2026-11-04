@@ -707,7 +707,12 @@ func (c *calcState) addBreak(res *Result, from int, changeID string) {
 		e.To = &p
 		if n := c.ratio.of(c.fwd.cumBytes(c.bstarFwd) - c.fwd.cumBytes(from)); n > 0 {
 			e.Saved.CacheRead = n
-			addWrite(&e.Caused, ttlAtOrAfter(c.fwdBPs, c.bstarFwd), n) // "" counts as 5m
+			ttl, anyBP, ok := c.writeBP(c.fwd, c.fwdBPs, c.bstarFwd)
+			if c.noCacheTokens() || (anyBP && !ok) {
+				e.Caused.Input = n // nothing is cacheable: the moved tokens are input (§5.1)
+			} else {
+				addWrite(&e.Caused, ttl, n) // "" counts as 5m
+			}
 		}
 	}
 	c.addEffect(res, e)
@@ -838,15 +843,28 @@ func ttlName(d time.Duration) string {
 	return "5m"
 }
 
-// ttlAtOrAfter is the TTL of the first breakpoint at or after p; "" when there is none.
-func ttlAtOrAfter(bps []bp, p int) string {
-	best, ttl := -1, ""
-	for _, b := range bps {
-		if b.at >= p && (best < 0 || b.at < best) {
-			best, ttl = b.at, b.ttl
+// writeBP finds the breakpoint that writes the content at flat position p of body: the first breakpoint at
+// or after p whose prefix reaches the minimum cacheable length (§5.1, §6.2). Prefixes are cumulative, so a
+// later breakpoint can cache what an earlier, too short one cannot. ttl is that breakpoint's TTL; ok is
+// false when none qualifies. anyBP says whether any breakpoint is at or after p at all.
+func (c *calcState) writeBP(body Body, bps []bp, p int) (ttl string, anyBP, ok bool) {
+	best := -1
+	for _, x := range bps {
+		if x.at < p {
+			continue
+		}
+		anyBP = true
+		if (best < 0 || x.at < best) && (c.r.Facts.MinCacheable <= 0 || c.ratio.of(body.cumBytes(x.at)) >= c.r.Facts.MinCacheable) {
+			best, ttl = x.at, x.ttl
 		}
 	}
-	return ttl
+	return ttl, anyBP, best >= 0
+}
+
+// noCacheTokens says whether the usage shows a request that read and wrote nothing although it billed
+// input: the forwarded body was uncacheable (§5.1).
+func (c *calcState) noCacheTokens() bool {
+	return !c.noUsage && c.usage.CacheRead+c.usage.CacheWrite+c.usage.CacheWrite1h == 0 && c.usage.Input > 0
 }
 
 func addWrite(t *TierTokens, ttl string, n int) {
@@ -857,39 +875,21 @@ func addWrite(t *TierTokens, ttl string, n int) {
 	}
 }
 
-// addTier adds n tokens at flat position p by the tier rule (§6.2): read at or before B*, write up
-// to the last breakpoint at the TTL of the next one, input after it or with no breakpoint. A write
-// needs a cacheable prefix (§5.1): when the next breakpoint ends a prefix below the minimum cacheable
-// length, the provider writes nothing and the tokens are input.
-func (c *calcState) addTier(t *TierTokens, body Body, p, bstar int, bps []bp, n int) {
-	switch ttl := ttlAtOrAfter(bps, p); {
+// addTier adds n tokens at flat position p by the tier rule (§6.2): read at or before B*, write at the
+// TTL of the first breakpoint at or after p that reaches the minimum cacheable length (§5.1), input
+// otherwise. forwarded is true for tokens of the forwarded body: when the usage shows no cache tokens,
+// that body was uncacheable and its tokens are input. The client body is a counterfactual that the usage
+// does not describe, so only the minimum length decides its tier.
+func (c *calcState) addTier(t *TierTokens, body Body, forwarded bool, p, bstar int, bps []bp, n int) {
+	ttl, anyBP, ok := c.writeBP(body, bps, p)
+	switch {
 	case len(bps) > 0 && p <= bstar:
 		t.CacheRead += n
-	case ttl == "" || c.uncacheable(body, bps, p):
+	case !anyBP || !ok || (forwarded && c.noCacheTokens()):
 		t.Input += n
 	default:
 		addWrite(t, ttl, n)
 	}
-}
-
-// uncacheable says whether a write at the first breakpoint at or after p caches nothing (§5.1): the
-// host named a minimum length and the prefix up to that breakpoint is shorter, or the usage shows
-// that the provider read and wrote nothing although it billed input.
-func (c *calcState) uncacheable(body Body, bps []bp, p int) bool {
-	if !c.noUsage && c.usage.CacheRead+c.usage.CacheWrite+c.usage.CacheWrite1h == 0 && c.usage.Input > 0 {
-		return true
-	}
-	min := c.r.Facts.MinCacheable
-	if min <= 0 {
-		return false
-	}
-	best := -1
-	for _, b := range bps {
-		if b.at >= p && (best < 0 || b.at < best) {
-			best = b.at
-		}
-	}
-	return best >= 0 && c.ratio.of(body.cumBytes(best)) < min
 }
 
 // price prices each operation: the saved tokens in client space, the added tokens in forwarded
@@ -913,7 +913,7 @@ func (c *calcState) price(res *Result) {
 			for _, sp := range it.spans {
 				d := c.ratio.of(sp.before.Bytes) - c.ratio.of(sp.after.Bytes)
 				if d > 0 {
-					c.addTier(&p.Saved, c.client, mustFlat(c.client, sp.from), c.bstar, c.clientBPs, d)
+					c.addTier(&p.Saved, c.client, false, mustFlat(c.client, sp.from), c.bstar, c.clientBPs, d)
 				} else if d < 0 {
 					fp, _ := c.toFwd(k, sp.from)
 					if sp.before.Bytes == 0 && it.op.MessageSplice != nil {
@@ -925,7 +925,7 @@ func (c *calcState) price(res *Result) {
 						// and cached: the provider reads it, whatever B* says (§6.2)
 						p.Caused.CacheRead += -d
 					} else {
-						c.addTier(&p.Caused, c.fwd, at, c.bstarFwd, c.fwdBPs, -d)
+						c.addTier(&p.Caused, c.fwd, true, at, c.bstarFwd, c.fwdBPs, -d)
 					}
 				}
 			}

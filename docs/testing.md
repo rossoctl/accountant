@@ -105,7 +105,7 @@ drops the combinations that cannot occur, and states the reason for each drop in
 | Billing | `api`, `subscription`, `unknown` ([§7.1](design.md#71-billing-plans)) |
 | Model tier | below and above a long-context threshold (the host prices; the library returns the same tokens) |
 | Provider rounding | explicit breakpoints; implicit, rounded to 128 tokens ([§5.1](design.md#51-the-counterfactual-boundary-b)) |
-| Prefix length | at or above the model's minimum cacheable length; below it (B\* = 0) |
+| Prefix length | at or above the model's minimum cacheable length; below it (a write is input, §5.1 and §6.2) |
 
 **B. Hand-written cases.** These test how context operations interact, which a cross product cannot do:
 

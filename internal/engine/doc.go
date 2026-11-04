@@ -44,8 +44,8 @@
 //     a breakpoint of this request is at or after x (the provider reads only from a breakpoint). The
 //     candidates are the previous extent and the client breakpoints of this and the previous
 //     request. The row-4 prediction snaps the same way, with the forwarded breakpoints. The 128-token rounding of older OpenAI models is not modelled. The minimum cacheable
-//     length (EntryFacts.MinCacheable) turns a write below it into input, and so does a usage with no cache tokens
-//     and some input (§5.1).
+//     length (EntryFacts.MinCacheable) turns a write into input when no breakpoint at or after the content reaches it.
+//     A usage with no cache tokens and some input does the same for the forwarded body (§5.1, §6.2).
 //  8. A break moves the forwarded tokens after the read extent, up to B* as forwarded, from read to
 //     write, at the TTL of the first forwarded breakpoint at or after B* (5m when there is none).
 //     A setting break (§5.2 row 3) starts at the last candidate before the earliest
