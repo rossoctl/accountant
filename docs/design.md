@@ -71,8 +71,8 @@ and §6 the `R` numbers are written bare, to keep the comments short; they are t
 
 **Public and internal.** The listing shows the whole model. In the code, package `accountant` (`accountant.go`)
 re-exports only what a host needs to call it. `Tracker`, `ThreadState`, `ThreadKey`, `Fingerprint`,
-`PosHash` and `CacheState` are in `internal/engine` and are not part of the API. A host cannot save or
-load a `ThreadState` (Q13); making it public is a decision for when Q13 is settled.
+`PosHash` and `CacheState` are in `internal/engine` and are not part of the API. A host saves and loads
+the state of all threads with `Trackers.Snapshot` and `Trackers.Restore` (§6.1, Q13), not with `ThreadState`.
 
 ```go
 package accountant // github.com/rossoctl/accountant
@@ -278,7 +278,9 @@ and can be reported as unpriced ([R19](spec.md#r19)).
      of an image or document block whose source has `type: base64`, and the payload of a `data:...;base64,` URL
      (OpenAI form), in `PosHash.Media`. Text that only quotes "base64" is not media. `Media` above `Bytes` is capped. The ratio uses the text bytes only, over the billed tokens
      less the media tokens (if the bill is below the media price, check `media_tokens` fails). Media is priced at a fixed 1 token for 250 bytes. A host that builds a
-     `Body` itself sets `PosHash.Media`. A host marks media inside a `Size` with `Size.MediaBytes`.
+     `Body` itself sets `PosHash.Media`. A host marks media inside a `Size` with `Size.MediaBytes`. If a size does not mark it, the library takes the
+     media of the range from the client body (the size's bytes beyond the range's text), so an unmarked cut of an image
+     message is not priced at the text ratio.
    - **The host may pass tokens.** If a host knows the tokens of a range (a tokenizer, or a
      count_tokens call), it sets `Size.Tokens`. The library uses them as they are, and does not mark
      that size `Estimated`. `Tokens` 0 means not measured, and the bytes are converted.
@@ -836,6 +838,16 @@ type ThreadState struct {
 // Trackers holds one Tracker for each thread. It is safe for concurrent use.
 type Trackers struct{ /* map from thread.Key to *Tracker */ }
 
+// Snapshot returns the state of every thread as JSON. It holds no content (R2): no message text.
+// It holds hashes (as decimal strings), sizes, positions, and the IDs and names the state needs. It
+// does no I/O. The same state gives the same bytes. It returns an error when a time cannot be encoded.
+func (ts *Trackers) Snapshot() ([]byte, error)
+// Restore replaces the state of every thread with a Snapshot. On an error it changes nothing. An
+// EndRequest in flight during Restore can be lost.
+func (ts *Trackers) Restore(data []byte) error
+// Trimmed is the count of threads the trim has dropped since the set was made (a metric for the host).
+func (ts *Trackers) Trimmed() uint64
+
 // RequestMeta is what the host knows about the request before the pass: the fields of RequestOps
 // that are not operations.
 type RequestMeta struct {
@@ -1071,7 +1083,7 @@ type Unpriced struct {
 
 type CheckFailure struct {
     Check    string // "sum" | "order" | "unique_change" | "spans" | "attribution" |
-                    // "conservation" | "shared_warm" (§6.5)
+                    // "conservation" | "shared_warm" | "media_tokens" | "size_tokens" (§6.5)
     Operator string // "" when the check is not about one operator
     Detail   string // numbers only, no content
 }
@@ -1166,10 +1178,16 @@ check, the operator, the detail, and the request, session and thread IDs). `Prev
 4. **Spans:** for a context operation with `Spans`, its `SizeBefore` and `SizeAfter` equal the sums over its spans.
 5. **Attribution:** a `break` effect's `ChangeID` is the `ChangeID` of a context operation of the same request, or empty. A `rescue`, `ttlPremium` and `ttlRescue` are exempt: their `ChangeID` is a keep-alive window or a head entry, which names no operation of this request.
 6. **Conservation:** the request total of the applied context operations and the cache effects equals the bill difference (§6.3).
-   `DryRun` context operations are left out, because their content went upstream unchanged.
+   Each size is compared at the request ratio, so a correct `Size.Tokens` passes (the gap between the host's tokens
+   and the ratio's figure for the same bytes is taken out of the total). `DryRun` context operations are left out,
+   because their content went upstream unchanged.
 7. **Shared warm:** `EntryFacts.SharedWarm`, when set, is a position in the forwarded body. If it is not, the check fails
    with the section and index, and the keep-alive rescue of that request is not credited ([R54](spec.md#r54)).
    A doubtful figure may only lower a saving.
+8. **Media tokens (`media_tokens`):** the fixed price of the forwarded body's media (1 token per 250 bytes) is not above the
+   billed prompt tokens. If it is, the text ratio is 0 and every text size prices at 0 tokens.
+9. **Size tokens (`size_tokens`):** a `Size.Tokens` is between 0.05 tokens for each text byte and 2.0 tokens for each byte
+   of its range. If it is not, the host's count is a bug: the library ignores it, converts the bytes, and reports the check.
 
 ## 7. Billing plans
 
@@ -1263,8 +1281,8 @@ Where a question has test cases, a host that compares them with its own code mar
 - <a id="q11"></a>**Q11. What the Tracker's state holds.** `ThreadState` has three parts (§6.1): the active context
     operations, the previous fingerprint (`PrevPrint`), and the cache state. The active context
     operations are decided. The other two are in `ThreadState` in this design, and not in what the host
-    passes in, so a restart loses them. Whether `ThreadState` is kept in memory or persisted is not
-    decided (question 13). Whether the cache state belongs in `ThreadState` at all, or is only derived
+    passes in. A restart keeps all three if the host saves and loads them with `Trackers.Snapshot` and
+    `Restore` (question 13, §6.1). Without a snapshot a restart loses them. Whether the cache state belongs in `ThreadState` at all, or is only derived
     from `PrevPrint` and the gap, is not decided.
 
 - <a id="q12"></a>**Q12. How a context operation ends (decided, kept here for the record).** Decided: `Compute` infers the end from the bodies and the splice.
@@ -1297,7 +1315,10 @@ Where a question has test cases, a host that compares them with its own code mar
     proposal of question 12 (the operator names its active `ChangeID`s on each request) detects the
     loss, and the operator can then report the full operations once more. Not decided.
     Partly handled: the Trackers drop the oldest threads on their own above 10,000 (§6.1, Memory), so a loss
-    now also happens there. Persistence and recovery are still not decided.
+    now also happens there. Partly decided: the host saves the state with `Trackers.Snapshot` and loads it
+    with `Restore` (§6.1), so a restart keeps the active changes. The library does no I/O: the host
+    chooses where the bytes go. `Trimmed` counts the threads the trim dropped. A trimmed thread is not
+    recovered. How the state recovers after a crash with no snapshot is still not decided.
 
 - <a id="q14"></a>**Q14. Two requests of one thread in flight.** A retry and parallel calls of one agent can overlap.
     Each opens its own request record, copies the thread's `ThreadState` in `EndRequest`, and each

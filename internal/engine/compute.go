@@ -230,25 +230,64 @@ func apply(p Position, s *MessageSplice, into bool) (Position, bool) {
 	return p, into
 }
 
-// sizeTokens converts one reported size to tokens. A size the host counted (Tokens > 0) is exact.
-// Any other size is converted from its bytes with the request ratio, and so is an estimate. A size
-// of zero bytes is exactly zero tokens (§4.2 rule 7).
-func (c *calcState) sizeTokens(s Size) (tokens int, exact bool) {
-	if s.Tokens > 0 {
-		return s.Tokens, true
+// maxTokensPerByte and minTokensPerTextByte bound a host's Size.Tokens against the bytes it covers.
+// A count outside them is a host bug (500000 tokens for 10,000 bytes): the library ignores it, uses
+// the bytes, and reports the check "size_tokens".
+const (
+	maxTokensPerByte     = 2.0
+	minTokensPerTextByte = 0.05
+)
+
+// plausible says whether host tokens fit the bytes of the range. media is the range's media bytes.
+func plausible(s Size, media int) bool {
+	text := s.Bytes - media
+	if float64(s.Tokens) > maxTokensPerByte*float64(s.Bytes) {
+		return false
 	}
-	return c.ratio.tokensOf(s.Bytes, s.MediaBytes), s.Bytes == 0
+	return text <= 0 || float64(s.Tokens) >= minTokensPerTextByte*float64(text)
+}
+
+// rangeMedia is the media bytes a size covers. The host's MediaBytes wins. When it is 0 on a
+// "before" size, the media comes from the client body: the bytes of the range beyond its text. Without
+// this an unmarked cut of an image message would price its base64 at the text ratio.
+func (c *calcState) rangeMedia(s Size, sp span, isBefore bool) int {
+	if s.MediaBytes > 0 || !isBefore || s.Bytes == 0 {
+		return s.MediaBytes
+	}
+	f, ok1 := c.client.flat(sp.from)
+	t, ok2 := c.client.flat(sp.to)
+	if !ok1 || !ok2 || t < f {
+		return 0
+	}
+	media := c.client.cumMedia(t) - c.client.cumMedia(f-1)
+	text := c.client.cumBytes(t) - c.client.cumBytes(f-1) - media
+	return min(max(s.Bytes-text, 0), media)
+}
+
+// sizeTokens converts one reported size to tokens. A plausible size the host counted (Tokens > 0) is
+// exact. Any other size is converted from its bytes with the request ratio, and so is an estimate. A
+// size of zero bytes is exactly zero tokens (§4.2 rule 7). bad is true when the host's tokens were
+// ignored as implausible.
+func (c *calcState) sizeTokens(s Size, media int) (tokens int, exact, bad bool) {
+	if s.Tokens > 0 {
+		if plausible(s, media) {
+			return s.Tokens, true, false
+		}
+		bad = true
+	}
+	return c.ratio.tokensOf(s.Bytes, media), s.Bytes == 0, bad
 }
 
 // calcState is the working state of one calculation.
 type calcState struct {
-	r       *Request
-	s       ThreadState
-	items   []*item
-	usage   Usage
-	noUsage bool
-	ratio   ratio
-	hostGap int // saved tokens that come from Size.Tokens beyond the ratio's figure (check 6)
+	r        *Request
+	s        ThreadState
+	items    []*item
+	splicers []int // indexes of the items with a MessageSplice; no other item moves a position
+	usage    Usage
+	noUsage  bool
+	ratio    ratio
+	hostGap  int // saved tokens that come from Size.Tokens beyond the ratio's figure (check 6)
 
 	client, fwd       Body
 	clientBPs, fwdBPs []bp
@@ -275,6 +314,11 @@ func (r *Request) newCalc(s ThreadState, items []*item, usage Usage) *calcState 
 	c := &calcState{r: r, s: s, items: items, usage: usage, client: r.Client, fwd: r.Forwarded,
 		prevExt: -1, bstar: -1, bstarFwd: -1, readEnd: -1, cachedFwd: -1, prevExtCli: -1}
 	c.noUsage = usage == (Usage{})
+	for j, it := range items {
+		if it.op.MessageSplice != nil {
+			c.splicers = append(c.splicers, j)
+		}
+	}
 	c.ratio = newRatio(usage.Input+usage.CacheRead+usage.CacheWrite, r.Forwarded)
 	c.clientBPs = c.client.breakpoints(r.ClientBreakpoints)
 	c.fwdBPs = c.fwd.breakpoints(r.Breakpoints)
@@ -361,7 +405,8 @@ func (c *calcState) insertionPoint(p Position) int {
 // toFwdSkipping is toFwd without item k's own splice. Content that k inserted is already at its
 // forwarded position: applying the insertion to it would shift it past itself.
 func (c *calcState) toFwdSkipping(k int, p Position) (Position, bool) {
-	for j, it := range c.items {
+	for _, j := range c.splicers {
+		it := c.items[j]
 		if j == k || it.ended || it.bad != "" || it.op.DryRun {
 			continue
 		}
@@ -378,7 +423,8 @@ func (c *calcState) toFwdSkipping(k int, p Position) (Position, bool) {
 // the position ended k, unless the splice did not see the original content (sawOriginal): then k
 // ran before it, and its change is inside what the splice replaced.
 func (c *calcState) toFwd(k int, p Position) (Position, bool) {
-	for j, it := range c.items {
+	for _, j := range c.splicers {
+		it := c.items[j]
 		if it.ended || it.bad != "" || it.op.DryRun {
 			continue
 		}
@@ -892,8 +938,14 @@ func (c *calcState) price(res *Result) {
 			res.Unpriced = append(res.Unpriced, Unpriced{OpID: it.id, Reason: ReasonPingResultUnknown})
 		case it.op.Kind == KindRewrite:
 			for _, sp := range it.spans {
-				bt, bx := c.sizeTokens(sp.before)
-				at, ax := c.sizeTokens(sp.after)
+				bm, am := c.rangeMedia(sp.before, sp, true), c.rangeMedia(sp.after, sp, false)
+				bt, bx, bbad := c.sizeTokens(sp.before, bm)
+				at, ax, abad := c.sizeTokens(sp.after, am)
+				if bbad || abad {
+					res.Checks = append(res.Checks, CheckFailure{Check: "size_tokens", Operator: it.op.Operator,
+						Detail: fmt.Sprintf("tokens=%d/%d bytes=%d/%d: outside %g..%g tokens a byte, bytes used",
+							sp.before.Tokens, sp.after.Tokens, sp.before.Bytes, sp.after.Bytes, minTokensPerTextByte, maxTokensPerByte)})
+				}
 				if !bx || !ax {
 					estimated = true
 				}
@@ -901,7 +953,7 @@ func (c *calcState) price(res *Result) {
 				if !it.op.DryRun {
 					// what the host's tokens add to the saving beyond the ratio's figure: the
 					// conservation check compares at the ratio (check 6)
-					c.hostGap += d - (c.ratio.tokensOf(sp.before.Bytes, sp.before.MediaBytes) - c.ratio.tokensOf(sp.after.Bytes, sp.after.MediaBytes))
+					c.hostGap += d - (c.ratio.tokensOf(sp.before.Bytes, bm) - c.ratio.tokensOf(sp.after.Bytes, am))
 				}
 				if d > 0 {
 					addTier(&p.Saved, mustFlat(c.client, sp.from), c.bstar, c.clientBPs, d)

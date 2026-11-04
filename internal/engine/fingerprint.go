@@ -28,6 +28,10 @@ type Fingerprint struct {
 type Body struct {
 	Start [3]int    `json:"start"`
 	Pos   []PosHash `json:"pos"`
+
+	// cum[i+1] is the bytes of positions 0..i. NewBody builds it. A Body made another way (decoded
+	// from JSON) has none, and cumBytes sums instead. Not part of the API.
+	cum []int
 }
 
 // PosHash holds hashes and sizes only (R2).
@@ -60,6 +64,10 @@ func NewBody(tools, system, messages [][]byte) Body {
 			b.Pos = append(b.Pos, PosHash{Hash: h, Bytes: int32(len(p)), Media: int32(mediaBytes(p))})
 		}
 	}
+	b.cum = make([]int, len(b.Pos)+1)
+	for i, p := range b.Pos {
+		b.cum[i+1] = b.cum[i] + int(p.Bytes)
+	}
 	return b
 }
 
@@ -67,7 +75,7 @@ func NewBody(tools, system, messages [][]byte) Body {
 // forms count:
 //   - an image or document block whose "source" has "type":"base64": the length of the source's
 //     "data" string (Anthropic form);
-//   - a "url" or "image_url" string that starts with "data:" and holds ";base64,": the bytes after
+//   - a "url", "image_url" or "file_data" string that starts with "data:" and holds ";base64,": the bytes after
 //     the comma (OpenAI data-URL form).
 //
 // Text that only quotes "base64" or "data" is not media. A position that is not valid JSON counts
@@ -91,9 +99,10 @@ type valueInfo struct {
 
 const dataURLMarker = ";base64,"
 
-// dataURLPayload returns the payload length of a base64 data URL, or 0.
+// dataURLPayload returns the payload length of a base64 image or PDF data URL, or 0. Another MIME
+// type (data:text/html;base64,...) is text.
 func dataURLPayload(s string) int {
-	if !strings.HasPrefix(s, "data:") {
+	if !strings.HasPrefix(s, "data:image/") && !strings.HasPrefix(s, "data:application/pdf") {
 		return 0
 	}
 	i := strings.Index(s, dataURLMarker)
@@ -129,7 +138,7 @@ func walkValue(dec *json.Decoder, n *int) (valueInfo, bool) {
 }
 
 // walkObject reads the members of an object whose "{" is read. It counts the payload of an image
-// or document block's base64 source, and of a data URL under "url" or "image_url". It returns the
+// or document block's base64 source, and of a data URL under "url", "image_url" or "file_data". It returns the
 // payload length when the object itself is a base64 source, so its parent block can count it.
 func walkObject(dec *json.Decoder, n *int) (valueInfo, bool) {
 	var typ string
@@ -152,7 +161,7 @@ func walkObject(dec *json.Decoder, n *int) (valueInfo, bool) {
 			data = child
 		case "source":
 			srcLen = child.base64
-		case "url", "image_url":
+		case "url", "image_url", "file_data":
 			*n += dataURLPayload(child.str)
 		}
 	}

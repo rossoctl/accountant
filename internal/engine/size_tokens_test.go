@@ -51,6 +51,8 @@ func TestMediaFormats(t *testing.T) {
 		{"source keys in other order", `{"source":{"data":"AAA","type":"base64"},"type":"image"}`, 3},
 		{"block in a list", `[{"type":"text","text":"x"},{"type":"image","source":{"type":"base64","data":"AA"}}]`, 2},
 		{"openai data url", `{"type":"image_url","image_url":{"url":"data:image/png;base64,AAAAA"}}`, 5},
+		{"openai input_file", `{"type":"input_file","file_data":"data:application/pdf;base64,AAAAAA"}`, 6},
+		{"html data url is text", `{"type":"tool_result","url":"data:text/html;base64,AAAAAAAA"}`, 0},
 		{"plain url", `{"type":"image_url","image_url":{"url":"https://x/y.png"}}`, 0},
 		{"tool result that quotes base64 and data", `{"encoding":"base64","data":"AAAAAAAAAA"}`, 0},
 		{"schema enum", `{"enum":["base64","hex"],"properties":{"data":{"type":"string"}}}`, 0},
@@ -91,7 +93,8 @@ func TestHostTokensAreUsedAsTheyAre(t *testing.T) {
 	fwd := [][]byte{nil, text("p", 40000)}
 	op := Operation{ID: "o1", Kind: KindRewrite, Operator: "mask", ChangeID: "mk", At: msg(0),
 		SizeBefore: Size{Bytes: 10000, Tokens: 5000}}
-	_, p := priceOne(t, client, fwd, op, Usage{Input: 14000})
+	res, p := priceOne(t, client, fwd, op, Usage{Input: 14000})
+	noChecks(t, res)
 	if got := tierSum(p.Saved); got != 5000 {
 		t.Fatalf("saved = %d, want the host's 5000", got)
 	}
@@ -133,7 +136,7 @@ func TestMediaBytesOnASizeUseTheFixedMediaPrice(t *testing.T) {
 	if got := tierSum(p.Saved); got < want-2 || got > want+2 {
 		t.Fatalf("saved = %d, want about %d", got, want)
 	}
-	_ = res
+	noChecks(t, res)
 }
 
 func TestSizeWithMoreMediaThanBytesIsRefused(t *testing.T) {
@@ -166,4 +169,57 @@ func TestBilledBelowMediaPriceIsAFailedCheck(t *testing.T) {
 		}
 	}
 	t.Fatalf("Checks = %+v, want media_tokens", res.Checks)
+}
+
+// An unmarked cut of an image message: the body holds the media, so the cut is priced at the media
+// price. Before the fix the whole range was priced at the text ratio (100,016 tokens).
+func TestUnmarkedCutOfAnImageMessageUsesTheBodysMedia(t *testing.T) {
+	img := imageBlock(400000)
+	client := [][]byte{img, text("t", 4000)}
+	fwd := [][]byte{nil, text("t", 4000)}
+	op := Operation{ID: "o1", Kind: KindRewrite, Operator: "mask", ChangeID: "mk", At: msg(0),
+		SizeBefore: Size{Bytes: len(img)}}
+	res, p := priceOne(t, client, fwd, op, Usage{Input: 1000})
+	want := 1600 + wrapper/4
+	if got := tierSum(p.Saved); got < want-2 || got > want+2 {
+		t.Fatalf("saved = %d, want about %d", got, want)
+	}
+	noChecks(t, res)
+}
+
+// A host count far outside the bytes is a host bug: it is not used, and a check names it.
+func TestImplausibleHostTokensFailACheckAndUseBytes(t *testing.T) {
+	client := [][]byte{text("j", 10000), text("p", 40000)}
+	fwd := [][]byte{nil, text("p", 40000)}
+	op := Operation{ID: "o1", Kind: KindRewrite, Operator: "mask", ChangeID: "mk", At: msg(0),
+		SizeBefore: Size{Bytes: 10000, Tokens: 500000}}
+	res, p := priceOne(t, client, fwd, op, Usage{Input: 12500})
+	found := false
+	for _, c := range res.Checks {
+		found = found || c.Check == "size_tokens"
+	}
+	if !found {
+		t.Fatalf("Checks = %+v, want size_tokens", res.Checks)
+	}
+	if got := tierSum(p.Saved); got != 3125 || !p.Estimated {
+		t.Fatalf("saved = %d estimated = %v, want 3125 from the bytes, estimated", got, p.Estimated)
+	}
+}
+
+func TestNegativeHostMediaIsClamped(t *testing.T) {
+	b := Body{Pos: []PosHash{{Hash: 1, Bytes: 100, Media: -5000}}}
+	if got := b.cumMedia(0); got != 0 {
+		t.Fatalf("cumMedia = %d, want 0", got)
+	}
+}
+
+func TestPersistKeepsMedia(t *testing.T) {
+	in := NewBody(nil, nil, [][]byte{imageBlock(1000), []byte("x")})
+	out, err := fromWireBody(toWireBody(in))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Pos[0].Media != 1000 || out.Pos[1].Media != 0 {
+		t.Fatalf("Media after a round trip = %d, %d, want 1000, 0", out.Pos[0].Media, out.Pos[1].Media)
+	}
 }

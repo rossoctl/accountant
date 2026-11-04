@@ -45,6 +45,9 @@ func (b Body) position(i int) Position {
 
 // cumBytes returns the bytes of positions 0..i; 0 for i < 0.
 func (b Body) cumBytes(i int) int {
+	if len(b.cum) == len(b.Pos)+1 { // built by NewBody
+		return b.cum[min(max(i+1, 0), len(b.Pos))]
+	}
 	n := 0
 	for j := 0; j <= i && j < len(b.Pos); j++ {
 		n += int(b.Pos[j].Bytes)
@@ -113,7 +116,7 @@ const mediaBytesPerToken = 250
 func (b Body) cumMedia(i int) int {
 	n := 0
 	for j := 0; j <= i && j < len(b.Pos); j++ {
-		n += int(min(b.Pos[j].Media, b.Pos[j].Bytes)) // a host-built Media above Bytes is capped
+		n += int(max(min(b.Pos[j].Media, b.Pos[j].Bytes), 0)) // a host-built Media outside 0..Bytes is clamped
 	}
 	return n
 }

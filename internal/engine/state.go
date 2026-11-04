@@ -60,6 +60,8 @@ const maxThreads = 10000
 type Trackers struct {
 	mu sync.Mutex
 	m  map[string]*Tracker
+	// trimmed counts the threads trim has dropped (Trimmed).
+	trimmed uint64
 }
 
 // NewTrackers returns an empty set: every thread starts with no history.
@@ -111,6 +113,7 @@ func (ts *Trackers) trim() {
 	})
 	for _, a := range all[:len(ts.m)-(maxThreads-maxThreads/10)] {
 		delete(ts.m, a.key)
+		ts.trimmed++
 	}
 }
 

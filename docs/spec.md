@@ -408,7 +408,7 @@ numbers are not used: those requirements were dropped.
 - Pricing of `setting`: the saving or cost of a model or param change (R50). The cache break it
   causes is priced; the change in output tokens is shown as an observation, not as a saving.
 - A measured saving of a param change. It needs a control that keeps the old setting.
-- Persisting fingerprints across a restart.
+- Writing the state to disk. The host saves and loads it with `Trackers.Snapshot` and `Restore`; the library does no I/O.
 - A change that no context operator in the pipeline made, such as the client's own compaction. It is not
   recorded as a context operation. A client edit that breaks the cache appears as a `break` cache effect
   with no `ChangeID` ([§5.2](design.md#52-classifying-a-break)).
