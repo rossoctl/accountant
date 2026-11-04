@@ -13,6 +13,10 @@ type Result struct {
 	Boundary     *Position  // the B* used; nil when unknown
 	Recomputed   bool       // another request replaced the ThreadState first (R53, §6.1)
 	Phase        CachePhase // the cache phase it used (§5.2); for the host's own checks, never an input
+	// InteractionCaused is the other side of Interaction, as Caused is for Saved. Interaction is the
+	// tokens the client body would have billed cold (write). InteractionCaused is what the ops
+	// already book for them (read). The host prices Interaction minus InteractionCaused.
+	InteractionCaused TierTokens
 }
 
 // Unpriced names an operation the library did not price and why.

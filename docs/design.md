@@ -1078,9 +1078,21 @@ the safe direction.
 above). Without the ping they would have been priced cold, which is worth more. The difference is
 neither the ping's nor the content changes' alone. The library reports it as
 `Result.Interaction`, attributed to nobody, so the request total still equals the bill without
-the context operations minus the bill with them. **Not implemented in v0:** `Interaction` is always
-zero. The content changes of a rescued request are priced in the hot state, and the difference is
-not reported. Conservation (check 6) counts tokens across tiers, so it does not see the difference.
+the context operations minus the bill with them.
+
+**What v0 reports.** `Interaction` is the tokens of a saved span that the client body would have
+written cold. `Result.InteractionCaused` is the same tokens at the read tier, as the operation
+books them. The host prices `Interaction` minus `InteractionCaused`: for 1,201 tokens on Sonnet,
+1,201 × (3.75 − 0.30)/Mtok = $0.00414. Both are zero unless all of these hold:
+
+- the request has a `rescue` effect, and no `SharedWarm` (R54);
+- the span is a non-`DryRun` `rewrite` that saved tokens;
+- the span is at or before the ping's extent, and the operation books it at the read tier.
+
+**The limit.** Any other case adds zero: a span after the ping's extent, a span after B\*, and a
+rescue that is a TTL leg. A doubtful figure may only lower a saving (R45), so the library does not
+guess. The figure is then too low, the safe direction. Conservation (check 6) counts tokens across
+tiers, so it does not see the difference ([spec Q1](spec.md#q1)).
 
 ### 6.3 Output
 
@@ -1091,6 +1103,7 @@ type Result struct {
                                // then the active ones applied again
     CacheEffects []CacheEffect // the breaks, rescues and breakpoint changes the library found (§4.4)
     Interaction TierTokens     // §6.2: on a rescued request; attributed to nobody
+    InteractionCaused TierTokens // §6.2: the same tokens at the tier the operations book them
     Unpriced []Unpriced     // with a machine-stable reason
     Checks   []CheckFailure // §6.5
     Boundary *Position      // the B* used; nil when unknown

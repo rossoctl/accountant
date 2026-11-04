@@ -1097,6 +1097,9 @@ func (c *calcState) price(res *Result) {
 				}
 				if d > 0 {
 					c.addTier(&p.Saved, c.client, false, mustFlat(c.client, sp.from), c.bstar, c.clientBPs, d)
+					if !it.op.DryRun {
+						c.interaction(res, sp.from, d)
+					}
 				} else if d < 0 {
 					fp, _ := c.toFwd(k, sp.from)
 					if sp.before.Bytes == 0 && it.op.MessageSplice != nil {
@@ -1121,6 +1124,33 @@ func (c *calcState) price(res *Result) {
 		}
 	}
 	res.Ops = append(reported, active...)
+}
+
+// interaction adds the tokens of a saved span that the rescue turned from write into read (§6.2).
+// Without the ping the span would have been written cold; with it the span is saved at the read
+// tier. The difference is neither the ping's nor the operator's, so it is attributed to nobody.
+// Only the exact case is counted, and anything doubtful is left out (R45): the request is rescued,
+// no sibling kept the entry warm, the span is at or before the ping's extent, and the span is
+// priced at the read tier.
+func (c *calcState) interaction(res *Result, from Position, d int) {
+	if !c.pingHot || c.r.Facts.SharedWarm != nil || c.pingRead() == nil || c.usage.CacheRead <= 0 {
+		return
+	}
+	rescued := false
+	for _, e := range res.CacheEffects {
+		rescued = rescued || e.Kind == EffectRescue
+	}
+	flat := mustFlat(c.client, from)
+	if !rescued || flat > mustFlat(c.client, c.fwdToClient(*c.pingRead())) {
+		return
+	}
+	var t TierTokens
+	c.addTier(&t, c.client, false, flat, c.bstar, c.clientBPs, d)
+	if t.CacheRead != d {
+		return
+	}
+	addWrite(&res.Interaction, ttlName(c.r.Facts.TTL), d)
+	res.InteractionCaused.CacheRead += d
 }
 
 // conservation is check 6 (§6.5), in tokens: the tokens the client body would have billed, less the

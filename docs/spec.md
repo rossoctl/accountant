@@ -463,7 +463,8 @@ Where a question has test cases, a host that compares them with its own code mar
 - <a id="q1"></a>**Q1. The interaction on a rescued request ([§6.2](design.md#62-tier-rule)).** It is attributed to nobody. An alternative is
    to give it to the keep-alive window, because the window caused the state. That would make the
    keep-alive figure larger on every request with large reductions. A decision is needed before the
-   test cases are frozen.
+   test cases are frozen. v0 reports the interaction only for a saved span at or before the ping's
+   extent, booked at the read tier ([design §6.2](design.md#62-tier-rule)). Other cases add zero, the safe direction (R45).
 
 - <a id="q2"></a>**Q2. Usage-limit weights.** The provider publishes no weights for each tier, so the defaults ([§7.1](design.md#71-billing-plans))
    are the API rate ratios, an estimate. It is not verified whether a subscription response carries
