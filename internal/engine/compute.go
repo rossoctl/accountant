@@ -1059,7 +1059,7 @@ func (c *calcState) interaction(res *Result, from Position, d int) {
 		return
 	}
 	var t TierTokens
-	addTier(&t, flat, c.bstar, c.clientBPs, d)
+	c.addTier(&t, c.client, false, flat, c.bstar, c.clientBPs, d)
 	if t.CacheRead != d {
 		return
 	}
