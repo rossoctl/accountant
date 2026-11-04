@@ -178,9 +178,11 @@ type SettingChange struct {
     At *Position
 }
 
-// Size is bytes only. A context operator does not count tokens: the library converts bytes to tokens (§4.2 rule 7).
+// Size is the bytes of a range, and optionally its tokens (§4.2 rule 7).
 type Size struct {
-    Bytes int // required on rewrite; the sum check compares it with the Body sizes (§6.5)
+    Bytes      int // required on rewrite; the sum check compares it with the Body sizes (§6.5)
+    Tokens     int // the host's count; 0 = not measured, so the library converts Bytes and marks it Estimated
+    MediaBytes int // the base64 part of Bytes; priced at a fixed 250 bytes a token, apart from the text ratio
 }
 
 type MessageSplice struct{ At, Removed, Inserted int } // messages only
@@ -272,9 +274,10 @@ and can be reported as unpriced ([R19](spec.md#r19)).
    marks every priced result that uses this conversion as `Estimated`. No operator names a tokenizer,
    so two operators give the same tokens for the same bytes.
    Two exceptions keep the ratio true (accountant#11):
-   - **Base64 media stays out of the ratio.** `NewBody` counts the base64 payload of image and
-     document blocks in `PosHash.Media`. The ratio uses the text bytes only, over the billed tokens
-     less the media tokens. Media is priced at a fixed 1 token for 250 bytes. A host that builds a
+   - **Base64 media stays out of the ratio.** `NewBody` parses each position and counts the `data`
+     of an image or document block whose source has `type: base64`, and the payload of a `data:...;base64,` URL
+     (OpenAI form), in `PosHash.Media`. Text that only quotes "base64" is not media. `Media` above `Bytes` is capped. The ratio uses the text bytes only, over the billed tokens
+     less the media tokens (if the bill is below the media price, check `media_tokens` fails). Media is priced at a fixed 1 token for 250 bytes. A host that builds a
      `Body` itself sets `PosHash.Media`. A host marks media inside a `Size` with `Size.MediaBytes`.
    - **The host may pass tokens.** If a host knows the tokens of a range (a tokenizer, or a
      count_tokens call), it sets `Size.Tokens`. The library uses them as they are, and does not mark
@@ -674,6 +677,7 @@ type Body struct {
 type PosHash struct {
     Hash  uint64 // cumulative: equal hashes mean an equal prefix up to this position
     Bytes int32
+    Media int32 // the base64 image/document part of Bytes (Anthropic source blocks and data URLs); not in the hash
 }
 ```
 
@@ -688,7 +692,7 @@ The fingerprint itself is built inside `Compute`. `Cached` comes from the usage,
 after the response, so no earlier call can build it. `Compute` keeps the result in
 `ThreadState.PrevPrint` for the next request.
 
-`PosHash` is 16 bytes in memory (8 for the hash, 4 for the size, 4 of padding). It holds hashes and sizes only ([R2](spec.md#r2)).
+`PosHash` is 16 bytes in memory (8 for the hash, 4 for the size, 4 for the media size). It holds hashes and sizes only ([R2](spec.md#r2)).
 
 ### 5.2 Classifying a break
 
@@ -796,7 +800,7 @@ Both hosts send bytes for each forwarded position (`Body`) and for each operatio
 library converts both with the request's own ratio (billed prompt tokens ÷ body bytes), as
 `pricing.EstimateTokensFromBytes` does today. Results that use the ratio are marked `Estimated`.
 A host may also send a token count in `Size.Tokens` (§4.2 rule 7). The same tokens in both hosts
-holds whenever the two hosts receive the same bodies and the same operations.
+holds whenever the two hosts receive the same bodies, the same operations and send the same token counts.
 
 ## 6. The library
 

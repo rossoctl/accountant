@@ -113,7 +113,7 @@ const mediaBytesPerToken = 250
 func (b Body) cumMedia(i int) int {
 	n := 0
 	for j := 0; j <= i && j < len(b.Pos); j++ {
-		n += int(b.Pos[j].Media)
+		n += int(min(b.Pos[j].Media, b.Pos[j].Bytes)) // a host-built Media above Bytes is capped
 	}
 	return n
 }
@@ -123,6 +123,7 @@ func (b Body) cumMedia(i int) int {
 type ratio struct{ tokens, bytes int }
 
 // newRatio builds the ratio of a body that the provider billed for billed prompt tokens.
+// The tokens clamp to 0 when the bill is below the media's fixed price; checks() reports that.
 func newRatio(billed int, b Body) ratio {
 	last := len(b.Pos) - 1
 	media := b.cumMedia(last)

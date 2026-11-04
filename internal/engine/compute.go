@@ -248,6 +248,7 @@ type calcState struct {
 	usage   Usage
 	noUsage bool
 	ratio   ratio
+	hostGap int // saved tokens that come from Size.Tokens beyond the ratio's figure (check 6)
 
 	client, fwd       Body
 	clientBPs, fwdBPs []bp
@@ -897,6 +898,11 @@ func (c *calcState) price(res *Result) {
 					estimated = true
 				}
 				d := bt - at
+				if !it.op.DryRun {
+					// what the host's tokens add to the saving beyond the ratio's figure: the
+					// conservation check compares at the ratio (check 6)
+					c.hostGap += d - (c.ratio.tokensOf(sp.before.Bytes, sp.before.MediaBytes) - c.ratio.tokensOf(sp.after.Bytes, sp.after.MediaBytes))
+				}
 				if d > 0 {
 					addTier(&p.Saved, mustFlat(c.client, sp.from), c.bstar, c.clientBPs, d)
 				} else if d < 0 {
@@ -943,6 +949,7 @@ func (c *calcState) conservation(res *Result) {
 	}
 	billed := c.usage.Input + c.usage.CacheRead + c.usage.CacheWrite
 	want := c.ratio.upTo(c.client, len(c.client.Pos)-1) - billed
+	net -= c.hostGap // the ratio's figure: host tokens are exact and the bodies are not
 	if d := want - net; d > tol+1 || d < -(tol+1) {
 		res.Checks = append(res.Checks, CheckFailure{Check: "conservation",
 			Detail: fmt.Sprintf("bill difference=%d ops=%d tokens", want, net)})
@@ -955,6 +962,10 @@ func tierSum(t TierTokens) int { return t.Input + t.CacheWrite5m + t.CacheWrite1
 // are not run here (conservation is, in calc): attribution holds by construction, because the library
 // only gives a break the ChangeID of one of the request's operations.
 func (c *calcState) checks(res *Result) {
+	if media := c.fwd.cumMedia(len(c.fwd.Pos)-1) / mediaBytesPerToken; !c.noUsage && media > c.usage.Input+c.usage.CacheRead+c.usage.CacheWrite {
+		res.Checks = append(res.Checks, CheckFailure{Check: "media_tokens",
+			Detail: fmt.Sprintf("media=%d tokens billed=%d: the text ratio is 0", media, c.usage.Input+c.usage.CacheRead+c.usage.CacheWrite)})
+	}
 	var got [3]int
 	seen := map[string]bool{}
 	for _, it := range c.items {

@@ -2,6 +2,8 @@ package engine
 
 import (
 	"bytes"
+	"encoding/json"
+	"strings"
 	"time"
 )
 
@@ -61,36 +63,107 @@ func NewBody(tools, system, messages [][]byte) Body {
 	return b
 }
 
-// mediaBytes counts the base64 payload of the media blocks in one position: the value of each
-// "data" string that follows a "base64" source type, as in {"type":"base64","media_type":"image/png",
-// "data":"..."}. It does not parse JSON, and the payload is never kept (R2).
+// mediaBytes counts the base64 media payload in one position (R2: it keeps only the count). Two
+// forms count:
+//   - an image or document block whose "source" has "type":"base64": the length of the source's
+//     "data" string (Anthropic form);
+//   - a "url" or "image_url" string that starts with "data:" and holds ";base64,": the bytes after
+//     the comma (OpenAI data-URL form).
+//
+// Text that only quotes "base64" or "data" is not media. A position that is not valid JSON counts
+// what was read before the error.
 func mediaBytes(p []byte) int {
-	const marker = `"base64"`
+	dec := json.NewDecoder(bytes.NewReader(p))
 	n := 0
-	for rest := p; ; {
-		i := bytes.Index(rest, []byte(marker))
-		if i < 0 {
+	for {
+		if _, ok := walkValue(dec, &n); !ok {
 			return n
 		}
-		rest = rest[i+len(marker):]
-		j := bytes.Index(rest, []byte(`"data"`))
-		if j < 0 {
-			return n
-		}
-		k := j + len(`"data"`)
-		// skip spaces and the colon, then the opening quote
-		for k < len(rest) && (rest[k] == ' ' || rest[k] == ':') {
-			k++
-		}
-		if k >= len(rest) || rest[k] != '"' {
-			continue
-		}
-		k++
-		end := bytes.IndexByte(rest[k:], '"')
-		if end < 0 {
-			return n + len(rest) - k
-		}
-		n += end
-		rest = rest[k+end:]
 	}
+}
+
+// valueInfo is what a parent needs to know about one parsed value.
+type valueInfo struct {
+	str    string // the value, when it is a string
+	isStr  bool
+	base64 int // the "data" length, when the value is a base64 source object; else 0
+}
+
+const dataURLMarker = ";base64,"
+
+// dataURLPayload returns the payload length of a base64 data URL, or 0.
+func dataURLPayload(s string) int {
+	if !strings.HasPrefix(s, "data:") {
+		return 0
+	}
+	i := strings.Index(s, dataURLMarker)
+	if i < 0 {
+		return 0
+	}
+	return len(s) - i - len(dataURLMarker)
+}
+
+// walkValue reads one JSON value and adds the media it holds to *n. false means the input ended
+// or is not valid JSON.
+func walkValue(dec *json.Decoder, n *int) (valueInfo, bool) {
+	tok, err := dec.Token()
+	if err != nil {
+		return valueInfo{}, false
+	}
+	switch v := tok.(type) {
+	case string:
+		return valueInfo{str: v, isStr: true}, true
+	case json.Delim:
+		if v == '[' {
+			for dec.More() {
+				if _, ok := walkValue(dec, n); !ok {
+					return valueInfo{}, false
+				}
+			}
+			_, err := dec.Token()
+			return valueInfo{}, err == nil
+		}
+		return walkObject(dec, n)
+	}
+	return valueInfo{}, true
+}
+
+// walkObject reads the members of an object whose "{" is read. It counts the payload of an image
+// or document block's base64 source, and of a data URL under "url" or "image_url". It returns the
+// payload length when the object itself is a base64 source, so its parent block can count it.
+func walkObject(dec *json.Decoder, n *int) (valueInfo, bool) {
+	var typ string
+	var data valueInfo
+	var srcLen int
+	for dec.More() {
+		kt, err := dec.Token()
+		if err != nil {
+			return valueInfo{}, false
+		}
+		key, _ := kt.(string)
+		child, ok := walkValue(dec, n)
+		if !ok {
+			return valueInfo{}, false
+		}
+		switch key {
+		case "type":
+			typ = child.str
+		case "data":
+			data = child
+		case "source":
+			srcLen = child.base64
+		case "url", "image_url":
+			*n += dataURLPayload(child.str)
+		}
+	}
+	if _, err := dec.Token(); err != nil {
+		return valueInfo{}, false
+	}
+	if typ == "image" || typ == "document" {
+		*n += srcLen
+	}
+	if typ == "base64" && data.isStr {
+		return valueInfo{base64: len(data.str)}, true
+	}
+	return valueInfo{}, true
 }
