@@ -499,8 +499,10 @@ split only when the client body would have written the tokens.
 
 **Issues with no case, and why**
 
-- **#10 (no breakpoints).** Fixed in code. With no breakpoint every position counts as a breakpoint (design §5.1,
-  §6.2). Go tests in `internal/engine/nobreakpoint_test.go` cover it.
+- **#10 (no breakpoints).** With no breakpoint every position counts as a breakpoint (design §5.1, §6.2). Cases
+  `rewrite/no-breakpoint/input/5m` and `rewrite/no-breakpoint/cut-inside-cache/5m` and the Go tests in
+  `internal/engine/nobreakpoint_test.go` cover it. The 128-token rounding rests on the extent tolerance and has
+  no case of its own.
 - **#12 (bad usage) and #15 (minimum length).** The fix is a new `Unpriced` reason or a new `EntryFacts` field. The spec
   does not name either. A case would invent the expected result.
 - **#19 (`Interaction`).** Design §6.2 says it is not implemented in v0. A case would test a feature the spec defers.

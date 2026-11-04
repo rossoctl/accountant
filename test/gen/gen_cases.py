@@ -1504,7 +1504,7 @@ def c1_():
                DIMS("rewrite", "afterL", "hit"), [s0, s1], open_=[BSTAR_SNAP])
 
 
-# C2: no breakpoint anywhere.
+# C2: no breakpoint anywhere (automatic prefix caching, design §5.1 and §6.2).
 def c2_():
     CF = "cg:cmdfilter:c2e7"
     M = [(f"m{i}", 3000) for i in range(9)]
@@ -1512,12 +1512,34 @@ def c2_():
     s1 = sim(40, "r1", ([], SYS10, M + [("m9", 8000)]), ([], SYS10, M + [("m9f", 1000)]),
              [eop(CF, saved=TT(input=7000))], "hot", prev=(29000, 29000), cbp=[], fbp=[],
              add=[rewrite("o1", "context-guru.cmdfilter", "messages", 9, 8000, 1000, CF)],
-             usage=U(inp=30000), base=U(inp=37000))
+             usage=U(read=29000, inp=1000), base=U(read=29000, inp=8000), boundary=P("messages", 8))
     write_more("rewrite/no-breakpoint/input/5m", "C2",
-               "The body carries no cache_control, so the provider caches nothing and bills every token as input. "
-               "cmdfilter shortens a new 8,000-token output to 1,000 tokens and saves 7,000 x $3.00 = +$0.02100. B* is "
-               "0 because no client breakpoint is at or before the extent.",
-               DIMS("rewrite", "afterL", "none", breakpoints="none"), [s0, s1])
+               "The body carries no cache_control. The provider caches the prefix by itself, so every position counts "
+               "as a breakpoint. The 29,000 tokens of turn 1 are read on turn 2. cmdfilter shortens a new 8,000-token "
+               "output (message 9) to 1,000 tokens. It sits after B*, so the provider bills it as input, and the saving "
+               "is 7,000 x $3.00 = +$0.02100. B* is message 8, the end of the extent.",
+               DIMS("rewrite", "afterL", "none", breakpoints="none"), [s0, s1], open_=[BSTAR_SNAP])
+
+
+# C2b: no breakpoint anywhere, and a cut inside the cached prefix.
+def c2b():
+    CF = "cg:cmdfilter:c2b1"
+    M = [(f"m{i}", 3000) for i in range(9)]
+    F = [x if x[0] != "m2" else ("m2f", 600) for x in M]
+    s0 = sim(0, "r0", ([], SYS10, M), ([], SYS10, M), [], "unknown", cbp=[], fbp=[], usage=U(inp=29000), base=U(inp=29000))
+    # The provider read the system block and messages 0 and 1: 2,000 + 6,000 = 8,000 tokens. The rest is input.
+    s1 = sim(40, "r1", ([], SYS10, M + [("m9", 1000)]), ([], SYS10, F + [("m9", 1000)]),
+             [eop(CF, saved=TT(cacheRead=2400))], "hot", prev=(29000, 29000), cbp=[], fbp=[],
+             add=[rewrite("o1", "context-guru.cmdfilter", "messages", 2, 3000, 600, CF)],
+             usage=U(read=8000, inp=19600), base=U(read=29000, inp=1000), boundary=P("messages", 8),
+             effects=[effect("break", CF, saved=TT(cacheRead=18600), caused=TT(input=18600),
+                             frm=P("messages", 1), to=P("messages", 8))])
+    write_more("rewrite/no-breakpoint/cut-inside-cache/5m", "C2",
+               "The body carries no cache_control. cmdfilter cuts message 2 from 3,000 to 600 tokens, inside the cached "
+               "prefix. The provider reads 8,000 tokens (to message 1) and bills the rest as input. The 2,400 cut tokens "
+               "were read before, so they are saved at the read rate, +2,400 x $0.30. The cut breaks the cache: the 18,600 "
+               "tokens from message 1 to B* move from read to input.",
+               DIMS("rewrite", "beforeBStar", "none", breakpoints="none"), [s0, s1], open_=[BSTAR_SNAP])
 
 
 # C5: mask at depth on a cold turn, then warm replays.
@@ -2013,6 +2035,6 @@ if __name__ == "__main__":
         if old.endswith(".json"):
             os.remove(os.path.join(OUT, old))
     for f in (ex12, ex3, ex4, ex5, ex67, ex8, shared_prefix_cases, ex9, c01, c02, c03_04, c05, c06, c07, c08, c09, c10, c11, c12, c_threads, c_mix,
-              c14, c15, c16, c17, c18, a1, a2, a3, a4_b3, b1_b2, b4, b5, c1_, c2_, c3_, c5, d2, d3, d4,
+              c14, c15, c16, c17, c18, a1, a2, a3, a4_b3, b1_b2, b4, b5, c1_, c2_, c2b, c3_, c5, d2, d3, d4,
               d5, d6, e2, e345, f245, h2, h5, r9, r14, r21, r20, r20b):
         f()

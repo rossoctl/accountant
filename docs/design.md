@@ -640,9 +640,10 @@ breakpoint more than 20 blocks after the previous entry can miss with an unchang
 library then prices too high a read. Shadow differences of this kind go to the case list ([§10.3](testing.md#103-what-makes-the-list-exhaustive) C).
 
 On OpenAI models before GPT-5.6 there are no explicit breakpoints: the provider caches the longest
-prefix it can, in steps of 128 tokens. For those models, the host passes one implicit breakpoint at
-the end of the body, and the library rounds B\* and the read extent down to a multiple of 128
-tokens.
+prefix it can, in steps of 128 tokens. For those models, the host passes no breakpoint. With no breakpoint
+every position counts as a breakpoint (§6.2): B\* is the last position at or before x, and the read and
+cached extents try every position. The extent tolerance absorbs the 128-token rounding. A host that passes
+an implicit breakpoint gets the breakpoint pricing (a break moves read to write), which OpenAI does not bill.
 
 The host keeps one fingerprint for each thread: the most recent request of that thread (wiring document, W5.2).
 

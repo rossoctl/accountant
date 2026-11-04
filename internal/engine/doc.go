@@ -43,10 +43,14 @@
 //     where x is first snapped down to this request's last client breakpoint at or before it, unless
 //     a breakpoint of this request is at or after x (the provider reads only from a breakpoint). The
 //     candidates are the previous extent and the client breakpoints of this and the previous
-//     request. The row-4 prediction snaps the same way, with the forwarded breakpoints. The minimum cacheable length and the 128-token rounding of older OpenAI models are
-//     not modelled.
+//     request. The row-4 prediction snaps the same way, with the forwarded breakpoints. With no client
+//     breakpoint in this request every position is a breakpoint, so B* = x. With no forwarded breakpoint
+//     in this and the previous request, extent tries every position (no candidate list). The minimum
+//     cacheable length is not modelled, and the 128-token rounding of older OpenAI models is absorbed
+//     by the extent tolerance.
 //  8. A break moves the forwarded tokens after the read extent, up to B* as forwarded, from read to
-//     write, at the TTL of the first forwarded breakpoint at or after B* (5m when there is none).
+//     write, at the TTL of the first forwarded breakpoint at or after B* (5m when there is none). With
+//     no forwarded breakpoint the provider bills no write, so the moved tokens go from read to input.
 //     A setting break (§5.2 row 3) starts at the last candidate before the earliest
 //     SettingChange.At; with no At it starts at the read and adds penalty_unknown. Row 3 and row 4
 //     need the read to be below the prediction by more than the tolerance of decision 3.
