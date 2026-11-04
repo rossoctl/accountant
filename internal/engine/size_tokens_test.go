@@ -223,3 +223,55 @@ func TestPersistKeepsMedia(t *testing.T) {
 		t.Fatalf("Media after a round trip = %d, %d, want 1000, 0", out.Pos[0].Media, out.Pos[1].Media)
 	}
 }
+
+// mixed is one message with a text part of n bytes and a 400,000-byte image.
+func mixed(n int) []byte {
+	return []byte(`[{"type":"text","text":"` + strings.Repeat("t", n) + `"},` + string(imageBlock(400000)) + `]`)
+}
+
+// An unmarked after-size that adds an image: the forwarded body holds the media. Before the fix
+// the 400,067 bytes priced at the text ratio (99,942 tokens).
+func TestUnmarkedAfterSizeThatAddsAnImageUsesTheForwardedMedia(t *testing.T) {
+	img := imageBlock(400000)
+	client := [][]byte{text("t", 4000)}
+	fwd := [][]byte{img, text("t", 4000)}
+	op := Operation{ID: "o1", Kind: KindRewrite, Operator: "inject", ChangeID: "in", At: msg(0),
+		SizeAfter:     Size{Bytes: len(img)},
+		MessageSplice: &MessageSplice{At: 0, Removed: 0, Inserted: 1}}
+	res, p := priceOne(t, client, fwd, op, Usage{Input: 2616})
+	if got := tierSum(p.Caused); got < 1614 || got > 1620 {
+		t.Fatalf("caused = %d, want about 1618", got)
+	}
+	noChecks(t, res)
+}
+
+// A rewrite that keeps the image and trims the text around it saves the text only.
+func TestUnmarkedAfterSizeThatKeepsTheImageSavesTheTextOnly(t *testing.T) {
+	before, after := mixed(1200), mixed(200)
+	op := Operation{ID: "o1", Kind: KindRewrite, Operator: "trim", ChangeID: "tr", At: msg(0),
+		SizeBefore: Size{Bytes: len(before)}, SizeAfter: Size{Bytes: len(after)}}
+	billed := 1600 + (len(after)-400000)/4
+	res, p := priceOne(t, [][]byte{before}, [][]byte{after}, op, Usage{Input: billed})
+	if got := tierSum(p.Saved); got < 248 || got > 252 || tierSum(p.Caused) != 0 {
+		t.Fatalf("saved = %d caused = %d, want about 250 and 0", got, tierSum(p.Caused))
+	}
+	noChecks(t, res)
+}
+
+// A correct host count on an after-size over media must pass the size_tokens check.
+func TestHostTokensOnAnAfterSizeOverMediaAreNotRejected(t *testing.T) {
+	before, after := mixed(1200), mixed(200)
+	op := Operation{ID: "o1", Kind: KindRewrite, Operator: "trim", ChangeID: "tr", At: msg(0),
+		SizeBefore: Size{Bytes: len(before), Tokens: 1600 + 300},
+		SizeAfter:  Size{Bytes: len(after), Tokens: 1600 + 50}}
+	billed := 1600 + (len(after)-400000)/4
+	res, p := priceOne(t, [][]byte{before}, [][]byte{after}, op, Usage{Input: billed})
+	for _, c := range res.Checks {
+		if c.Check == "size_tokens" {
+			t.Fatalf("size_tokens failed: %+v", c)
+		}
+	}
+	if got := tierSum(p.Saved); got != 250 || p.Estimated {
+		t.Fatalf("saved = %d estimated = %v, want the host's 250, exact", got, p.Estimated)
+	}
+}

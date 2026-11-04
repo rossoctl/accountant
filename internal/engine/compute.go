@@ -16,6 +16,9 @@ const (
 	ReasonPenaltyUnknown    = "penalty_unknown" // the boundary is unknown, so no break penalty was charged (§6.4)
 	ReasonNoUsage           = "no_usage"        // the response had no usage: nothing is priced (§8)
 	ReasonNotSpend          = "not_spend"       // a standalone RequestOps holds only spend operations (§6.1)
+	ReasonBadUsage          = "bad_usage"       // a usage count is negative: nothing is priced (§6.5, check 8)
+	ReasonRatioRange        = "ratio_range"     // tokens per byte is outside the range: nothing is priced (§6.5, check 9)
+	ReasonBreakpoints       = "breakpoints"     // more than 4 breakpoints, or an unknown TTL: nothing is priced (§6.5, check 10)
 )
 
 // Compute prices the request and then replaces the thread's ThreadState (§6.1). It is
@@ -129,11 +132,12 @@ func (r *Request) calc(s ThreadState, usage Usage) (Result, ThreadState) {
 	c := r.newCalc(s, items, usage)
 
 	c.phaseAndBoundary(&res)
-	if !c.noUsage {
+	if !c.skipsPricing() {
 		c.cacheEffects(&res)
 	}
 	c.price(&res)
 	c.checks(&res)
+	c.checkUsage(&res)
 	c.conservation(&res)
 	return res, c.nextState()
 }
@@ -230,37 +234,46 @@ func apply(p Position, s *MessageSplice, into bool) (Position, bool) {
 	return p, into
 }
 
-// maxTokensPerByte and minTokensPerTextByte bound a host's Size.Tokens against the bytes it covers.
-// A count outside them is a host bug (500000 tokens for 10,000 bytes): the library ignores it, uses
-// the bytes, and reports the check "size_tokens".
-const (
-	maxTokensPerByte     = 2.0
-	minTokensPerTextByte = 0.05
-)
-
 // plausible says whether host tokens fit the bytes of the range. media is the range's media bytes.
 func plausible(s Size, media int) bool {
 	text := s.Bytes - media
 	if float64(s.Tokens) > maxTokensPerByte*float64(s.Bytes) {
 		return false
 	}
-	return text <= 0 || float64(s.Tokens) >= minTokensPerTextByte*float64(text)
+	return text <= 0 || float64(s.Tokens) >= minTokensPerByte*float64(text)
 }
 
-// rangeMedia is the media bytes a size covers. The host's MediaBytes wins. When it is 0 on a
-// "before" size, the media comes from the client body: the bytes of the range beyond its text. Without
-// this an unmarked cut of an image message would price its base64 at the text ratio.
-func (c *calcState) rangeMedia(s Size, sp span, isBefore bool) int {
-	if s.MediaBytes > 0 || !isBefore || s.Bytes == 0 {
+// rangeMedia is the media bytes a size covers. The host's MediaBytes wins. When it is 0, the media
+// comes from the body that holds the range: the client body for a "before" size, and the forwarded
+// body, over the range mapped by toFwd, for an "after" size. The media is the size's bytes beyond the
+// range's text, clamped to 0..media. Without this an unmarked size over an image would price its
+// base64 at the text ratio.
+func (c *calcState) rangeMedia(k int, s Size, sp span, isBefore bool) int {
+	if s.MediaBytes > 0 || s.Bytes == 0 {
 		return s.MediaBytes
 	}
-	f, ok1 := c.client.flat(sp.from)
-	t, ok2 := c.client.flat(sp.to)
+	body, from, to := c.client, sp.from, sp.to
+	if !isBefore {
+		body = c.fwd
+		var ok1, ok2 bool
+		if sp.before.Bytes == 0 && c.items[k].op.MessageSplice != nil { // an inserted item sits in its own slot
+			from, ok1 = c.toFwdSkipping(k, sp.from)
+			to, ok2 = c.toFwdSkipping(k, sp.to)
+		} else {
+			from, ok1 = c.toFwd(k, sp.from)
+			to, ok2 = c.toFwd(k, sp.to)
+		}
+		if !ok1 || !ok2 {
+			return 0
+		}
+	}
+	f, ok1 := body.flat(from)
+	t, ok2 := body.flat(to)
 	if !ok1 || !ok2 || t < f {
 		return 0
 	}
-	media := c.client.cumMedia(t) - c.client.cumMedia(f-1)
-	text := c.client.cumBytes(t) - c.client.cumBytes(f-1) - media
+	media := body.cumMedia(t) - body.cumMedia(f-1)
+	text := body.cumBytes(t) - body.cumBytes(f-1) - media
 	return min(max(s.Bytes-text, 0), media)
 }
 
@@ -286,6 +299,7 @@ type calcState struct {
 	splicers []int // indexes of the items with a MessageSplice; no other item moves a position
 	usage    Usage
 	noUsage  bool
+	invalid  string // the reason the usage or breakpoints cannot be trusted; "" when they can (§6.5, checks 8 to 10)
 	ratio    ratio
 	hostGap  int // saved tokens that come from Size.Tokens beyond the ratio's figure (check 6)
 
@@ -320,6 +334,7 @@ func (r *Request) newCalc(s ThreadState, items []*item, usage Usage) *calcState 
 		}
 	}
 	c.ratio = newRatio(usage.Input+usage.CacheRead+usage.CacheWrite, r.Forwarded)
+	c.invalid = c.validate(usage)
 	c.clientBPs = c.client.breakpoints(r.ClientBreakpoints)
 	c.fwdBPs = c.fwd.breakpoints(r.Breakpoints)
 	if p := s.PrevPrint; p != nil {
@@ -563,7 +578,7 @@ func (c *calcState) phaseAndBoundary(res *Result) {
 		c.phase = PhaseCold // the previous request cached nothing, and it would have expired anyway
 	}
 
-	if !c.noUsage {
+	if !c.skipsPricing() {
 		c.readEnd = extent(c.fwd, c.ratio, c.usage.CacheRead, c.candidates())
 		c.cachedFwd = extent(c.fwd, c.ratio, c.usage.CacheRead+c.usage.CacheWrite, c.candidates())
 	}
@@ -589,7 +604,7 @@ func (c *calcState) phaseAndBoundary(res *Result) {
 		// The comparison is in tokens, not positions: a position is an index into one body, and the previous and
 		// the current forwarded bodies may differ before the extent (a block a plugin added), so equal
 		// indices would not mean equal prefixes.
-		if c.prevExt >= 0 && !c.noUsage && c.readCoversExtent(prev) && c.clientFD <= c.prevExtCli && c.prevExtCli > c.bstar {
+		if c.prevExt >= 0 && !c.skipsPricing() && c.readCoversExtent(prev) && c.clientFD <= c.prevExtCli && c.prevExtCli > c.bstar {
 			c.bstar = c.prevExtCli
 		}
 	case PhaseUnknown:
@@ -919,6 +934,71 @@ func addTier(t *TierTokens, p, bstar int, bps []bp, n int) {
 	}
 }
 
+// skipsPricing says whether the request prices nothing: it has no usage, or its usage or
+// breakpoints failed check 8, 9 or 10 (§6.5).
+func (c *calcState) skipsPricing() bool { return c.noUsage || c.invalid != "" }
+
+// Limits of check 9 and check 10 (§6.5). Check 12 (size_tokens) uses the two token limits too.
+const (
+	minTokensPerByte = 0.05
+	maxTokensPerByte = 2.0
+	maxBreakpoints   = 4 // the Anthropic limit
+)
+
+// validate runs checks 8 to 10 (§6.5) on the usage and the breakpoints. It returns the reason
+// for the first one that fails, or "". A request with no usage is left to ReasonNoUsage.
+func (c *calcState) validate(u Usage) string {
+	if c.noUsage {
+		return ""
+	}
+	switch {
+	case u.Input < 0 || u.CacheRead < 0 || u.CacheWrite < 0 || u.CacheWrite1h < 0 || u.CacheWrite1h > u.CacheWrite:
+		return ReasonBadUsage
+	case c.badRatio():
+		return ReasonRatioRange
+	case c.badBreakpoints():
+		return ReasonBreakpoints
+	}
+	return ""
+}
+
+// badRatio says whether the tokens per forwarded byte are outside 0.05 to 2.0 (check 9). A usage that
+// bills no prompt token for a body with bytes (tokens per byte 0), or tokens for an empty body (infinite),
+// is outside the range too.
+func (c *calcState) badRatio() bool {
+	t, n := float64(c.ratio.tokens), float64(c.ratio.bytes)
+	if t == 0 || n == 0 {
+		return true
+	}
+	return t < minTokensPerByte*n || t > maxTokensPerByte*n
+}
+
+// badBreakpoints says whether the forwarded body has more than 4 breakpoints, or any breakpoint
+// has a TTL other than "5m", "1h" or empty (empty is the 5m default).
+func (c *calcState) badBreakpoints() bool {
+	if len(c.r.Breakpoints) > maxBreakpoints {
+		return true
+	}
+	for _, list := range [][]Breakpoint{c.r.ClientBreakpoints, c.r.Breakpoints} {
+		for _, b := range list {
+			if b.TTL != "" && b.TTL != "5m" && b.TTL != "1h" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// checkUsage reports the failed check 8, 9 or 10 in Result.Checks.
+func (c *calcState) checkUsage(res *Result) {
+	if c.invalid == "" {
+		return
+	}
+	detail := fmt.Sprintf("usage=%d/%d/%d/%d breakpoints=%d forwarded bytes=%d", c.usage.Input, c.usage.CacheRead,
+		c.usage.CacheWrite, c.usage.CacheWrite1h, len(c.r.Breakpoints), c.ratio.bytes)
+	res.Checks = append(res.Checks, CheckFailure{Check: c.invalid, Detail: detail})
+}
+
 // price prices each operation: the saved tokens in client space, the added tokens in forwarded
 // space (§6.2). Output order: the reported operations, then the active ones (§6.3).
 func (c *calcState) price(res *Result) {
@@ -934,17 +1014,19 @@ func (c *calcState) price(res *Result) {
 			res.Unpriced = append(res.Unpriced, Unpriced{OpID: it.id, Reason: it.bad})
 		case c.noUsage:
 			res.Unpriced = append(res.Unpriced, Unpriced{OpID: it.id, Reason: ReasonNoUsage})
+		case c.invalid != "":
+			res.Unpriced = append(res.Unpriced, Unpriced{OpID: it.id, Reason: c.invalid})
 		case resultUnknown(it.op):
 			res.Unpriced = append(res.Unpriced, Unpriced{OpID: it.id, Reason: ReasonPingResultUnknown})
 		case it.op.Kind == KindRewrite:
 			for _, sp := range it.spans {
-				bm, am := c.rangeMedia(sp.before, sp, true), c.rangeMedia(sp.after, sp, false)
+				bm, am := c.rangeMedia(k, sp.before, sp, true), c.rangeMedia(k, sp.after, sp, false)
 				bt, bx, bbad := c.sizeTokens(sp.before, bm)
 				at, ax, abad := c.sizeTokens(sp.after, am)
 				if bbad || abad {
 					res.Checks = append(res.Checks, CheckFailure{Check: "size_tokens", Operator: it.op.Operator,
 						Detail: fmt.Sprintf("tokens=%d/%d bytes=%d/%d: outside %g..%g tokens a byte, bytes used",
-							sp.before.Tokens, sp.after.Tokens, sp.before.Bytes, sp.after.Bytes, minTokensPerTextByte, maxTokensPerByte)})
+							sp.before.Tokens, sp.after.Tokens, sp.before.Bytes, sp.after.Bytes, minTokensPerByte, maxTokensPerByte)})
 				}
 				if !bx || !ax {
 					estimated = true
@@ -988,7 +1070,7 @@ func (c *calcState) price(res *Result) {
 // caused. A cache effect moves tokens between tiers and nets zero in tokens, so only the content
 // changes count. The byte ratio rounds each span down, so each one may differ by one token.
 func (c *calcState) conservation(res *Result) {
-	if c.noUsage || c.unknown {
+	if c.skipsPricing() || c.unknown {
 		return
 	}
 	var net, tol int
@@ -1094,7 +1176,7 @@ func (c *calcState) nextState() ThreadState {
 		}
 	}
 	switch {
-	case c.noUsage:
+	case c.skipsPricing():
 		next.Cache = CacheState{} // unknown
 	case c.cachedFwd < 0:
 		next.Cache = CacheState{CachePhase: PhaseCold}
