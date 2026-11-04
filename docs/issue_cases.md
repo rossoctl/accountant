@@ -499,9 +499,8 @@ split only when the client body would have written the tokens.
 
 **Issues with no case, and why**
 
-- **#10 (no breakpoints).** Design §5.1 says a host of a model without explicit breakpoints passes one implicit
-  breakpoint at the end of the body. A body with none is outside that contract, and the table in §6.2 prices a
-  position with no breakpoint as input. A case would take a side in a question the spec has not settled.
+- **#10 (no breakpoints).** Fixed in code. With no breakpoint every position counts as a breakpoint (design §5.1,
+  §6.2). Go tests in `internal/engine/nobreakpoint_test.go` cover it.
 - **#12 (bad usage) and #15 (minimum length).** The fix is a new `Unpriced` reason or a new `EntryFacts` field. The spec
   does not name either. A case would invent the expected result.
 - **#19 (`Interaction`).** Design §6.2 says it is not implemented in v0. A case would test a feature the spec defers.

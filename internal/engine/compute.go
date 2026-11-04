@@ -575,8 +575,12 @@ func (c *calcState) readCoversExtent(prev *Fingerprint) bool {
 // readable is the last position up to x that a request with the breakpoints bps can read. The
 // provider looks the cache up from a breakpoint, so a prefix that ends at x is readable when a
 // breakpoint is at or after x. Otherwise the read snaps down to the last breakpoint at or before x
-// (§5.1, §5.2 row 4). With no breakpoint nothing is read.
+// (§5.1, §5.2 row 4). With no breakpoint the provider caches the prefix by itself (automatic prefix
+// caching), so every position is a breakpoint and x is readable.
 func readable(x int, bps []bp) int {
+	if len(bps) == 0 {
+		return x
+	}
 	for _, b := range bps {
 		if b.at >= x {
 			return x
@@ -713,7 +717,11 @@ func (c *calcState) addBreak(res *Result, from int, changeID string) {
 		e.To = &p
 		if n := c.ratio.of(c.fwd.cumBytes(c.bstarFwd) - c.fwd.cumBytes(from)); n > 0 {
 			e.Saved.CacheRead = n
-			addWrite(&e.Caused, ttlAtOrAfter(c.fwdBPs, c.bstarFwd), n) // "" counts as 5m
+			if len(c.fwdBPs) == 0 { // no breakpoints: no write tier, the lost read is input
+				e.Caused.Input += n
+			} else {
+				addWrite(&e.Caused, ttlAtOrAfter(c.fwdBPs, c.bstarFwd), n) // "" counts as 5m
+			}
 		}
 	}
 	c.addEffect(res, e)
@@ -867,7 +875,7 @@ func addWrite(t *TierTokens, ttl string, n int) {
 // to the last breakpoint at the TTL of the next one, input after it or with no breakpoint.
 func addTier(t *TierTokens, p, bstar int, bps []bp, n int) {
 	switch ttl := ttlAtOrAfter(bps, p); {
-	case len(bps) > 0 && p <= bstar:
+	case p <= bstar:
 		t.CacheRead += n
 	case ttl == "":
 		t.Input += n

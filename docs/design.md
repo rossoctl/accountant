@@ -608,8 +608,8 @@ boundary that would have applied if no plugin had changed anything:
 ```
 x  = min( prevCachedExtent,   // what this thread's previous request left cached, in client space
           clientFirstDiff )   // the last position before the client changed its own body
-B* = the last client breakpoint at or before x
-B* = 0 when the cache expired, or when no client breakpoint is at or before x
+B* = the last client breakpoint at or before x   (with no client breakpoint, every position is one: B* = x)
+B* = 0 when the cache expired, or when the body has breakpoints and none is at or before x
 ```
 
 **The usage can overrule the hashes.** If `Usage.CacheRead` covers the whole of `prevCachedExtent`, the provider
@@ -989,7 +989,11 @@ forwarded space, against the forwarded breakpoints.
 | at or before B\* | **cache read** |
 | after B\*, at or before `L` | **cache write**, at the TTL of the first breakpoint at or after the position (5m or 1h) |
 | after `L` | **input** |
-| any position, with no breakpoint in the body | **input** |
+| any position, with no breakpoint in the body, after B\* | **input** |
+
+With no breakpoint in the body (automatic prefix caching, for example OpenAI), every position counts as a
+breakpoint. B\* is then the end of the cached extent, and a position at or before it is a **cache read**. A cut
+inside the cache is a read, and the break it causes moves the later tokens from read to **input**.
 
 On a cache miss, B\* = 0, so the first row matches nothing. A position is compared in hash order:
 section first (tools, system, messages), then index. For a change with `Spans`, each span is
