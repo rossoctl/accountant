@@ -57,7 +57,7 @@ func TestSpansInTheToolsAreReadWhenHot(t *testing.T) {
 func TestTheSpansCheckComparesTheSums(t *testing.T) {
 	op := Operation{ID: "op1", Kind: KindRewrite, Operator: "tool-prune", ChangeID: "tp", At: tool(0),
 		Spans:      []Span{{Section: SectionTools, From: 0, To: 0, SizeBefore: Size{Bytes: 100}}},
-		SizeBefore: Size{Bytes: 999}}
+		SizeBefore: Size{Bytes: 150}}
 	res := req{at: t0, client: mk([]blk{b("t0", 100)}, nil, msgs(1, 100)), fwd: mk(nil, nil, msgs(1, 100)),
 		ops: []Operation{op}, usage: Usage{Input: 100}}.run(NewTrackers())
 	if len(res.Checks) != 1 || res.Checks[0].Check != "spans" {

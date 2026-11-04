@@ -25,9 +25,9 @@ type Unpriced struct {
 	Reason string // "unknown_kind", "negative_size", "operator_not_allowed", "penalty_unknown", ...
 }
 
-// CheckFailure is a failed check (§6.5). A failure does not stop pricing.
+// CheckFailure is a failed check (§6.5). A failure does not stop pricing, except size_range, which unprices the one operation (§6.5, check 13).
 type CheckFailure struct {
-	Check    string // "sum" | "order" | "unique_change" | "spans" | "attribution" | "conservation" | "shared_warm" | "bad_usage" | "ratio_range" | "breakpoints" | "media_tokens" | "size_tokens"
+	Check    string // "sum" | "order" | "unique_change" | "spans" | "attribution" | "conservation" | "shared_warm" | "bad_usage" | "ratio_range" | "breakpoints" | "media_tokens" | "size_tokens" | "size_range"
 	Operator string // "" when the check is not about one operator
 	Detail   string // numbers only, no content
 }

@@ -3,6 +3,7 @@ package engine
 import (
 	"fmt"
 	"log/slog"
+	"math"
 	"strings"
 	"time"
 )
@@ -19,6 +20,7 @@ const (
 	ReasonBadUsage          = "bad_usage"       // a usage count is negative: nothing is priced (§6.5, check 8)
 	ReasonRatioRange        = "ratio_range"     // tokens per byte is outside the range: nothing is priced (§6.5, check 9)
 	ReasonBreakpoints       = "breakpoints"     // more than 4 breakpoints, or an unknown TTL: nothing is priced (§6.5, check 10)
+	ReasonSizeRange         = "size_range"      // an operation reports more bytes than the client body holds: that operation is not priced (§6.5, check 13)
 )
 
 // Compute prices the request and then replaces the thread's ThreadState (§6.1). It is
@@ -27,7 +29,9 @@ const (
 // calculates again from the current one and sets Result.Recomputed (R53).
 //
 // Call it once for each request. A second call prices the request against the ThreadState the first
-// call stored, so the active changes count again; use Preview to price a request again. Compute does
+// call stored, so the active changes count again (the second result is usually phase hot). Do not
+// call Compute again to retry after a transient error in the host: the first call already advanced
+// the state. Use Preview to price a request again, because it stores nothing. Compute does
 // not recover from a panic: the host wraps the call so that a failure leaves the request unpriced.
 func (r *Request) Compute(usage Usage) Result {
 	if !r.ended {
@@ -74,9 +78,57 @@ func ComputeStandalone(ops RequestOps) Result {
 			res.Unpriced = append(res.Unpriced, Unpriced{OpID: op.ID, Reason: ReasonNotSpend})
 		} else if resultUnknown(op) {
 			res.Unpriced = append(res.Unpriced, Unpriced{OpID: op.ID, Reason: ReasonPingResultUnknown})
+		} else if badCall(op) {
+			res.Unpriced = append(res.Unpriced, Unpriced{OpID: op.ID, Reason: ReasonBadUsage})
+			res.Checks = append(res.Checks, CheckFailure{Check: ReasonBadUsage, Operator: op.Operator, Detail: callDetail(op)})
 		}
 	}
 	return res
+}
+
+// maxTierTokens is the largest count one Usage field may hold (check 8). It is far above any real
+// prompt, and three of them cannot overflow an int.
+const maxTierTokens = 1 << 40
+
+// badUsage says whether a usage is negative, above the cap, or has CacheWrite1h above CacheWrite (check 8).
+func badUsage(u Usage) bool {
+	for _, n := range []int{u.Input, u.CacheRead, u.CacheWrite, u.CacheWrite1h} {
+		if n < 0 || n > maxTierTokens {
+			return true
+		}
+	}
+	return u.CacheWrite1h > u.CacheWrite
+}
+
+// badCall says whether a spend's Call states a figure that cannot be real (check 8): a bad usage,
+// a negative Output, or a CostUSD that is negative, NaN or infinite.
+func badCall(op Operation) bool {
+	if op.Kind != KindSpend || op.Call == nil {
+		return false
+	}
+	u := op.Call.Usage
+	return badUsage(u.Usage) || u.Output < 0 || u.Output > maxTierTokens || u.CostUSD < 0 || math.IsNaN(u.CostUSD) || math.IsInf(u.CostUSD, 0)
+}
+
+func callDetail(op Operation) string {
+	u := op.Call.Usage
+	return fmt.Sprintf("call usage=%d/%d/%d/%d output=%d costUSD=%g", u.Input, u.CacheRead, u.CacheWrite, u.CacheWrite1h, u.Output, u.CostUSD)
+}
+
+// tooBig says whether an operation reports that it received more bytes than the whole client body holds (check 13).
+func tooBig(op Operation, clientBytes int) bool {
+	if op.Kind != KindRewrite {
+		return false
+	}
+	if op.SizeBefore.Bytes > clientBytes {
+		return true
+	}
+	for _, s := range op.Spans {
+		if s.SizeBefore.Bytes > clientBytes {
+			return true
+		}
+	}
+	return false
 }
 
 // resultUnknown says whether a spend's call has no usage at all: the call was sent and may have been
@@ -154,6 +206,7 @@ func (r *Request) items(s ThreadState) []*item {
 			reported[op.ChangeID] = true
 		}
 	}
+	clientBytes := r.Client.cumBytes(len(r.Client.Pos) - 1)
 	var items []*item
 	for _, op := range s.Active {
 		if !reported[op.ChangeID] {
@@ -167,6 +220,10 @@ func (r *Request) items(s ThreadState) []*item {
 			it.bad = ReasonUnknownKind
 		case negative(op):
 			it.bad = ReasonNegativeSize
+		case tooBig(op, clientBytes):
+			it.bad = ReasonSizeRange
+		case badCall(op):
+			it.bad = ReasonBadUsage
 		}
 		items = append(items, it)
 	}
@@ -1017,7 +1074,7 @@ func (c *calcState) validate(u Usage) string {
 		return ""
 	}
 	switch {
-	case u.Input < 0 || u.CacheRead < 0 || u.CacheWrite < 0 || u.CacheWrite1h < 0 || u.CacheWrite1h > u.CacheWrite:
+	case badUsage(u):
 		return ReasonBadUsage
 	case c.badRatio():
 		return ReasonRatioRange
@@ -1067,6 +1124,17 @@ func (c *calcState) badBreakpoints() bool {
 
 // checkUsage reports the failed check 8, 9 or 10 in Result.Checks.
 func (c *calcState) checkUsage(res *Result) {
+	for _, it := range c.items {
+		switch {
+		case it.ended || it.active:
+		case it.bad == ReasonSizeRange:
+			res.Checks = append(res.Checks, CheckFailure{Check: ReasonSizeRange, Operator: it.op.Operator,
+				Detail: fmt.Sprintf("op bytes=%d/%d client bytes=%d: the operation is not priced",
+					it.op.SizeBefore.Bytes, it.op.SizeAfter.Bytes, c.client.cumBytes(len(c.client.Pos)-1))})
+		case it.bad == ReasonBadUsage:
+			res.Checks = append(res.Checks, CheckFailure{Check: ReasonBadUsage, Operator: it.op.Operator, Detail: callDetail(it.op)})
+		}
+	}
 	if c.invalid == "" {
 		return
 	}

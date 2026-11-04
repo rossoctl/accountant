@@ -123,4 +123,5 @@ const (
 	ReasonBadUsage          = engine.ReasonBadUsage
 	ReasonRatioRange        = engine.ReasonRatioRange
 	ReasonBreakpoints       = engine.ReasonBreakpoints
+	ReasonSizeRange         = engine.ReasonSizeRange
 )

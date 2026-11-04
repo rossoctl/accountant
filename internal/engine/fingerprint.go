@@ -3,6 +3,7 @@ package engine
 import (
 	"bytes"
 	"encoding/json"
+	"math"
 	"strings"
 	"time"
 )
@@ -61,7 +62,7 @@ func NewBody(tools, system, messages [][]byte) Body {
 				h = (h ^ uint64(c)) * 1099511628211
 			}
 			h = (h ^ 0xff) * 1099511628211 // position separator
-			b.Pos = append(b.Pos, PosHash{Hash: h, Bytes: int32(len(p)), Media: int32(mediaBytes(p))})
+			b.Pos = append(b.Pos, PosHash{Hash: h, Bytes: clamp32(len(p)), Media: clamp32(mediaBytes(p))})
 		}
 	}
 	b.cum = make([]int, len(b.Pos)+1)
@@ -175,4 +176,12 @@ func walkObject(dec *json.Decoder, n *int) (valueInfo, bool) {
 		return valueInfo{base64: len(data.str)}, true
 	}
 	return valueInfo{}, true
+}
+
+// clamp32 saturates n at the largest int32, so a position over 2 GiB does not wrap negative.
+func clamp32(n int) int32 {
+	if n > math.MaxInt32 {
+		return math.MaxInt32
+	}
+	return int32(n)
 }
