@@ -507,9 +507,9 @@ split only when the client body would have written the tokens.
 - **#15 (minimum length).** Fixed with `EntryFacts.MinCacheable` (design §5.1, §6.2). Unit tests in
   `internal/engine/mincacheable_test.go` pin it.
 - **#19 (`Interaction`).** Design §6.2 says it is not implemented in v0. A case would test a feature the spec defers.
-- **#16 (the clock).** The library does reproduce it: a request 5m2s after the last one is `cold` although the usage
-  shows a read. But design §5.2 defines the phase of an `exact` lifetime by the clock. The fix is a new margin the spec does
-  not state, so a case would invent its size.
+- **#16 (the clock) has cases now.** It was fixed in accountant#16: a read in the usage overrules the clock up to
+  10 seconds past an `exact` TTL, an out-of-order `At` keeps the newer fingerprint, and a fork is seeded from
+  `Thread.Parent` (design §5.2). The cases are in `test/cases/clock-*.json`.
 - **#11, #13, #17, #18.** The fault is not a request sequence: a token count the host did not pass (#11), saved state
   (#13), the API shape (#17) and speed (#18).
 

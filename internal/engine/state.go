@@ -222,29 +222,37 @@ func (t *Tracker) replace(version uint64, next ThreadState) bool {
 }
 
 // seededFromParent returns s, or, for a thread that has no previous request and names a Parent, a copy
-// that starts from the parent's fingerprint and cache state (design §4.1). A fork reads the entry its
-// parent wrote, so it is not a first turn. The seed is used only when the fork's forwarded body keeps
-// the parent's whole cached extent (the hashes match up to it) and the model is the parent's; otherwise the thread stays unknown.
-// The active operations are not inherited.
-func (r *Request) seededFromParent(s ThreadState) ThreadState {
-	if s.PrevPrint != nil || r.Thread.Parent == "" || r.Thread.Parent == r.Thread.ID {
-		return s
+// that starts from the parent's fingerprint and cache state (design §5.2), and true. A fork reads the
+// entry its parent wrote, so it is not a first turn. It reads the parent's Tracker as it is at this
+// call (spec R26, R54). It seeds only when all of these hold, so a seed can only give a hot phase:
+//   - the fork's At is not before the parent's last request, and the gap is within the TTL;
+//   - the fork's forwarded body keeps the parent's whole cached extent (equal hashes up to it);
+//   - the fork uses the parent's model.
+//
+// Otherwise the thread stays unknown, and a read in the usage still makes it hot. The active operations
+// are not inherited.
+func (r *Request) seededFromParent(s ThreadState) (ThreadState, bool) {
+	if s.PrevPrint != nil || r.Thread.Parent == "" || r.Thread.Parent == r.Thread.ID || r.Facts.TTL <= 0 {
+		return s, false
 	}
 	r.trackers.mu.Lock()
 	pt := r.trackers.m[ThreadKey(r.Meta.Session, Thread{ID: r.Thread.Parent})]
 	r.trackers.mu.Unlock()
 	if pt == nil {
-		return s
+		return s, false
 	}
 	ps := pt.snapshot()
 	p := ps.PrevPrint
-	if p == nil || ps.Cache.Extent == nil {
-		return s
+	if p == nil || ps.Cache.Extent == nil || p.Model != r.Meta.Model {
+		return s, false
+	}
+	if gap := r.Meta.At.Sub(p.At); gap < 0 || gap > r.Facts.TTL {
+		return s, false
 	}
 	i, ok := p.Forwarded.flat(*ps.Cache.Extent)
-	if !ok || p.Model != r.Meta.Model || firstDiff(p.Forwarded, r.Forwarded) <= i {
-		return s
+	if !ok || firstDiff(p.Forwarded, r.Forwarded) <= i {
+		return s, false
 	}
 	s.PrevPrint, s.Cache = p, ps.Cache
-	return s
+	return s, true
 }

@@ -55,7 +55,11 @@
 //  9. Phase. With no previous fingerprint, no TTL, no cached extent inside the TTL, or a gap past a minimum or unknown
 //     lifetime with no ping, the phase is unknown and penalty_unknown is added (§6.4); a read in the usage then
 //     makes it hot up to the read extent, with no rescue. The cold expiry adds an empty break
-//     (§5.2 row 5).
+//     (§5.2 row 5). Three rules let the usage or the thread tree beat the clock (accountant#16): a request
+//     whose At is before the stored fingerprint is unknown and does not replace it; a gap past an exact TTL
+//     by at most 10 seconds (ttlSkew) is still hot when CacheRead covers the whole previous extent; and a
+//     thread with a Parent and no history of its own is seeded from the parent's fingerprint and cache when
+//     the gap is within the TTL, the model is the same and its body keeps the parent's cached extent.
 //  10. A rescue (§4.4) needs a ping after the previous request, a request gap past an exact or minimum TTL, an
 //     entry gap inside it, and a read in the usage. What the request wrote does not enter the rule (#9). Its tokens are the smaller of the ping's
 //     read (converted with the ratio) and Usage.CacheRead, less the prefix EntryFacts.SharedWarm names (R54:

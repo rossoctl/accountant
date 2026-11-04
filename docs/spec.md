@@ -230,6 +230,8 @@ numbers are not used: those requirements were dropped.
   `log/slog` for each failed check ([§6.5](design.md#65-checks)); it does not change the figure. The Tracker holds the `ThreadState`.
   As its last step `Compute` replaces it with the new one; a failure leaves the old one ([D14](design.md#d14)). The same
   `ThreadState` and the same request give the same figure in the context-guru proxy and in Cortex.
+  One input is read from another thread: a fork's first request reads its parent's `ThreadState` as it is at the
+  call ([§5.2](design.md#52-classifying-a-break)), so `Preview` and `Compute` can differ if the parent moved in between.
   `Preview` gives the same figure and stores nothing.
 
 ### B. Coverage
@@ -347,7 +349,7 @@ numbers are not used: those requirements were dropped.
   refreshes that entry for the others. The host reports the longest prefix of the request that another thread
   read or wrote inside the TTL before it, as `EntryFacts.SharedWarm`. The rescue leaves that prefix out. When
   nothing is left, there is no rescue. The request is still `hot`: the entry was alive. The library does not
-  look at other threads. The host finds the prefix from its own record of each thread's last request (metadata only:
+  look at other threads, except that a fork's first request reads its parent's state (R26). The host finds the prefix from its own record of each thread's last request (metadata only:
   times, extents and hashes). A `SharedWarm` that is not in the forwarded body fails the `shared_warm` check and
   credits no rescue. R54 covers the keep-alive `rescue` only, not the `ttlRescue` of a head held at 1h (a known gap).
 - <a id="r35"></a>**R35.** A later change can end earlier ones (a summary of reduced messages). The model shows

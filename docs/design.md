@@ -750,8 +750,11 @@ stored one is the newer request, so the next request is compared with that one (
 **A fork reads its parent's entry.** A thread with no previous request and a `Thread.Parent` starts from the
 parent's fingerprint and cache state, when the fork's forwarded body keeps the parent's whole cached extent
 (equal hashes up to it) and the fork uses the parent's model. Otherwise the phase is `unknown`. The fork's
-own fingerprint then replaces the seed, and the parent's state does not change. The seed lowers a saving:
-a read is priced below a write (R45).
+own fingerprint then replaces the seed, and the parent's state does not change. The seed is used only when the fork starts at or after the parent's last request and within the TTL, so it
+can only give `hot`; otherwise the fork is `unknown` and a read in the usage makes it `hot`. A fork that
+started before the parent's last completed request is not seeded. The seed is the parent's fingerprint at the
+time of the call, and `Preview` and `Compute` can differ if the parent moved in between (R26, R54). The
+out-of-order rule applies to a thread's own previous request, never to a seed.
 
 **`PingRead` from the ping's usage.** A host may not know which position the ping read. The keeper
 replays the previous request's forwarded body, so the ping's usage bills that body, and the library

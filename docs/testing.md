@@ -96,7 +96,7 @@ drops the combinations that cannot occur, and states the reason for each drop in
 | Report | first report of the change; applied again from the state ([D14](design.md#d14)); applied again after the state was lost ([question 13](design.md#q13)) |
 | Kind | `rewrite` smaller, `rewrite` larger (a restore is one), cache effect (`break`, `rescue`, `split`, `ttlPremium`, `ttlRescue`) |
 | Position | before B\*; after B\* and at or before `L`; after `L`; no breakpoint in the body; spans on both sides of B\* |
-| Cache state | hot; cold (expired, `Lifetime: exact`); unknown (gap past an unproven `Lifetime: minimum`, [R45](spec.md#r45); first request of a thread; restart); hot, kept by a ping |
+| Cache state | hot; cold (expired, `Lifetime: exact`); unknown (gap past an unproven `Lifetime: minimum`, [R45](spec.md#r45); first request of a thread; restart); hot, kept by a ping; hot by a read up to 10 s past an exact TTL; cold at 11 s past; out-of-order `At` (unknown); fork seeded from its parent; fork past the parent's TTL (unseeded) |
 | Cache result | full hit; partial hit; miss with write ≥ input; miss with write < input |
 | Breakpoints | end of `system` + last message (Claude Code); one after `tools` only; none; one inside the messages before a break |
 | TTL of the next breakpoint | 5m, 1h |
