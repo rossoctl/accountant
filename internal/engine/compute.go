@@ -128,8 +128,10 @@ func opSpans(op Operation) []span {
 // changes nothing it is given.
 func (r *Request) calc(s ThreadState, usage Usage) (Result, ThreadState) {
 	res := Result{Version: 1, Recomputed: s.Version != r.start.Version}
+	s, seeded := r.seededFromParent(s)
 	items := r.items(s)
 	c := r.newCalc(s, items, usage)
+	c.seeded = seeded
 
 	c.phaseAndBoundary(&res)
 	if !c.skipsPricing() {
@@ -243,6 +245,7 @@ type calcState struct {
 	usage    Usage
 	noUsage  bool
 	invalid  string // the reason the usage or breakpoints cannot be trusted; "" when they can (§6.5, checks 8 to 10)
+	seeded   bool   // s.PrevPrint is the parent's fingerprint (seededFromParent), not this thread's own
 	ratio    ratio
 
 	client, fwd       Body
@@ -494,7 +497,9 @@ func (c *calcState) pingRead() *Position {
 func (c *calcState) phaseAndBoundary(res *Result) {
 	prev, f := c.s.PrevPrint, c.r.Facts
 	c.phase = PhaseUnknown
-	if prev != nil && f.TTL > 0 && c.s.Cache.Extent != nil {
+	// A request that started before the stored one has no valid gap: the clock says nothing about the
+	// entry, so the phase is left to the usage (accountant#16). Hot from a negative gap would be a guess.
+	if prev != nil && f.TTL > 0 && c.s.Cache.Extent != nil && !c.r.Meta.At.Before(prev.At) {
 		gap := c.r.Meta.At.Sub(prev.At)
 		last := prev.At
 		if f.LastPing.After(last) {
@@ -513,7 +518,14 @@ func (c *calcState) phaseAndBoundary(res *Result) {
 			// with no ping, a gap past a minimum proves no expiry (R45)
 		default:
 			c.phase = PhaseCold
+			if gap-f.TTL <= ttlSkew && c.usage.CacheRead > 0 && c.readReaches(prev.Forwarded.cumBytes(mustFlat(prev.Forwarded, *c.s.Cache.Extent))) {
+				// The clock says expired by at most ttlSkew, but the provider billed a read that covers the whole previous
+				// extent (clock skew, queue time). The read is the evidence; it only lowers a saving (R45).
+				c.phase, c.prevExt = PhaseHot, mustFlat(prev.Forwarded, *c.s.Cache.Extent)
+			}
 		}
+	} else if prev != nil && c.r.Meta.At.Before(prev.At) {
+		// Out of order: the clock says nothing about the entry, so the phase is left to the usage below.
 	} else if prev != nil && f.TTL > 0 && c.r.Meta.At.Sub(prev.At) <= f.TTL && c.s.Cache.CachePhase == PhaseCold {
 		c.phase = PhaseHot // the previous request cached nothing: hot with an empty extent (§5.2)
 	} else if prev != nil && f.TTL > 0 && f.Lifetime == LifetimeExact && c.r.Meta.At.Sub(prev.At) > f.TTL {
@@ -565,11 +577,22 @@ func (c *calcState) phaseAndBoundary(res *Result) {
 	}
 }
 
-// readCoversExtent reports whether the tokens the provider read reach the previous request's cached extent,
-// with the tolerance of extent. The extent is priced at the byte ratio of this request.
-func (c *calcState) readCoversExtent(prev *Fingerprint) bool {
-	want := c.ratio.of(prev.Forwarded.cumBytes(c.prevExt))
+// ttlSkew is how far past an exact TTL a read in the usage can still overrule the clock: the clock
+// of the host and the provider differ, and a request waits in a queue before the provider stamps it.
+// A longer gap with a read stays cold, so the rule only lowers a saving (R45).
+const ttlSkew = 10 * time.Second
+
+// readReaches reports whether Usage.CacheRead covers the first bytes bytes of the previous forwarded
+// body, with the tolerance of extent (128 tokens plus 2%). The bytes are priced at the byte ratio of
+// this request. It is the one tolerance for the TTL-edge rule and for the B* rule (decision 7).
+func (c *calcState) readReaches(bytes int) bool {
+	want := c.ratio.of(bytes)
 	return want > 0 && want <= c.usage.CacheRead+128+c.usage.CacheRead/50
+}
+
+// readCoversExtent reports whether the tokens the provider read reach the previous request's cached extent.
+func (c *calcState) readCoversExtent(prev *Fingerprint) bool {
+	return c.readReaches(prev.Forwarded.cumBytes(c.prevExt))
 }
 
 // readable is the last position up to x that a request with the breakpoints bps can read. The
@@ -1130,5 +1153,10 @@ func (c *calcState) nextState() ThreadState {
 		next.Cache = CacheState{CachePhase: PhaseHot, Extent: &ext, TTL: ttlName(c.r.Facts.TTL)}
 	}
 	next.PrevPrint = fp
+	if p := c.s.PrevPrint; p != nil && !c.seeded && fp.At.Before(p.At) {
+		// An out-of-order request must not replace a newer fingerprint: the next request would be
+		// compared with an older body and a wrong gap (accountant#16).
+		next.PrevPrint, next.Cache = p, c.s.Cache
+	}
 	return next
 }
