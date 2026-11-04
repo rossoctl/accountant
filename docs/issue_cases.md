@@ -507,7 +507,7 @@ split only when the client body would have written the tokens.
   expected result.
 - **#15 (minimum length).** Fixed with `EntryFacts.MinCacheable` (design §5.1, §6.2). Unit tests in
   `internal/engine/mincacheable_test.go` pin it.
-- **#19 (`Interaction`).** Design §6.2 says it is not implemented in v0. A case would test a feature the spec defers.
+- **#19 (`Interaction`).** Design §6.2 now reports the exact case (a span before the ping's extent). The unit test `interaction_test.go` holds the issue's numbers. A generated case waits for the Q1 decision.
 - **#16 (the clock) has cases now.** It was fixed in accountant#16: a read in the usage overrules the clock up to
   10 seconds past an `exact` TTL, an out-of-order `At` keeps the newer fingerprint, and a fork is seeded from
   `Thread.Parent` (design §5.2). The cases are in `test/cases/clock-*.json`.
