@@ -161,7 +161,7 @@ type ratio struct {
 // newRatio builds the ratio of a body that the provider billed for billed prompt tokens.
 //
 // When the fixed media price is above the bill, the price is wrong, because the provider cannot bill
-// more than billed. The library then gives the media the bill less the least the text can cost
+// less than the media costs. The library then gives the media the bill less the least the text can cost
 // (minTokensPerByte for each text byte), and the text that least. The text ratio is then at its floor,
 // so a saving on text is the lowest it can be (a doubtful figure may only lower a saving). The ratio
 // is marked capped: the operations that cover media are unpriced, and all others are estimates.

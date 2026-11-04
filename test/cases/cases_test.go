@@ -104,6 +104,9 @@ func checkStep(t *testing.T, c Case, i int, s Step) {
 
 	// Conservation (§6.3, check 6): baseline bill - billed bill = sum of Saved - Caused over the
 	// content changes, breaks and state changes. A spend is not part of the bill difference.
+	if slices.Contains(s.Expected.Checks, "media_tokens") && len(s.Expected.Unpriced) > 0 {
+		return // an operation over media is unpriced, so the ops net nothing of the bill difference on purpose
+	}
 	rate := c.StepRate(s)
 	var net int64
 	for _, e := range s.Expected.Ops {

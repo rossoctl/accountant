@@ -305,6 +305,7 @@ type calcState struct {
 	invalid  string // the reason the usage or breakpoints cannot be trusted; "" when they can (§6.5, checks 8 to 10)
 	seeded   bool   // s.PrevPrint is the parent's fingerprint (seededFromParent), not this thread's own
 	ratio    ratio
+	mediaGap int // the ratio's figure for the ranges of operations unpriced for media_tokens (check 6)
 	hostGap  int // saved tokens that come from Size.Tokens beyond the ratio's figure (check 6)
 
 	client, fwd       Body
@@ -1040,7 +1041,7 @@ func (c *calcState) badRatio() bool {
 	}
 	t, n := float64(c.ratio.tokens), float64(c.ratio.bytes)
 	if n == 0 {
-		return t != 0 // all media: the bill must be the media price, and no text is left to price
+		return t != 0 // all media: the bill must be at most the media price (a larger one is cut to the bill), and no text is left to price
 	}
 	if t == 0 {
 		return true
@@ -1094,6 +1095,7 @@ func (c *calcState) price(res *Result) {
 		case resultUnknown(it.op):
 			res.Unpriced = append(res.Unpriced, Unpriced{OpID: it.id, Reason: ReasonPingResultUnknown})
 		case c.mediaUnpriced(k, it):
+			c.leaveOutOfConservation(k, it)
 			res.Unpriced = append(res.Unpriced, Unpriced{OpID: it.id, Reason: ReasonMediaTokens})
 		case it.op.Kind == KindRewrite:
 			for _, sp := range it.spans {
@@ -1166,6 +1168,20 @@ func (c *calcState) mediaUnpriced(k int, it *item) bool {
 	return false
 }
 
+// leaveOutOfConservation adds the ratio's figure for the ranges of an operation unpriced for
+// media_tokens to mediaGap. The bill difference holds those tokens and the operation prices none of
+// them, so check 6 takes them out of the bill difference. Every other operation stays in the check
+// at full strength. Taking the whole check away would also hide a fault in those operations.
+func (c *calcState) leaveOutOfConservation(k int, it *item) {
+	if it.op.DryRun {
+		return
+	}
+	for _, sp := range it.spans {
+		bm, am := c.rangeMedia(k, sp.before, sp, true), c.rangeMedia(k, sp.after, sp, false)
+		c.mediaGap += c.ratio.tokensOf(sp.before.Bytes, bm) - c.ratio.tokensOf(sp.after.Bytes, am)
+	}
+}
+
 // interaction adds the tokens of a saved span that the rescue turned from write into read (§6.2).
 // Without the ping the span would have been written cold; with it the span is saved at the read
 // tier. The difference is neither the ping's nor the operator's, so it is attributed to nobody.
@@ -1214,7 +1230,8 @@ func (c *calcState) conservation(res *Result) {
 	}
 	billed := c.usage.Input + c.usage.CacheRead + c.usage.CacheWrite
 	want := c.ratio.upTo(c.client, len(c.client.Pos)-1) - billed
-	net -= c.hostGap // the ratio's figure: host tokens are exact and the bodies are not
+	net -= c.hostGap   // the ratio's figure: host tokens are exact and the bodies are not
+	want -= c.mediaGap // those operations are unpriced: their tokens are in the bill difference only
 	if d := want - net; d > tol+1 || d < -(tol+1) {
 		res.Checks = append(res.Checks, CheckFailure{Check: "conservation",
 			Detail: fmt.Sprintf("bill difference=%d ops=%d tokens", want, net)})
@@ -1228,10 +1245,14 @@ func tierSum(t TierTokens) int { return t.Input + t.CacheWrite5m + t.CacheWrite1
 // only gives a break the ChangeID of one of the request's operations.
 func (c *calcState) checks(res *Result) {
 	if c.ratio.capped && !c.noUsage {
+		note := "the media is cut to the bill and an operation that covers media is unpriced"
+		if c.invalid != "" {
+			note = "nothing is priced"
+		}
 		media := c.fwd.cumMedia(len(c.fwd.Pos)-1) / mediaBytesPerToken
 		res.Checks = append(res.Checks, CheckFailure{Check: "media_tokens",
-			Detail: fmt.Sprintf("media price=%d tokens billed=%d: the bill is below the media price: the media is cut to %d tokens and any operation that covers media is estimated",
-				media, c.usage.Input+c.usage.CacheRead+c.usage.CacheWrite, c.ratio.mediaTok)})
+			Detail: fmt.Sprintf("media price=%d tokens billed=%d: the bill is below the media price: the media is cut to %d tokens: %s",
+				media, c.usage.Input+c.usage.CacheRead+c.usage.CacheWrite, c.ratio.mediaTok, note)})
 	}
 	var got [3]int
 	seen := map[string]bool{}

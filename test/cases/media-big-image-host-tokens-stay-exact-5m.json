@@ -1,0 +1,154 @@
+{
+ "id": "media/big-image-host-tokens-stay-exact/5m",
+ "description": "The bill (2,350 tokens) is below the library price of the image (4,000), so the media is cut to the bill. A rewrite over the image carries the host's own counts: 1,600 tokens before and 800 after, both plausible. The library uses them as they are: 1,600 - 800 = 800 tokens saved, not Estimated, and the operation is not unpriced. The baseline bill is 2,350 + 800 = 3,150 tokens.",
+ "source": "issue_cases.md#accountant-42",
+ "dims": {
+  "kind": "rewrite",
+  "position": "media",
+  "cache": "unknown",
+  "ttl": "5m",
+  "lifetime": "exact",
+  "media": "host-tokens-capped"
+ },
+ "rates": "fixture-v1",
+ "steps": [
+  {
+   "begin": {
+    "meta": {
+     "requestId": "r0",
+     "session": "s1",
+     "model": "agent-model",
+     "at": "2026-03-02T09:00:00Z",
+     "billing": {
+      "mode": "api"
+     }
+    },
+    "client": {
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "pos": [
+      {
+       "hash": 625792648282977192,
+       "bytes": 2000
+      },
+      {
+       "hash": 17956178250200053669,
+       "bytes": 2000000,
+       "media": 2000000
+      },
+      {
+       "hash": 11100004509484968826,
+       "bytes": 8000
+      }
+     ]
+    },
+    "clientBreakpoints": [
+     {
+      "pos": {
+       "section": "messages",
+       "index": 2
+      },
+      "ttl": "5m"
+     }
+    ]
+   },
+   "add": [
+    {
+     "id": "o1",
+     "kind": "rewrite",
+     "operator": "context-guru.strip",
+     "at": {
+      "section": "messages",
+      "index": 1
+     },
+     "sizeBefore": {
+      "bytes": 2000000,
+      "mediaBytes": 2000000,
+      "tokens": 1600
+     },
+     "sizeAfter": {
+      "bytes": 1000000,
+      "mediaBytes": 1000000,
+      "tokens": 800
+     },
+     "changeId": "cg:strip:c42d"
+    }
+   ],
+   "end": {
+    "thread": {
+     "id": "main"
+    },
+    "forwarded": {
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "pos": [
+      {
+       "hash": 625792648282977192,
+       "bytes": 2000
+      },
+      {
+       "hash": 17956178250200053669,
+       "bytes": 1000000,
+       "media": 1000000
+      },
+      {
+       "hash": 11100004509484968826,
+       "bytes": 8000
+      }
+     ]
+    },
+    "breakpoints": [
+     {
+      "pos": {
+       "section": "messages",
+       "index": 2
+      },
+      "ttl": "5m"
+     }
+    ],
+    "facts": {
+     "ttl": "5m",
+     "lifetime": "exact"
+    }
+   },
+   "usage": {
+    "input": 0,
+    "cacheRead": 0,
+    "cacheWrite": 2350,
+    "cacheWrite1h": 0
+   },
+   "expected": {
+    "phase": "unknown",
+    "baselineUsage": {
+     "input": 0,
+     "cacheRead": 0,
+     "cacheWrite": 3150,
+     "cacheWrite1h": 0
+    },
+    "ops": [
+     {
+      "changeId": "cg:strip:c42d",
+      "saved": {
+       "cacheWrite5m": 800
+      },
+      "caused": {}
+     }
+    ],
+    "unpriced": [
+     {
+      "reason": "penalty_unknown"
+     }
+    ],
+    "checks": [
+     "media_tokens"
+    ]
+   }
+  }
+ ]
+}

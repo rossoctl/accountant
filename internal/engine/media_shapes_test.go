@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"log/slog"
 	"strings"
 	"testing"
 )
@@ -139,5 +140,84 @@ func TestOperationOverMediaIsUnpricedWhenBillIsBelowMediaPrice(t *testing.T) {
 	}
 	if hasUnpricedOp(res, "cut", ReasonMediaTokens) || hasUnpriced(res, ReasonRatioRange) {
 		t.Fatalf("Unpriced = %+v: only the media operation is unpriced", res.Unpriced)
+	}
+}
+
+// capturedWarnings runs f with a slog handler that counts the warnings it gets.
+func countWarnings(t *testing.T, f func()) int {
+	t.Helper()
+	var buf strings.Builder
+	old := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	defer slog.SetDefault(old)
+	f()
+	return strings.Count(buf.String(), "WARN")
+}
+
+// Second request of a thread (phase hot), bill below the media price, one rewrite over an image.
+// Conservation must hold: the unpriced operation's tokens are taken out of the bill difference.
+//
+// Hand computation. Forwarded: media 1,000,000 bytes (price 4,000) above the bill 2,350, so capped.
+// Forwarded text = 2,000 + 78 + 8,000 = 10,078 bytes; floor ceil(0.05 x 10,078) = 504 tokens; the
+// media gets 2,350 - 504 = 1,846 tokens. Client media 2,000,000 bytes = 3,692 tokens; client text
+// 504 tokens. Bill difference = 504 + 3,692 - 2,350 = 1,846 = the media the rewrite removed. The
+// operation is unpriced, so net = 0 and mediaGap = 1,846.
+func TestConservationHoldsWhenMediaOperationIsUnpricedOnHotRequest(t *testing.T) {
+	img := func(n int) []byte { return imageBlock(n) }
+	ts := NewTrackers()
+	r0 := ts.BeginRequest(RequestMeta{RequestID: "r0", Session: "s", At: t0}, NewBody(nil, nil, [][]byte{text("m0", 2000)}), bps5(msg(0)))
+	r0.EndRequest(Thread{ID: "main"}, NewBody(nil, nil, [][]byte{text("m0", 2000)}), bps5(msg(0)), exact5m)
+	r0.Compute(Usage{CacheWrite: 500})
+
+	client := [][]byte{text("m0", 2000), img(2_000_000), text("m2", 8000)}
+	fwd := [][]byte{text("m0", 2000), img(1_000_000), text("m2", 8000)}
+	r1 := ts.BeginRequest(RequestMeta{RequestID: "r1", Session: "s", At: t0.Add(30e9)}, NewBody(nil, nil, client), bps5(msg(2)))
+	r1.Add(Operation{ID: "o1", Kind: KindRewrite, Operator: "strip", ChangeID: "c", At: msg(1),
+		SizeBefore: Size{Bytes: len(client[1])}, SizeAfter: Size{Bytes: len(fwd[1])}})
+	r1.EndRequest(Thread{ID: "main"}, NewBody(nil, nil, fwd), bps5(msg(2)), exact5m)
+	var res Result
+	warns := countWarnings(t, func() { res = r1.Compute(Usage{Input: 2350}) })
+	if res.Phase != PhaseHot {
+		t.Fatalf("phase = %q, want hot", res.Phase)
+	}
+	if !hasUnpricedOp(res, "o1", ReasonMediaTokens) {
+		t.Fatalf("Unpriced = %+v, want o1 with media_tokens", res.Unpriced)
+	}
+	if got := checkNames(res); len(got) != 1 || got[0] != "media_tokens" {
+		t.Fatalf("Checks = %v, want only media_tokens (no conservation)", got)
+	}
+	if warns != 1 { // the media_tokens warning only
+		t.Fatalf("%d warnings, want 1", warns)
+	}
+}
+
+// A capped request with a rewrite over an image where the host counted both sizes: the range is
+// exact, so the operation is priced, not Estimated and not unpriced.
+func TestHostTokensOverMediaStayExactWhenCapped(t *testing.T) {
+	img := imageBlock(2_000_000)
+	client := [][]byte{text("m0", 2000), img, text("m2", 8000)}
+	small := imageBlock(1_000_000)
+	fwd := [][]byte{text("m0", 2000), small, text("m2", 8000)}
+	op := Operation{ID: "o1", Kind: KindRewrite, Operator: "strip", ChangeID: "c", At: msg(1),
+		SizeBefore: Size{Bytes: len(img), Tokens: 1600}, SizeAfter: Size{Bytes: len(small), Tokens: 800}}
+	res := priceBP(client, fwd, op, 2350)
+	if len(res.Unpriced) != 0 && !hasUnpriced(res, ReasonPenaltyUnknown) || hasUnpriced(res, ReasonMediaTokens) {
+		t.Fatalf("Unpriced = %+v, o1 must be priced", res.Unpriced)
+	}
+	p := findOp(t, res, "o1")
+	if got := tierSum(p.Saved); got != 800 || p.Estimated {
+		t.Fatalf("saved = %d estimated = %v, want the host's 800, exact", got, p.Estimated)
+	}
+}
+
+// The marker search must not change indices: U+0130 lower-cases to a longer string.
+func TestDataURLPayloadLongHeaderAndFolding(t *testing.T) {
+	d := strings.Repeat("A", 50)
+	hdr := "data:image/png;name=" + strings.Repeat("x", 500) + ";base64,"
+	if got := dataURLPayload(hdr + d); got != 50 {
+		t.Fatalf("long header: %d, want 50", got)
+	}
+	if got := dataURLPayload("data:image/png;name=İİ;BASE64," + d); got != 50 {
+		t.Fatalf("U+0130 header: %d, want 50", got)
 	}
 }

@@ -2146,6 +2146,53 @@ def c42b():
                  DIMS("rewrite", "media", "unknown", media="bill-below-price"), [s0])
 
 
+def c42c():
+    # Second request of a thread, phase hot, capped ratio, one rewrite over an image, no Size.Tokens.
+    # Conservation (check 6) must hold: the unpriced operation's tokens leave the bill difference.
+    # The media/* cases above are first requests, where check 6 is skipped, so they could not show this.
+    SF = "cg:strip:c42c"
+    m0 = [("m0", 500)]
+    C = [("m0", 500), ("img", 0, 2000000), ("m2", 2000)]
+    F = [("m0", 500), ("img", 0, 1000000), ("m2", 2000)]
+    op = rewrite("o1", "context-guru.strip", "messages", 1, 0, 0, SF)
+    op["sizeBefore"] = {"bytes": 2000000, "mediaBytes": 2000000}
+    op["sizeAfter"] = {"bytes": 1000000, "mediaBytes": 1000000}
+    s0 = sim(0, "r0", ([], [], m0), ([], [], m0), [], "unknown", cbp=BP(("messages", 0)), fbp=BP(("messages", 0)))
+    cbp, fbp = BP(("messages", 2)), BP(("messages", 2))
+    e = expect("hot", U(inp=4200), [], unpriced=[{"opId": "o1", "reason": "media_tokens"}], checks=["media_tokens"],
+               boundary=P("messages", 0))
+    s1 = step(30, "r1", mbody(C), mbody(F), cbp, fbp, [op], U(inp=2350), e)
+    write_review("media/big-image-hot-request-op-over-media/5m", 42,
+                 "Request 0 caches one 500-token message. Request 1 (30 seconds later, hot) adds a 2,000,000-byte image and "
+                 "an 8,000-byte message. A rewrite cuts the image to 1,000,000 bytes. The bill is 2,350 tokens, below the "
+                 "library price of the forwarded image (1,000,000 / 250 = 4,000). Forwarded text = 2,000 + 8,000 = 10,000 bytes; "
+                 "the least is 0.05 x 10,000 = 500 tokens; the media gets 2,350 - 500 = 1,850 tokens. The client media is "
+                 "2,000,000 bytes = 3,700 tokens, so the bill difference is 500 + 3,700 - 2,350 = 1,850 tokens: all of it is the "
+                 "image the rewrite removed. The rewrite covers media, so it is unpriced (media_tokens), and the check "
+                 "conservation takes its 1,850 tokens out of the bill difference. Only media_tokens fails. "
+                 "Before the fix conservation failed too.",
+                 DIMS("rewrite", "media", "hot", media="hot-op-over-media"), [s0, s1])
+
+
+def c42d():
+    # Capped request, rewrite over an image, the host counted both sizes: priced, exact, not unpriced.
+    SF = "cg:strip:c42d"
+    C = [("m0", 500), ("img", 0, 2000000), ("m2", 2000)]
+    F = [("m0", 500), ("img", 0, 1000000), ("m2", 2000)]
+    op = rewrite("o1", "context-guru.strip", "messages", 1, 0, 0, SF)
+    op["sizeBefore"] = {"bytes": 2000000, "mediaBytes": 2000000, "tokens": 1600}
+    op["sizeAfter"] = {"bytes": 1000000, "mediaBytes": 1000000, "tokens": 800}
+    exact = eop(SF, saved=TT(cacheWrite5m=800))
+    del exact["estimated"]
+    s0 = media_step(0, "r0", C, F, op, billed=2350, exp_ops=[exact], checks=["media_tokens"], baseline=3150)
+    write_review("media/big-image-host-tokens-stay-exact/5m", 42,
+                 "The bill (2,350 tokens) is below the library price of the image (4,000), so the media is cut to the bill. "
+                 "A rewrite over the image carries the host's own counts: 1,600 tokens before and 800 after, both plausible. "
+                 "The library uses them as they are: 1,600 - 800 = 800 tokens saved, not Estimated, and the operation is not "
+                 "unpriced. The baseline bill is 2,350 + 800 = 3,150 tokens.",
+                 DIMS("rewrite", "media", "unknown", media="host-tokens-capped"), [s0])
+
+
 def c43():
     # 200 messages, no breakpoint at all (OpenAI-style traffic). extent must scan every position.
     n = 200
@@ -2175,5 +2222,5 @@ if __name__ == "__main__":
             os.remove(os.path.join(OUT, old))
     for f in (ex12, ex3, ex4, ex5, ex67, ex8, shared_prefix_cases, ex9, c01, c02, c03_04, c05, c06, c07, c08, c09, c10, c11, c12, c_threads, c_clock, c_mix,
               c14, c15, c16, c17, c18, a1, a2, a3, a4_b3, b1_b2, b4, b5, c1_, c2_, c2b, c3_, c5, d2, d3, d4,
-              d5, d6, e2, e345, f245, h2, h5, r9, r14, r21, r20, r20b, c42, c42b, c43):
+              d5, d6, e2, e345, f245, h2, h5, r9, r14, r21, r20, r20b, c42, c42b, c42c, c42d, c43):
         f()

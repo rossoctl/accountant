@@ -107,15 +107,26 @@ func hasPrefixFold(s, prefix string) bool {
 	return len(s) >= len(prefix) && strings.EqualFold(s[:len(prefix)], prefix)
 }
 
+// indexFold is strings.Index without case, for an ASCII substr. It returns a byte index into s.
+func indexFold(s, substr string) int {
+	for i := 0; i+len(substr) <= len(s); i++ {
+		if hasPrefixFold(s[i:], substr) {
+			return i
+		}
+	}
+	return -1
+}
+
 // dataURLPayload returns the payload length of a base64 image or PDF data URL, or 0. Another MIME
 // type (data:text/html;base64,...) is text. The match is case-insensitive.
 func dataURLPayload(s string) int {
 	if !hasPrefixFold(s, "data:image/") && !hasPrefixFold(s, "data:application/pdf") {
 		return 0
 	}
-	// The marker is in the header, before the payload: do not lower-case the payload.
-	head := s[:min(len(s), 256)]
-	i := strings.Index(strings.ToLower(head), dataURLMarker)
+	// Search for the marker without case and without changing the indices: lower-casing a string can
+	// change its length (U+0130, U+212A). The marker is in the header, so no limit is needed: the
+	// search stops at the first ";base64," and a payload holds no ";".
+	i := indexFold(s, dataURLMarker)
 	if i < 0 {
 		return 0
 	}
