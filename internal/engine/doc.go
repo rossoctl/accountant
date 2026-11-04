@@ -47,7 +47,8 @@
 //     length (EntryFacts.MinCacheable) turns a write into input when no breakpoint at or after the content reaches it.
 //     A usage with no cache tokens and some input does the same for the forwarded body (§5.1, §6.2).
 //  8. A break moves the forwarded tokens after the read extent, up to B* as forwarded, from read to
-//     write, at the TTL of the first forwarded breakpoint at or after B* (5m when there is none).
+//     write, at the TTL of the first forwarded breakpoint at or after B* that reaches the minimum cacheable length (5m when there
+//     is none). On an uncacheable request (§5.1) the moved tokens are input.
 //     A setting break (§5.2 row 3) starts at the last candidate before the earliest
 //     SettingChange.At; with no At it starts at the read and adds penalty_unknown. Row 3 and row 4
 //     need the read to be below the prediction by more than the tolerance of decision 3.

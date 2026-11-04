@@ -78,7 +78,7 @@ Other Anthropic facts that the model depends on:
   turn with many parallel tool calls does not push the previous request's entry out of the window on
   its own. The prefix can be unchanged and still miss, when the previous entry is more than 20
   positions behind the breakpoint.
-- **A minimum length applies.** It is 1,024, 2,048 or 4,096 tokens, depending on the model. A shorter
+- **A minimum length applies.** It is 512, 1,024, 2,048 or 4,096 tokens, depending on the model. A shorter
   prompt is processed without caching and returns no error.
 - **Isolation.** A cache is private to a workspace on the Claude API, and to an organization on Bedrock
   and on Google Cloud.

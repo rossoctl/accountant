@@ -878,14 +878,16 @@ func addWrite(t *TierTokens, ttl string, n int) {
 // addTier adds n tokens at flat position p by the tier rule (§6.2): read at or before B*, write at the
 // TTL of the first breakpoint at or after p that reaches the minimum cacheable length (§5.1), input
 // otherwise. forwarded is true for tokens of the forwarded body: when the usage shows no cache tokens,
-// that body was uncacheable and its tokens are input. The client body is a counterfactual that the usage
+// that body was uncacheable and all its tokens are input, in the read range too. The client body is a counterfactual that the usage
 // does not describe, so only the minimum length decides its tier.
 func (c *calcState) addTier(t *TierTokens, body Body, forwarded bool, p, bstar int, bps []bp, n int) {
 	ttl, anyBP, ok := c.writeBP(body, bps, p)
 	switch {
+	case forwarded && c.noCacheTokens():
+		t.Input += n // the usage shows no read and no write: nothing was read, whatever B* says
 	case len(bps) > 0 && p <= bstar:
 		t.CacheRead += n
-	case !anyBP || !ok || (forwarded && c.noCacheTokens()):
+	case !anyBP || !ok:
 		t.Input += n
 	default:
 		addWrite(t, ttl, n)
@@ -920,7 +922,7 @@ func (c *calcState) price(res *Result) {
 						fp, _ = c.toFwdSkipping(k, sp.from) // an inserted item sits in the slot its own splice opened
 					}
 					at := mustFlat(c.fwd, fp)
-					if sp.before.Bytes == 0 && c.phase == PhaseHot && c.prevExt >= 0 && at <= c.prevExt && at < c.fwdFD {
+					if sp.before.Bytes == 0 && c.phase == PhaseHot && c.prevExt >= 0 && at <= c.prevExt && at < c.fwdFD && !c.noCacheTokens() {
 						// content the operator added, which the previous request already forwarded
 						// and cached: the provider reads it, whatever B* says (§6.2)
 						p.Caused.CacheRead += -d

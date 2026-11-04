@@ -637,7 +637,7 @@ been a write.
 **Provider details that lower B\* further.** The formula uses the breakpoints only. Two facts in
 [`cached-prefix.md`](cached-prefix.md) can make the real read shorter: the Anthropic lookback of 20
 blocks, and the minimum cacheable length. The library applies the minimum length in the tier rule (§6.2), not in B\*. When the host sets
-`EntryFacts.MinCacheable` (1024, 2048 or 4096 tokens, by model), content is written only at the first
+`EntryFacts.MinCacheable` (512, 1024, 2048 or 4096 tokens, by model), content is written only at the first
 breakpoint at or after it whose prefix reaches that length. Prefixes are cumulative, so a later breakpoint can
 cache what an earlier, shorter one cannot. When no breakpoint reaches the minimum, the provider caches nothing
 and the content is `Input`. With `MinCacheable` = 0 the host named no minimum and nothing changes. The library
@@ -999,7 +999,7 @@ forwarded space, against the forwarded breakpoints.
 | after `L` | **input** |
 | any position, with no breakpoint in the body | **input** |
 | any position, when no breakpoint at or after it ends a prefix of at least `EntryFacts.MinCacheable` tokens (§5.1) | **input**, not write |
-| a position in the forwarded body, when the usage has no cache tokens and some `Input` (§5.1) | **input**, not write |
+| a position in the forwarded body, when the usage has no cache tokens and some `Input` (§5.1) | **input**, even at or before B\* |
 
 On a cache miss, B\* = 0, so the first row matches nothing. A position is compared in hash order:
 section first (tools, system, messages), then index. For a change with `Spans`, each span is
@@ -1013,7 +1013,7 @@ write on a cold turn.
 declaration, a restore) is a cost. Its added tokens take the tier of their position, by the same
 rule: read before B\*, write after B\* and at or before `L`, input after `L`. They are `Caused`, not
 `Saved`.
-If the previous request already forwarded the added content and its prefix is unchanged, the provider reads it: it is priced at the read tier, whatever B\* says. Only the request that first adds it pays the write.
+If the previous request already forwarded the added content and its prefix is unchanged, the provider reads it: it is priced at the read tier, whatever B\* says. Only the request that first adds it pays the write. The exception is a usage with no cache tokens and some `Input` (§5.1): the provider read nothing, so these added tokens are `Input` too.
 
 **A break, and the breakpoints.** A break moves content from the read tier to the write tier. The content that moves is:
 

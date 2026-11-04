@@ -1,6 +1,9 @@
 package engine
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 // §5.1, §6.2, accountant#15. The tests bill one token per byte.
 
@@ -10,8 +13,8 @@ func minFacts(min int) EntryFacts {
 	return f
 }
 
-// A request with a cut after the first breakpoint: m0 goes from 400 to 100 bytes. With no previous
-// request the phase is unknown and B* is the read extent (system[0], 500).
+// A request with a cut after the first breakpoint: m0 goes from 600 to 300 bytes. With no previous
+// request the phase is unknown and B* is the read extent (system[0], 1000).
 func cutAfterBStar(extra []blk, extraBPs []Position, facts EntryFacts, usage Usage) Result {
 	sysB := []blk{b("sys", 1000)}
 	cm := append([]blk{b("m0", 600)}, extra...)
@@ -114,5 +117,51 @@ func TestALongPromptCutKeepsTheWriteRateWithMinCacheable(t *testing.T) {
 		usage: Usage{CacheWrite: 1500}}.run(NewTrackers())
 	if s := findOp(t, res, "a").Saved; s.CacheWrite5m != 1500 {
 		t.Fatalf("Saved = %+v, want CacheWrite5m=1500", s)
+	}
+}
+
+// Hot request: request 1 added 300 tokens at m0 and the provider cached the 2300-token prefix. On request 2
+// the change is active, its content is inside the cached prefix, and the prefix is unchanged. A read
+// there is a read (§6.2); with no cache tokens in the usage (a miss) it is input.
+func hotAddedInsidePrefix(usage Usage) Result {
+	ts := NewTrackers()
+	op := rewrite("a", "op", "c:1", msg(0), 0, 300)
+	req{at: t0, client: mk(nil, nil, []blk{b("m0", 1000), b("m1", 1000)}), clientBPs: bps5(msg(1)),
+		ops: []Operation{op},
+		fwd: mk(nil, nil, []blk{b("m0", 1300), b("m1", 1000)}), fwdBPs: bps5(msg(1)),
+		facts: exact5m, usage: Usage{CacheWrite: 2300}}.run(ts)
+	return req{at: t0.Add(time.Minute), client: mk(nil, nil, []blk{b("m0", 1000), b("m1", 1000), b("m2", 100)}),
+		clientBPs: bps5(msg(1), msg(2)),
+		fwd:       mk(nil, nil, []blk{b("m0", 1300), b("m1", 1000), b("m2", 100)}), fwdBPs: bps5(msg(1), msg(2)),
+		facts: exact5m, usage: usage}.run(ts)
+}
+
+func TestAnAddedBlockInsideTheCachedPrefixWithNoCacheTokensIsInput(t *testing.T) {
+	res := hotAddedInsidePrefix(Usage{Input: 2400})
+	if c := findOp(t, res, "active:c:1").Caused; c.Input != 300 || c.CacheRead != 0 {
+		t.Fatalf("Caused = %+v, want Input=300", c)
+	}
+}
+
+func TestAnAddedBlockInsideTheCachedPrefixWithAReadIsARead(t *testing.T) {
+	res := hotAddedInsidePrefix(Usage{CacheRead: 2300, CacheWrite: 100})
+	if c := findOp(t, res, "active:c:1").Caused; c.CacheRead != 300 {
+		t.Fatalf("Caused = %+v, want CacheRead=300", c)
+	}
+}
+
+// A restore inside B* (the forwarded item grows back) reaches the read tier of addTier. With no cache
+// tokens in the usage it is input.
+func TestARestoreInsideBStarWithNoCacheTokensIsInput(t *testing.T) {
+	ts := NewTrackers()
+	req{at: t0, client: mk(nil, nil, []blk{b("m0", 1000), b("m1", 1000)}), clientBPs: bps5(msg(1)),
+		facts: exact5m, usage: Usage{CacheWrite: 2000}}.run(ts)
+	res := req{at: t0.Add(time.Minute), client: mk(nil, nil, []blk{b("m0", 1000), b("m1", 1000), b("m2", 100)}),
+		clientBPs: bps5(msg(1), msg(2)),
+		ops:       []Operation{rewrite("a", "op", "c:1", msg(1), 700, 1000)},
+		fwd:       mk(nil, nil, []blk{b("m0", 1000), b("m1", 1000), b("m2", 100)}), fwdBPs: bps5(msg(1), msg(2)),
+		facts: exact5m, usage: Usage{Input: 2100}}.run(ts)
+	if c := findOp(t, res, "a").Caused; c.CacheRead != 0 {
+		t.Fatalf("Caused = %+v, want no read", c)
 	}
 }
