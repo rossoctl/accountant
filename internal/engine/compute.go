@@ -18,6 +18,7 @@ const (
 	ReasonNotSpend          = "not_spend"       // a standalone RequestOps holds only spend operations (§6.1)
 	ReasonBadUsage          = "bad_usage"       // a usage count is negative: nothing is priced (§6.5, check 8)
 	ReasonRatioRange        = "ratio_range"     // tokens per byte is outside the range: nothing is priced (§6.5, check 9)
+	ReasonMediaTokens       = "media_tokens"    // the operation covers media, and the bill is below the media price: only this operation is unpriced (§6.5, check 11)
 	ReasonBreakpoints       = "breakpoints"     // more than 4 breakpoints, or an unknown TTL: nothing is priced (§6.5, check 10)
 )
 
@@ -304,6 +305,7 @@ type calcState struct {
 	invalid  string // the reason the usage or breakpoints cannot be trusted; "" when they can (§6.5, checks 8 to 10)
 	seeded   bool   // s.PrevPrint is the parent's fingerprint (seededFromParent), not this thread's own
 	ratio    ratio
+	mediaGap int // the ratio's figure for the ranges of operations unpriced for media_tokens (check 6)
 	hostGap  int // saved tokens that come from Size.Tokens beyond the ratio's figure (check 6)
 
 	client, fwd       Body
@@ -1028,7 +1030,8 @@ func (c *calcState) validate(u Usage) string {
 }
 
 // badRatio says whether the tokens per forwarded text byte are outside 0.05 to 2.0 (check 9). Media
-// bytes are not in the denominator and the media price is not in the numerator (newRatio). A usage that
+// bytes are not in the denominator and the media price is not in the numerator (newRatio). A media
+// price above the bill is cut to the bill (newRatio), so it does not fail this check. A usage that
 // bills no prompt token for a body with bytes (tokens per byte 0), or tokens for an empty body (infinite),
 // is outside the range too.
 func (c *calcState) badRatio() bool {
@@ -1036,12 +1039,9 @@ func (c *calcState) badRatio() bool {
 	if c.fwd.cumBytes(last) == 0 {
 		return true // an empty body billed for tokens, or for none
 	}
-	if c.fwd.cumMedia(last)/mediaBytesPerToken > c.usage.Input+c.usage.CacheRead+c.usage.CacheWrite {
-		return true // the bill is below the media price: check 11 fails too
-	}
 	t, n := float64(c.ratio.tokens), float64(c.ratio.bytes)
 	if n == 0 {
-		return t != 0 // all media: the bill must be the media price, and no text is left to price
+		return t != 0 // all media: the bill must be at most the media price (a larger one is cut to the bill), and no text is left to price
 	}
 	if t == 0 {
 		return true
@@ -1094,6 +1094,9 @@ func (c *calcState) price(res *Result) {
 			res.Unpriced = append(res.Unpriced, Unpriced{OpID: it.id, Reason: c.invalid})
 		case resultUnknown(it.op):
 			res.Unpriced = append(res.Unpriced, Unpriced{OpID: it.id, Reason: ReasonPingResultUnknown})
+		case c.mediaUnpriced(k, it):
+			c.leaveOutOfConservation(k, it)
+			res.Unpriced = append(res.Unpriced, Unpriced{OpID: it.id, Reason: ReasonMediaTokens})
 		case it.op.Kind == KindRewrite:
 			for _, sp := range it.spans {
 				bm, am := c.rangeMedia(k, sp.before, sp, true), c.rangeMedia(k, sp.after, sp, false)
@@ -1144,6 +1147,41 @@ func (c *calcState) price(res *Result) {
 	res.Ops = append(reported, active...)
 }
 
+// mediaUnpriced says whether the operation covers media while the bill is below the media price
+// (check 11). The library does not know how the bill splits between that media and the text, so it
+// does not price the operation. A span with the host's own tokens on both sizes is still exact, so
+// it does not count. An operation that covers no media is priced with the text ratio.
+func (c *calcState) mediaUnpriced(k int, it *item) bool {
+	if !c.ratio.capped || it.op.Kind != KindRewrite {
+		return false
+	}
+	for _, sp := range it.spans {
+		bm, am := c.rangeMedia(k, sp.before, sp, true), c.rangeMedia(k, sp.after, sp, false)
+		if bm == 0 && am == 0 {
+			continue
+		}
+		hostCounted := sp.before.Tokens > 0 && plausible(sp.before, bm) && sp.after.Tokens > 0 && plausible(sp.after, am)
+		if !hostCounted {
+			return true
+		}
+	}
+	return false
+}
+
+// leaveOutOfConservation adds the ratio's figure for the ranges of an operation unpriced for
+// media_tokens to mediaGap. The bill difference holds those tokens and the operation prices none of
+// them, so check 6 takes them out of the bill difference. Every other operation stays in the check
+// at full strength. Taking the whole check away would also hide a fault in those operations.
+func (c *calcState) leaveOutOfConservation(k int, it *item) {
+	if it.op.DryRun {
+		return
+	}
+	for _, sp := range it.spans {
+		bm, am := c.rangeMedia(k, sp.before, sp, true), c.rangeMedia(k, sp.after, sp, false)
+		c.mediaGap += c.ratio.tokensOf(sp.before.Bytes, bm) - c.ratio.tokensOf(sp.after.Bytes, am)
+	}
+}
+
 // interaction adds the tokens of a saved span that the rescue turned from write into read (§6.2).
 // Without the ping the span would have been written cold; with it the span is saved at the read
 // tier. The difference is neither the ping's nor the operator's, so it is attributed to nobody.
@@ -1192,7 +1230,8 @@ func (c *calcState) conservation(res *Result) {
 	}
 	billed := c.usage.Input + c.usage.CacheRead + c.usage.CacheWrite
 	want := c.ratio.upTo(c.client, len(c.client.Pos)-1) - billed
-	net -= c.hostGap // the ratio's figure: host tokens are exact and the bodies are not
+	net -= c.hostGap   // the ratio's figure: host tokens are exact and the bodies are not
+	want -= c.mediaGap // those operations are unpriced: their tokens are in the bill difference only
 	if d := want - net; d > tol+1 || d < -(tol+1) {
 		res.Checks = append(res.Checks, CheckFailure{Check: "conservation",
 			Detail: fmt.Sprintf("bill difference=%d ops=%d tokens", want, net)})
@@ -1205,9 +1244,15 @@ func tierSum(t TierTokens) int { return t.Input + t.CacheWrite5m + t.CacheWrite1
 // are not run here (conservation is, in calc): attribution holds by construction, because the library
 // only gives a break the ChangeID of one of the request's operations.
 func (c *calcState) checks(res *Result) {
-	if media := c.fwd.cumMedia(len(c.fwd.Pos)-1) / mediaBytesPerToken; !c.noUsage && media > c.usage.Input+c.usage.CacheRead+c.usage.CacheWrite {
+	if c.ratio.capped && !c.noUsage {
+		note := "the media is cut to the bill and an operation that covers media is unpriced"
+		if c.invalid != "" {
+			note = "nothing is priced"
+		}
+		media := c.fwd.cumMedia(len(c.fwd.Pos)-1) / mediaBytesPerToken
 		res.Checks = append(res.Checks, CheckFailure{Check: "media_tokens",
-			Detail: fmt.Sprintf("media=%d tokens billed=%d: the bill is below the media price: nothing is priced (ratio_range)", media, c.usage.Input+c.usage.CacheRead+c.usage.CacheWrite)})
+			Detail: fmt.Sprintf("media price=%d tokens billed=%d: the bill is below the media price: the media is cut to %d tokens: %s",
+				media, c.usage.Input+c.usage.CacheRead+c.usage.CacheWrite, c.ratio.mediaTok, note)})
 	}
 	var got [3]int
 	seen := map[string]bool{}

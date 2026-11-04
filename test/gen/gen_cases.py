@@ -2077,6 +2077,144 @@ def r20():
                  DIMS("setting-breakpoint", "system", "no-effect", hash="differs"), [s0, s1])
 
 
+# ---------------------------------------------------------------------------------------------
+# accountant#42 and #43: media in the ratio, and a long body with no breakpoint.
+MEDIA_PER_TOKEN = 250  # the library price of base64 media: 1 token for each 250 bytes (design §4.2 rule 7)
+
+
+def mbody(msgs):
+    """A body of messages. A message is (id, text_tokens) or (id, text_tokens, media_bytes). A media
+    position holds 4 bytes a text token plus media_bytes of base64 payload, all of it marked Media."""
+    b = body([], [], [(m[0], m[1]) for m in msgs])
+    for p, m in zip(b["pos"], msgs):
+        if len(m) > 2:
+            p["bytes"] += m[2]
+            p["media"] = m[2]
+    return b
+
+
+def mtokens(msgs):
+    return sum(m[1] + (m[2] // MEDIA_PER_TOKEN if len(m) > 2 else 0) for m in msgs)
+
+
+def media_step(sec, rid, C, F, op, billed, exp_ops, checks=None, unpriced=None, baseline=None):
+    """A first request (cold start: the boundary is unknown) over bodies with media. `billed` is the bill."""
+    e = expect("unknown", U(write=baseline if baseline else mtokens(C)), exp_ops, unpriced=unpriced or [{"reason": "penalty_unknown"}], checks=checks)
+    cbp = [{"pos": P("messages", len(C) - 1), "ttl": "5m"}]
+    fbp = [{"pos": P("messages", len(F) - 1), "ttl": "5m"}]
+    return step(sec, rid, mbody(C), mbody(F), cbp, fbp, [op], U(write=billed), e)
+
+
+def c42():
+    # A 250,000-byte image beside text. The image is 1,000 tokens at the library price and stays out of
+    # the text ratio. Text: 1,000 + 2,000 tokens in the client body; the operator cuts m2 to 500.
+    SF = "cg:cmdfilter:c42a"
+    C = [("m0", 1000), ("img", 0, 250000), ("m2", 2000)]
+    F = [("m0", 1000), ("img", 0, 250000), ("m2", 500)]
+    op = rewrite("o1", "context-guru.cmdfilter", "messages", 2, 2000, 500, SF)
+    s0 = media_step(0, "r0", C, F, op, billed=mtokens(F), exp_ops=[eop(SF, saved=TT(cacheWrite5m=1500))])
+    write_review("media/large-image-beside-text/5m", 42,
+                 "One request: a base64 image of 250,000 bytes (1,000 tokens at 1 token for 250 bytes) beside text. "
+                 "The client body holds 1,000 + 2,000 text tokens and the image: 4,000 tokens. The operator cuts m2 from 2,000 "
+                 "to 500 tokens. The forwarded body is billed 1,000 + 1,000 + 500 = 2,500 tokens. The text ratio leaves the "
+                 "image out: (2,500 - 1,000) tokens over (4,000 + 2,000) forwarded text bytes = 1,500 / 6,000 = 0.25 tokens a byte. "
+                 "The cut removes 6,000 bytes: 6,000 x 0.25 = 1,500 tokens saved, at the cache write tier. "
+                 "If the image were counted in the ratio, 250,000 extra bytes would drag the ratio to 0.0098 and the saving "
+                 "to 59 tokens.",
+                 DIMS("rewrite", "media", "unknown", media="beside-text"), [s0])
+
+
+def c42b():
+    # A 2,000,000-byte image costs 8,000 tokens at the library price. The provider billed about 1,600
+    # for it (downscaling). Text: 500 + 250 tokens forwarded. The bill is 2,350, below the price.
+    SF = "cg:cmdfilter:c42b"
+    C = [("m0", 500), ("img", 0, 2000000), ("m2", 2000)]
+    F = [("m0", 500), ("img", 0, 2000000), ("m2", 250)]
+    op = rewrite("o1", "context-guru.cmdfilter", "messages", 2, 2000, 250, SF)
+    s0 = media_step(0, "r0", C, F, op, billed=2350, exp_ops=[eop(SF, saved=TT(cacheWrite5m=350))], checks=["media_tokens"],
+                    baseline=2700)
+    write_review("media/big-image-small-conversation/bill-below-media-price/5m", 42,
+                 "One request: an image of 2,000,000 bytes, which the library prices at 8,000 tokens. The provider billed the "
+                 "whole request 2,350 tokens (text 750 + image about 1,600), so the bill is below the library price. "
+                 "The library cuts the media to the bill less the least the text can cost. Forwarded text: 2,000 + 1,000 = "
+                 "3,000 bytes. The least is 0.05 x 3,000 = 150 tokens. The media gets 2,350 - 150 = 2,200 tokens. The text "
+                 "ratio is 150 / 3,000 = 0.05. The operator cuts m2 from 8,000 to 1,000 bytes: 7,000 x 0.05 = 350 tokens "
+                 "saved. This is the lowest figure the bill allows, so it is a floor. The check media_tokens fails to say "
+                 "the media price was cut. The request is not dropped: before the fix nothing was priced "
+                 "(unpriced ratio_range, saved 0). The baseline bill is 10,000 x 0.05 + 2,200 = 2,700 tokens: "
+                 "2,700 - 2,350 = 350.",
+                 DIMS("rewrite", "media", "unknown", media="bill-below-price"), [s0])
+
+
+def c42c():
+    # Second request of a thread, phase hot, capped ratio, one rewrite over an image, no Size.Tokens.
+    # Conservation (check 6) must hold: the unpriced operation's tokens leave the bill difference.
+    # The media/* cases above are first requests, where check 6 is skipped, so they could not show this.
+    SF = "cg:strip:c42c"
+    m0 = [("m0", 500)]
+    C = [("m0", 500), ("img", 0, 2000000), ("m2", 2000)]
+    F = [("m0", 500), ("img", 0, 1000000), ("m2", 2000)]
+    op = rewrite("o1", "context-guru.strip", "messages", 1, 0, 0, SF)
+    op["sizeBefore"] = {"bytes": 2000000, "mediaBytes": 2000000}
+    op["sizeAfter"] = {"bytes": 1000000, "mediaBytes": 1000000}
+    s0 = sim(0, "r0", ([], [], m0), ([], [], m0), [], "unknown", cbp=BP(("messages", 0)), fbp=BP(("messages", 0)))
+    cbp, fbp = BP(("messages", 2)), BP(("messages", 2))
+    e = expect("hot", U(inp=4200), [], unpriced=[{"opId": "o1", "reason": "media_tokens"}], checks=["media_tokens"],
+               boundary=P("messages", 0))
+    s1 = step(30, "r1", mbody(C), mbody(F), cbp, fbp, [op], U(inp=2350), e)
+    write_review("media/big-image-hot-request-op-over-media/5m", 42,
+                 "Request 0 caches one 500-token message. Request 1 (30 seconds later, hot) adds a 2,000,000-byte image and "
+                 "an 8,000-byte message. A rewrite cuts the image to 1,000,000 bytes. The bill is 2,350 tokens, below the "
+                 "library price of the forwarded image (1,000,000 / 250 = 4,000). Forwarded text = 2,000 + 8,000 = 10,000 bytes; "
+                 "the least is 0.05 x 10,000 = 500 tokens; the media gets 2,350 - 500 = 1,850 tokens. The client media is "
+                 "2,000,000 bytes = 3,700 tokens, so the bill difference is 500 + 3,700 - 2,350 = 1,850 tokens: all of it is the "
+                 "image the rewrite removed. The rewrite covers media, so it is unpriced (media_tokens), and the check "
+                 "conservation takes its 1,850 tokens out of the bill difference. Only media_tokens fails. "
+                 "Before the fix conservation failed too.",
+                 DIMS("rewrite", "media", "hot", media="hot-op-over-media"), [s0, s1])
+
+
+def c42d():
+    # Capped request, rewrite over an image, the host counted both sizes: priced, exact, not unpriced.
+    SF = "cg:strip:c42d"
+    C = [("m0", 500), ("img", 0, 2000000), ("m2", 2000)]
+    F = [("m0", 500), ("img", 0, 1000000), ("m2", 2000)]
+    op = rewrite("o1", "context-guru.strip", "messages", 1, 0, 0, SF)
+    op["sizeBefore"] = {"bytes": 2000000, "mediaBytes": 2000000, "tokens": 1600}
+    op["sizeAfter"] = {"bytes": 1000000, "mediaBytes": 1000000, "tokens": 800}
+    exact = eop(SF, saved=TT(cacheWrite5m=800))
+    del exact["estimated"]
+    s0 = media_step(0, "r0", C, F, op, billed=2350, exp_ops=[exact], checks=["media_tokens"], baseline=3150)
+    write_review("media/big-image-host-tokens-stay-exact/5m", 42,
+                 "The bill (2,350 tokens) is below the library price of the image (4,000), so the media is cut to the bill. "
+                 "A rewrite over the image carries the host's own counts: 1,600 tokens before and 800 after, both plausible. "
+                 "The library uses them as they are: 1,600 - 800 = 800 tokens saved, not Estimated, and the operation is not "
+                 "unpriced. The baseline bill is 2,350 + 800 = 3,150 tokens.",
+                 DIMS("rewrite", "media", "unknown", media="host-tokens-capped"), [s0])
+
+
+def c43():
+    # 200 messages, no breakpoint at all (OpenAI-style traffic). extent must scan every position.
+    n = 200
+    msgs = [(f"m{i}", 100) for i in range(n)]
+    SF = "cg:cmdfilter:c43a"
+    m1c = msgs + [("m200", 400)]
+    m1f = msgs + [("m200", 100)]
+    op = rewrite("o1", "context-guru.cmdfilter", "messages", n, 400, 100, SF)
+    s0 = sim(0, "r0", ([], [], msgs), ([], [], msgs), [], "unknown", cbp=[], fbp=[], usage=U(inp=20000), base=U(inp=20000))
+    s1 = sim(30, "r1", ([], [], m1c), ([], [], m1f), [eop(SF, saved=TT(input=300))], "hot", add=[op],
+             prev=(20000, 20000), usage=U(read=20000, inp=100), base=U(read=20000, inp=400), cbp=[], fbp=[],
+             boundary=P("messages", n - 1))
+    write_review("extent/no-breakpoint-long-body/hot/5m", 43,
+                 "200 messages of 100 tokens, and no cache breakpoint at all (OpenAI-style traffic). Turn 0 caches 20,000 "
+                 "tokens. Turn 1 adds a message of 400 tokens and the operator cuts it to 100. With no breakpoint the "
+                 "library must search the whole body for the end of the cached prefix: every position is a candidate. "
+                 "The provider read 20,000 tokens, the whole previous body, so B* is the last old message. The new "
+                 "message is past B*, so its 300 saved tokens are fresh input (no breakpoint, so no cache write tier): 300 x $3.00 = +$0.0009. Before the fix the "
+                 "search was quadratic in the number of positions; the result is the same.",
+                 DIMS("rewrite", "afterBStar", "hit", breakpoints="none"), [s0, s1])
+
+
 if __name__ == "__main__":
     os.makedirs(OUT, exist_ok=True)
     for old in os.listdir(OUT):  # the generator owns this directory: drop cases that no longer exist
@@ -2084,5 +2222,5 @@ if __name__ == "__main__":
             os.remove(os.path.join(OUT, old))
     for f in (ex12, ex3, ex4, ex5, ex67, ex8, shared_prefix_cases, ex9, c01, c02, c03_04, c05, c06, c07, c08, c09, c10, c11, c12, c_threads, c_clock, c_mix,
               c14, c15, c16, c17, c18, a1, a2, a3, a4_b3, b1_b2, b4, b5, c1_, c2_, c2b, c3_, c5, d2, d3, d4,
-              d5, d6, e2, e345, f245, h2, h5, r9, r14, r21, r20, r20b):
+              d5, d6, e2, e345, f245, h2, h5, r9, r14, r21, r20, r20b, c42, c42b, c42c, c42d, c43):
         f()

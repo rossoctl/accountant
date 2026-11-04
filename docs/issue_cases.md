@@ -497,6 +497,24 @@ client moves the mark. The text did not change. These cases model it as a messag
 have this one cause. #21 asks the library to take B\* from the usage when the hashes disagree. #20 asks it to credit a
 split only when the client body would have written the tokens.
 
+### Cases from accountant#42 and #43
+
+| Case ID | Issue | What the spec requires | What the library did before the fix |
+|---|---|---|---|
+| `media/large-image-beside-text/5m` | #42 | A 250,000-byte image (1,000 tokens) beside text. The text ratio leaves the image out: 1,500 tokens over 6,000 text bytes = 0.25. Cutting 6,000 bytes saves 6,000 x 0.25 = 1,500 tokens. | Passed. It is the guard for the working case. |
+| `media/big-image-small-conversation/bill-below-media-price/5m` | #42 | A 2,000,000-byte image (8,000 tokens at the library price) in a request billed 2,350. Text forwarded: 3,000 bytes, least 0.05 x 3,000 = 150 tokens. The media gets 2,200. The text cut of 7,000 bytes x 0.05 = 350 tokens, check `media_tokens`. Baseline 10,000 x 0.05 + 2,200 = 2,700; 2,700 - 2,350 = 350. | Nothing priced (`ratio_range`, saved 0). |
+| `extent/no-breakpoint-long-body/hot/5m` | #43 | 200 messages of 100 tokens, no breakpoint. The provider read 20,000 tokens, so a 400-token message cut to 100 is past B\*: 300 tokens at the input tier, $0.0009. | The same result, in time that grew with the square of the position count. |
+
+| `media/big-image-hot-request-op-over-media/5m` | #42 | Request 1 of a thread, hot, bill 2,350 below the image price (4,000). Text 10,000 bytes, least 500 tokens, media 1,850. The rewrite over the image is unpriced (`media_tokens`). Bill difference 500 + 3,700 - 2,350 = 1,850, all of it the removed image, so check 6 leaves it out and does not fail. | `conservation` failed too. |
+| `media/big-image-host-tokens-stay-exact/5m` | #42 | The same cap, the host counted 1,600 and 800 tokens. Saved 1,600 - 800 = 800, exact, not unpriced. | New behavior, no earlier figure. |
+
+The two `media/` cases above this row are first requests, where check 6 is skipped. That is why they did not show the conservation fault; the hot case does.
+
+The shapes of #42 (Gemini `inlineData` and `inline_data`, Bedrock `source.bytes`, OpenAI `input_audio.data`, an
+uppercase `data:IMAGE/` prefix) have no case. A case holds hashes and sizes, not message text (R2), so it cannot show
+whether `NewBody` finds a payload. `TestMediaShapesAreDetected` in `internal/engine/media_shapes_test.go` holds each shape
+with a 100,000-byte payload and the expected `Media` of 100,000. The cases use the media size a detected shape gives.
+
 **Issues with no case, and why**
 
 - **#10 (no breakpoints).** With no breakpoint every position counts as a breakpoint (design §5.1, §6.2). Cases

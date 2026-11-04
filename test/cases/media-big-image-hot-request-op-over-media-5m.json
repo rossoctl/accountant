@@ -1,0 +1,237 @@
+{
+ "id": "media/big-image-hot-request-op-over-media/5m",
+ "description": "Request 0 caches one 500-token message. Request 1 (30 seconds later, hot) adds a 2,000,000-byte image and an 8,000-byte message. A rewrite cuts the image to 1,000,000 bytes. The bill is 2,350 tokens, below the library price of the forwarded image (1,000,000 / 250 = 4,000). Forwarded text = 2,000 + 8,000 = 10,000 bytes; the least is 0.05 x 10,000 = 500 tokens; the media gets 2,350 - 500 = 1,850 tokens. The client media is 2,000,000 bytes = 3,700 tokens, so the bill difference is 500 + 3,700 - 2,350 = 1,850 tokens: all of it is the image the rewrite removed. The rewrite covers media, so it is unpriced (media_tokens), and the check conservation takes its 1,850 tokens out of the bill difference. Only media_tokens fails. Before the fix conservation failed too.",
+ "source": "issue_cases.md#accountant-42",
+ "dims": {
+  "kind": "rewrite",
+  "position": "media",
+  "cache": "hot",
+  "ttl": "5m",
+  "lifetime": "exact",
+  "media": "hot-op-over-media"
+ },
+ "rates": "fixture-v1",
+ "steps": [
+  {
+   "begin": {
+    "meta": {
+     "requestId": "r0",
+     "session": "s1",
+     "model": "agent-model",
+     "at": "2026-03-02T09:00:00Z",
+     "billing": {
+      "mode": "api"
+     }
+    },
+    "client": {
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "pos": [
+      {
+       "hash": 625792648282977192,
+       "bytes": 2000
+      }
+     ]
+    },
+    "clientBreakpoints": [
+     {
+      "pos": {
+       "section": "messages",
+       "index": 0
+      },
+      "ttl": "5m"
+     }
+    ]
+   },
+   "add": [],
+   "end": {
+    "thread": {
+     "id": "main"
+    },
+    "forwarded": {
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "pos": [
+      {
+       "hash": 625792648282977192,
+       "bytes": 2000
+      }
+     ]
+    },
+    "breakpoints": [
+     {
+      "pos": {
+       "section": "messages",
+       "index": 0
+      },
+      "ttl": "5m"
+     }
+    ],
+    "facts": {
+     "ttl": "5m",
+     "lifetime": "exact"
+    }
+   },
+   "usage": {
+    "input": 0,
+    "cacheRead": 0,
+    "cacheWrite": 500,
+    "cacheWrite1h": 0
+   },
+   "expected": {
+    "phase": "unknown",
+    "baselineUsage": {
+     "input": 0,
+     "cacheRead": 0,
+     "cacheWrite": 500,
+     "cacheWrite1h": 0
+    },
+    "ops": [],
+    "unpriced": [
+     {
+      "reason": "penalty_unknown"
+     }
+    ]
+   }
+  },
+  {
+   "begin": {
+    "meta": {
+     "requestId": "r1",
+     "session": "s1",
+     "model": "agent-model",
+     "at": "2026-03-02T09:00:30Z",
+     "billing": {
+      "mode": "api"
+     }
+    },
+    "client": {
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "pos": [
+      {
+       "hash": 625792648282977192,
+       "bytes": 2000
+      },
+      {
+       "hash": 17956178250200053669,
+       "bytes": 2000000,
+       "media": 2000000
+      },
+      {
+       "hash": 11100004509484968826,
+       "bytes": 8000
+      }
+     ]
+    },
+    "clientBreakpoints": [
+     {
+      "pos": {
+       "section": "messages",
+       "index": 2
+      },
+      "ttl": "5m"
+     }
+    ]
+   },
+   "add": [
+    {
+     "id": "o1",
+     "kind": "rewrite",
+     "operator": "context-guru.strip",
+     "at": {
+      "section": "messages",
+      "index": 1
+     },
+     "sizeBefore": {
+      "bytes": 2000000,
+      "mediaBytes": 2000000
+     },
+     "sizeAfter": {
+      "bytes": 1000000,
+      "mediaBytes": 1000000
+     },
+     "changeId": "cg:strip:c42c"
+    }
+   ],
+   "end": {
+    "thread": {
+     "id": "main"
+    },
+    "forwarded": {
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "pos": [
+      {
+       "hash": 625792648282977192,
+       "bytes": 2000
+      },
+      {
+       "hash": 17956178250200053669,
+       "bytes": 1000000,
+       "media": 1000000
+      },
+      {
+       "hash": 11100004509484968826,
+       "bytes": 8000
+      }
+     ]
+    },
+    "breakpoints": [
+     {
+      "pos": {
+       "section": "messages",
+       "index": 2
+      },
+      "ttl": "5m"
+     }
+    ],
+    "facts": {
+     "ttl": "5m",
+     "lifetime": "exact"
+    }
+   },
+   "usage": {
+    "input": 2350,
+    "cacheRead": 0,
+    "cacheWrite": 0,
+    "cacheWrite1h": 0
+   },
+   "expected": {
+    "phase": "hot",
+    "baselineUsage": {
+     "input": 4200,
+     "cacheRead": 0,
+     "cacheWrite": 0,
+     "cacheWrite1h": 0
+    },
+    "ops": [],
+    "boundary": {
+     "section": "messages",
+     "index": 0
+    },
+    "unpriced": [
+     {
+      "opId": "o1",
+      "reason": "media_tokens"
+     }
+    ],
+    "checks": [
+     "media_tokens"
+    ]
+   }
+  }
+ ]
+}

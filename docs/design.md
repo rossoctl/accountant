@@ -278,8 +278,8 @@ and can be reported as unpriced ([R19](spec.md#r19)).
    Two exceptions keep the ratio true (accountant#11):
    - **Base64 media stays out of the ratio.** `NewBody` parses each position and counts the `data`
      of an image or document block whose source has `type: base64`, and the payload of a `data:...;base64,` URL
-     (OpenAI form), in `PosHash.Media`. Text that only quotes "base64" is not media. `Media` above `Bytes` is capped. The ratio uses the text bytes only, over the billed tokens
-     less the media tokens (if the bill is below the media price, checks `media_tokens` and `ratio_range` fail and nothing is priced). Media is priced at a fixed 1 token for 250 bytes. A host that builds a
+     (OpenAI form), in `PosHash.Media`. It also counts the `data` string of a Gemini `inlineData` or `inline_data` object and of an OpenAI `input_audio` object, and the `source.bytes` string of a Bedrock Converse `image` or `document` block. The `data:` prefix and the `;base64,` marker match without regard to case (RFC 2045). Text that only quotes "base64" is not media. `Media` above `Bytes` is capped. The ratio uses the text bytes only, over the billed tokens
+     less the media tokens. Media is priced at a fixed 1 token for 250 bytes. This is not a provider rule: Anthropic bills about width x height / 750 tokens and shrinks a large image, OpenAI bills by tile, and a PDF is billed by page. So the price is right only for a medium image, and a large image shifts the text ratio for the whole request (a 2 MB PNG that Anthropic bills at 1,600 tokens is priced at 8,000, and the text ratio then absorbs the 6,400 tokens of difference: a 10,000-token saving shows as 9,358). The library cannot know the real count from the bytes. A host that needs the exact figure sets `Size.Tokens` on the range, and the library uses it as it is. If the bill is below the media price, the library cuts the media to the bill less the least the text can cost (0.05 tokens a byte, the lower limit of check 9), and prices the text at that lowest ratio, so a text saving is the lowest the bill allows. It fails the check `media_tokens`. An operation whose range covers media goes to `Unpriced` with the reason `media_tokens`, unless the host gave `Size.Tokens` on both of its sizes. Other operations are still priced and are `Estimated`. A host that builds a
      `Body` itself sets `PosHash.Media`. A host marks media inside a `Size` with `Size.MediaBytes`. If a size does not mark it, the library takes the
      media of the range from the client body for a before-size and from the forwarded body, over the mapped range, for an after-size (the size's bytes beyond the range's text), so an unmarked cut of an image
      message is not priced at the text ratio.
@@ -1130,7 +1130,7 @@ type Result struct {
 type Unpriced struct {
     OpID   string
     Reason string // "unknown_kind", "negative_size", "penalty_unknown", "ping_result_unknown", "end_request_missing",
-                  // "no_usage", "not_spend", "bad_usage", "ratio_range", "breakpoints", ...; the host adds
+                  // "no_usage", "not_spend", "bad_usage", "ratio_range", "media_tokens", "breakpoints", ...; the host adds
                   // "operator_not_allowed" from its own allow-list (wiring document, W5.1)
 }
 
@@ -1231,7 +1231,7 @@ check, the operator, the detail, and the request, session and thread IDs). `Prev
 3. **Unique `ChangeID`:** no two `rewrite` or `setting` context operations of one request, reported or active, have the same `ChangeID`. A `spend` or a cache effect may share the `ChangeID` of the change it belongs to.
 4. **Spans:** for a context operation with `Spans`, its `SizeBefore` and `SizeAfter` equal the sums over its spans.
 5. **Attribution:** a `break` effect's `ChangeID` is the `ChangeID` of a context operation of the same request, or empty. A `rescue`, `ttlPremium` and `ttlRescue` are exempt: their `ChangeID` is a keep-alive window or a head entry, which names no operation of this request.
-6. **Conservation:** the request total of the applied context operations and the cache effects equals the bill difference (§6.3).
+6. **Conservation:** the request total of the applied context operations and the cache effects equals the bill difference (§6.3). The ranges of operations unpriced for `media_tokens` are taken out of the bill difference (as `DryRun` operations are left out), because the operation prices none of it; every other operation stays in the check.
    Each size is compared at the request ratio, so a correct `Size.Tokens` passes (the gap between the host's tokens
    and the ratio's figure for the same bytes is taken out of the total). `DryRun` context operations are left out,
    because their content went upstream unchanged.
@@ -1241,18 +1241,22 @@ check, the operator, the detail, and the request, session and thread IDs). `Prev
 8. **Usage sign:** no count in `Usage` is negative, and `CacheWrite1h` is not larger than `CacheWrite` (it is part of
    it, never an addition). If one is, the check `bad_usage` fails.
 9. **Ratio range:** the tokens per forwarded text byte, `(Input + CacheRead + CacheWrite - media price) / (bytes - media bytes)`,
-   is from 0.05 to 2.0. Base64 media bytes are not in the denominator, and the media price (1 token per 250 bytes) is not in the numerator.
+   is from 0.05 to 2.0. When the bill is below the media price, the media price is first cut to the bill (check 11), so this check does not fail for that reason. Base64 media bytes are not in the denominator, and the media price (1 token per 250 bytes) is not in the numerator.
    If it is outside that range, the usage does not fit the body, and the check `ratio_range` fails. A ratio of 0
    (a body with text bytes and no billed prompt token) and an infinite ratio (billed tokens and an empty body) are outside
-   the range too. A body of media only has no text bytes: it passes only when the bill equals the media price. A bill above it fails this check, because the extra tokens fit no content. A bill below
-   the media price fails this check as well as check 11. Without this
+   the range too. A body of media only has no text bytes: it passes only when the bill is at most the media price (a smaller bill is cut, check 11). A bill above it fails this check, because the extra tokens fit no content. Without this
    check the ratio, and so the conservation check (check 6), agree with themselves for any usage.
 10. **Breakpoints:** a request has at most 4 forwarded breakpoints (the Anthropic limit), and each TTL (client and
     forwarded) is `"5m"`, `"1h"` or empty (empty counts as `5m`). Otherwise the check `breakpoints` fails.
 
 11. **Media tokens (`media_tokens`):** the fixed price of the forwarded body's media (1 token per 250 bytes) is not above the
-    billed prompt tokens. If it is, the bill cannot hold the media: check 9 (`ratio_range`) fails too, nothing is priced, and
-    every operation goes to `Unpriced` with the reason `ratio_range`.
+    billed prompt tokens. If it is, the price is wrong, because the provider cannot bill less than the media costs (it
+    downscaled a large image, for example). The check fails, and the library does not drop the request. It cuts the media to
+    the bill less 0.05 tokens for each text byte, and gives the text the rest, which is the lowest text ratio that check 9
+    allows. Every saving on text is then the lowest the bill allows. An operation whose range covers media goes to
+    `Unpriced` with the reason `media_tokens`, because the bill does not say how it splits between that media and the text.
+    The tokens of such an operation's ranges are taken out of the bill difference of check 6.
+    A range with `Size.Tokens` on both sizes is exact and stays priced. Every other operation is priced and `Estimated`.
 12. **Size tokens (`size_tokens`):** a `Size.Tokens` is between 0.05 tokens for each text byte and 2.0 tokens for each byte
     of its range (the limits of check 9). If it is not, the host's count is a bug: the library ignores it, converts the
     bytes, and reports the check.

@@ -32,6 +32,8 @@ type Body struct {
 	// cum[i+1] is the bytes of positions 0..i. NewBody builds it. A Body made another way (decoded
 	// from JSON) has none, and cumBytes sums instead. Not part of the API.
 	cum []int
+	// cumMed[i+1] is the media bytes of positions 0..i, each clamped to 0..Bytes. Built with cum.
+	cumMed []int
 }
 
 // PosHash holds hashes and sizes only (R2).
@@ -64,10 +66,7 @@ func NewBody(tools, system, messages [][]byte) Body {
 			b.Pos = append(b.Pos, PosHash{Hash: h, Bytes: int32(len(p)), Media: int32(mediaBytes(p))})
 		}
 	}
-	b.cum = make([]int, len(b.Pos)+1)
-	for i, p := range b.Pos {
-		b.cum[i+1] = b.cum[i] + int(p.Bytes)
-	}
+	b.buildPrefix()
 	return b
 }
 
@@ -92,20 +91,42 @@ func mediaBytes(p []byte) int {
 
 // valueInfo is what a parent needs to know about one parsed value.
 type valueInfo struct {
-	str    string // the value, when it is a string
-	isStr  bool
-	base64 int // the "data" length, when the value is a base64 source object; else 0
+	str      string // the value, when it is a string
+	isStr    bool
+	base64   int // the "data" length, when the value is a base64 source object; else 0
+	data     int // the "data" string length, when the value is an object with one (Gemini, OpenAI audio)
+	bytes    int // the "bytes" string length, when the value is an object with one (a Bedrock Converse source)
+	srcBytes int // the length of this object's "source"."bytes" string (a Bedrock Converse image or document)
 }
 
 const dataURLMarker = ";base64,"
 
+// hasPrefixFold is strings.HasPrefix without case: media types and URL schemes are case-insensitive
+// (RFC 2045, RFC 3986).
+func hasPrefixFold(s, prefix string) bool {
+	return len(s) >= len(prefix) && strings.EqualFold(s[:len(prefix)], prefix)
+}
+
+// indexFold is strings.Index without case, for an ASCII substr. It returns a byte index into s.
+func indexFold(s, substr string) int {
+	for i := 0; i+len(substr) <= len(s); i++ {
+		if hasPrefixFold(s[i:], substr) {
+			return i
+		}
+	}
+	return -1
+}
+
 // dataURLPayload returns the payload length of a base64 image or PDF data URL, or 0. Another MIME
-// type (data:text/html;base64,...) is text.
+// type (data:text/html;base64,...) is text. The match is case-insensitive.
 func dataURLPayload(s string) int {
-	if !strings.HasPrefix(s, "data:image/") && !strings.HasPrefix(s, "data:application/pdf") {
+	if !hasPrefixFold(s, "data:image/") && !hasPrefixFold(s, "data:application/pdf") {
 		return 0
 	}
-	i := strings.Index(s, dataURLMarker)
+	// Search for the marker without case and without changing the indices: lower-casing a string can
+	// change its length (U+0130, U+212A). The marker is in the header, so no limit is needed: the
+	// search stops at the first ";base64," and a payload holds no ";".
+	i := indexFold(s, dataURLMarker)
 	if i < 0 {
 		return 0
 	}
@@ -143,7 +164,7 @@ func walkValue(dec *json.Decoder, n *int) (valueInfo, bool) {
 func walkObject(dec *json.Decoder, n *int) (valueInfo, bool) {
 	var typ string
 	var data valueInfo
-	var srcLen int
+	var srcLen, srcBytes, ownBytes, dataLen int
 	for dec.More() {
 		kt, err := dec.Token()
 		if err != nil {
@@ -159,8 +180,20 @@ func walkObject(dec *json.Decoder, n *int) (valueInfo, bool) {
 			typ = child.str
 		case "data":
 			data = child
+			if child.isStr {
+				dataLen = len(child.str)
+			}
+		case "bytes":
+			if child.isStr {
+				ownBytes = len(child.str)
+			}
 		case "source":
 			srcLen = child.base64
+			srcBytes = child.bytes // Bedrock Converse: the block's "source"."bytes"
+		case "inlineData", "inline_data", "input_audio":
+			*n += child.data // Gemini, OpenAI audio: the object's "data" string
+		case "image", "document":
+			*n += child.srcBytes // Bedrock Converse: {"image":{"source":{"bytes":...}}}
 		case "url", "image_url", "file_data":
 			*n += dataURLPayload(child.str)
 		}
@@ -172,7 +205,7 @@ func walkObject(dec *json.Decoder, n *int) (valueInfo, bool) {
 		*n += srcLen
 	}
 	if typ == "base64" && data.isStr {
-		return valueInfo{base64: len(data.str)}, true
+		return valueInfo{base64: len(data.str), data: dataLen}, true
 	}
-	return valueInfo{}, true
+	return valueInfo{data: dataLen, bytes: ownBytes, srcBytes: srcBytes}, true
 }

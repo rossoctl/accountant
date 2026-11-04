@@ -62,6 +62,7 @@ func fromWireBody(w wireBody) (Body, error) {
 		}
 		b.Pos[i] = PosHash{Hash: h, Bytes: p.Bytes, Media: p.Media}
 	}
+	b.buildPrefix()
 	return b, nil
 }
 
