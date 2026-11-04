@@ -78,7 +78,8 @@
 // These parts of the design are not implemented. Compute adds no figure for them. Compute does not
 // recover from a panic: it leaves the ThreadState unchanged, and the host wraps the call to fail open.
 //
-//   - Result.Interaction on a rescued request (§6.2). It is always zero.
+//   - Result.Interaction beyond the exact case (§6.2). Compute reports it only for a saved span at or
+//     before the ping's extent that the ops book at the read tier. Any other case adds zero.
 //   - The order check (§6.5 check 2). The attribution check (5) holds by
 //     construction: a break only takes the ChangeID of an operation of the same request.
 //   - The 20-block lookback (§5.1), and the long-context tier.
