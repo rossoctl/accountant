@@ -208,3 +208,16 @@ func TestNoBreakpointExtentIsTheWholePromptWithAHighMinCacheable(t *testing.T) {
 		t.Fatalf("saved %+v, want 1300 read", p.Saved)
 	}
 }
+
+// With no client breakpoint the mask is priced at the read tier (every position is a breakpoint), so the
+// interaction helper's tier guard passes. There is no write tier without a breakpoint, so a "write ->
+// read" interaction would be false: the request reports none.
+func TestNoBreakpointRescuedMaskHasNoInteraction(t *testing.T) {
+	c := exactInteraction()
+	c.bps = nil
+	res := c.run()
+	if p := findOp(t, res, "op1"); p.Saved.CacheRead != 1201 {
+		t.Fatalf("setup: mask saved %+v, want 1201 read", p.Saved)
+	}
+	wantNoInteraction(t, res)
+}

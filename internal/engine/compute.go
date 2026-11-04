@@ -1065,6 +1065,9 @@ func (c *calcState) price(res *Result) {
 // no sibling kept the entry warm, the span is at or before the ping's extent, and the span is
 // priced at the read tier.
 func (c *calcState) interaction(res *Result, from Position, d int) {
+	if len(c.clientBPs) == 0 { // no breakpoint, no write tier: the interaction is write -> read, so none (§6.2)
+		return
+	}
 	if !c.pingHot || c.r.Facts.SharedWarm != nil || c.pingRead() == nil || c.usage.CacheRead <= 0 {
 		return
 	}

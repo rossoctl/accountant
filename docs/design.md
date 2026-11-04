@@ -1082,7 +1082,7 @@ neither the ping's nor the content changes' alone. The library reports it as
 `Result.Interaction`, attributed to nobody, so the request total still equals the bill without
 the context operations minus the bill with them.
 
-**What v0 reports.** `Interaction` is the tokens of a saved span that the client body would have
+**What v0 reports.** With no client breakpoint there is no write tier, so `Interaction` is empty. `Interaction` is the tokens of a saved span that the client body would have
 written cold. `Result.InteractionCaused` is the same tokens at the read tier, as the operation
 books them. The host prices `Interaction` minus `InteractionCaused`: for 1,201 tokens on Sonnet,
 1,201 × (3.75 − 0.30)/Mtok = $0.00414. Both are zero unless all of these hold:
