@@ -1063,7 +1063,7 @@ type Result struct {
 type Unpriced struct {
     OpID   string
     Reason string // "unknown_kind", "negative_size", "penalty_unknown", "ping_result_unknown", "end_request_missing",
-                  // "no_usage", "not_spend", ...; the host adds
+                  // "no_usage", "not_spend", "bad_usage", "ratio_range", "breakpoints", ...; the host adds
                   // "operator_not_allowed" from its own allow-list (wiring document, W5.1)
 }
 
@@ -1168,6 +1168,20 @@ check, the operator, the detail, and the request, session and thread IDs). `Prev
 7. **Shared warm:** `EntryFacts.SharedWarm`, when set, is a position in the forwarded body. If it is not, the check fails
    with the section and index, and the keep-alive rescue of that request is not credited ([R54](spec.md#r54)).
    A doubtful figure may only lower a saving.
+8. **Usage sign:** no count in `Usage` is negative, and `CacheWrite1h` is not larger than `CacheWrite` (it is part of
+   it, never an addition). If one is, the check `bad_usage` fails.
+9. **Ratio range:** the tokens per forwarded byte, `(Input + CacheRead + CacheWrite) / bytes`, is from 0.05 to 2.0.
+   If it is outside that range, the usage does not fit the body, and the check `ratio_range` fails. A ratio of 0
+   (a body with bytes and no billed prompt token) and an infinite ratio (billed tokens and an empty body) are outside
+   the range too. Without this
+   check the ratio, and so the conservation check (check 6), agree with themselves for any usage.
+10. **Breakpoints:** a request has at most 4 forwarded breakpoints (the Anthropic limit), and each TTL (client and
+    forwarded) is `"5m"`, `"1h"` or empty (empty counts as `5m`). Otherwise the check `breakpoints` fails.
+
+If check 8, 9 or 10 fails, the library prices nothing for the request. Each operation goes to `Unpriced` with the
+reason `bad_usage`, `ratio_range` or `breakpoints` (the first check that fails, in that order), no cache effect is
+added, and the cache state for the next request is unknown, as for a response with no usage (§8). The check name
+equals the reason. A check on a request with no usage is not run: that request is `no_usage`.
 
 ## 7. Billing plans
 
@@ -1218,6 +1232,7 @@ missing, report too little and say why.
 | `accountant.Compute` panics | The host recovers, writes no saving for the request, and increments `ops_price_panics`. The request and its spend record are unchanged. |
 | A malformed context operation (unknown kind, negative size) | Goes to `Unpriced` with a reason. The other context operations are priced. |
 | A `spend` whose `Call` has no usage (a ping that timed out: the host sent it and read no response) | `Unpriced` with `ping_result_unknown`. The cost is missing, not zero, so the window must not show its rescue as a net gain. The rescue is still credited from the read on the request that follows (§4.4) |
+| Usage is negative, does not fit the body (tokens per byte outside 0.05 to 2.0), or the request has more than 4 breakpoints or an unknown TTL | Nothing is priced. Every operation goes to `Unpriced` with `bad_usage`, `ratio_range` or `breakpoints`, and a check of the same name fails (§6.5, checks 8 to 10). |
 | Sum check fails | Pricing goes on. A warning is logged. The failure is counted for each plugin on `/v1/pipeline`. |
 | No previous fingerprint for the thread | `Boundary` is nil, §6.4, unless `Usage.CacheRead` proves a read (§5.2). |
 | Response has no usage | Nothing is priced, as today. The active changes are still kept (§4.6). |
