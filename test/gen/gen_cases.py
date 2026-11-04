@@ -1033,6 +1033,53 @@ def c_threads():
           "threads-change-stays-on-its-thread")
 
 
+# accountant#16: the clock and the order of calls do not win over the usage.
+def c_clock():
+    M = M_BASE
+    T = 30000  # tokens of SYS1 + M_BASE
+    r0 = sim(0, "r0", ([], SYS1, M), ([], SYS1, M), [], "unknown")
+    c1 = M + [("m9", 500)]
+    def edge(sec, rid, phase, read):
+        u = U(read=T, write=500) if read else U(write=T + 500)
+        return sim(sec, rid, ([], SYS1, c1), ([], SYS1, c1), [], phase, prev=(T, T), usage=u,
+                   base=U(read=T, write=500),
+                   boundary=P("messages", 8) if phase == "hot" else None)
+    write_issue("clock/ttl-edge-read-covers-extent/hot", 16,
+                "A request arrives 2 seconds past the 5m TTL, but the usage bills a read of all 30,000 tokens of the "
+                "previous extent. The provider held the entry (clock skew, queue time), so the phase is hot, not cold. "
+                "The margin is 10 seconds (design 5.2).",
+                DIMS("none", "afterBStar", "hit"), [r0, edge(302, "r1", "hot", True)])
+    write_issue("clock/ttl-edge-past-margin/cold", 16,
+                "The same read, 11 seconds past the TTL, is outside the 10 second margin. The phase stays cold.",
+                DIMS("none", "afterBStar", "miss"), [r0, edge(311, "r1", "cold", True)])
+    b = M + [("b1", 500)]
+    c = b + [("c", 500)]
+    d = b + [("d", 500)]
+    write_issue("clock/out-of-order-at/keeps-newer-fingerprint", 16,
+                "Request C has an At one hour before B and is accepted. It is unknown (the clock says nothing) and does "
+                "not replace B's fingerprint. Request D, 1 minute after B, is compared with B: hot.",
+                DIMS("none", "afterBStar", "hit"),
+                [r0, sim(120, "B", ([], SYS1, b), ([], SYS1, b), [], "hot", prev=(T, T), boundary=P("messages", 8)),
+                 sim(-3480, "C", ([], SYS1, c), ([], SYS1, c), [], "unknown"),
+                 sim(180, "D", ([], SYS1, d), ([], SYS1, d), [], "hot", prev=(T + 500, T + 500), boundary=P("messages", 9))])
+    sub = {"id": "a:sub", "parent": "main"}
+    fk = M + [("x0", 500)]
+    write_issue("clock/fork-seeded-from-parent/hot", 16,
+                "A subagent forks from a warm main thread and keeps its whole cached prefix. It reads 30,000 tokens. The "
+                "library seeds the fork from the parent's fingerprint (design 5.2), so the phase is hot at messages[8] "
+                "with no penalty_unknown.",
+                DIMS("none", "afterBStar", "fork", threads="2"),
+                [r0, sim(30, "fork-0", ([], SYS1, fk), ([], SYS1, fk), [], "hot", prev=(T, T), boundary=P("messages", 8),
+                         thread=sub)])
+    write_issue("clock/fork-past-parent-ttl/unseeded-read", 16,
+                "A fork starts 20 minutes after its parent's last request, and the usage shows a read of 30,000 tokens. "
+                "The library does not seed a fork past the TTL, since a cold seed would raise the saving. The phase is "
+                "unknown, and the read makes it hot with penalty_unknown.",
+                DIMS("none", "afterBStar", "fork", threads="2"),
+                [r0, sim(1200, "fork-0", ([], SYS1, fk), ([], SYS1, fk), [], "hot", prev=(T, T), boundary=P("messages", 9),
+                         thread=sub, unpriced=[{"reason": "penalty_unknown"}])])
+
+
 # Three cases that mix sessions, threads and models.
 def c_mix():
     # 1. A fork: the first request of a thread forked from main sends main's conversation with a summary.
@@ -1053,16 +1100,17 @@ def c_mix():
     write_issue("threads/fork-first-request/summary", 423,
                 "A thread forked from main sends main's conversation with a summary on its first request. Main cached "
                 "21,000 tokens; the provider caches by content, so the fork reads main's tools and system (8,000) and writes "
-                "the rest. The library keeps no history for the fork (Thread.Parent is carried and not read), so the phase "
-                "is unknown and the read in the usage makes it hot up to the end of system: the 9,500 removed tokens come "
+                "the rest. The fork's body does not keep main's cached extent (the summary replaces its first messages), so "
+                "the library does not seed it from Thread.Parent (design 5.2): the phase is unknown and the read in the "
+                "usage makes it hot up to the end of system: the 9,500 removed tokens come "
                 "after B* and are a write, +$0.03563, less the summarizer call $0.0125. cg prices a summarizer's first "
                 "removal as a read whenever the request hit the cache (uniqueRate), +$0.00285. Main's entry held the whole "
                 "conversation and the provider caches by content, so without the summary the fork would have read those "
-                "tokens: cg's tier is nearer the truth here, and the library cannot see it because it keeps no history "
-                "for the fork.",
+                "tokens: cg's tier is nearer the truth here, and the library cannot see it because the fork's body "
+                "differs from the parent's inside the cached extent.",
                 DIMS("rewrite+spend", "afterBStar", "fork", threads="2"), [s0, s1],
-                open_=["whether the library should read the parent's state for a forked thread (Thread.Parent). Today it "
-                       "does not, and prices the fork as a thread with no history"])
+                open_=["a fork that rewrites inside its parent's cached extent is priced as a thread with no history: the "
+                       "library seeds a fork from Thread.Parent only when the fork keeps the parent's whole extent"])
 
     # 2. A subagent already runs on the small model. Main moves to it with nothing reported: the small
     # model has no entry for main's prefix, so nothing is read. The break says why.
@@ -2034,7 +2082,7 @@ if __name__ == "__main__":
     for old in os.listdir(OUT):  # the generator owns this directory: drop cases that no longer exist
         if old.endswith(".json"):
             os.remove(os.path.join(OUT, old))
-    for f in (ex12, ex3, ex4, ex5, ex67, ex8, shared_prefix_cases, ex9, c01, c02, c03_04, c05, c06, c07, c08, c09, c10, c11, c12, c_threads, c_mix,
+    for f in (ex12, ex3, ex4, ex5, ex67, ex8, shared_prefix_cases, ex9, c01, c02, c03_04, c05, c06, c07, c08, c09, c10, c11, c12, c_threads, c_clock, c_mix,
               c14, c15, c16, c17, c18, a1, a2, a3, a4_b3, b1_b2, b4, b5, c1_, c2_, c2b, c3_, c5, d2, d3, d4,
               d5, d6, e2, e345, f245, h2, h5, r9, r14, r21, r20, r20b):
         f()

@@ -96,7 +96,7 @@ drops the combinations that cannot occur, and states the reason for each drop in
 | Report | first report of the change; applied again from the state ([D14](design.md#d14)); applied again after the state was lost ([question 13](design.md#q13)) |
 | Kind | `rewrite` smaller, `rewrite` larger (a restore is one), cache effect (`break`, `rescue`, `split`, `ttlPremium`, `ttlRescue`) |
 | Position | before B\*; after B\* and at or before `L`; after `L`; no breakpoint in the body; spans on both sides of B\* |
-| Cache state | hot; cold (expired, `Lifetime: exact`); unknown (gap past an unproven `Lifetime: minimum`, [R45](spec.md#r45); first request of a thread; restart); hot, kept by a ping |
+| Cache state | hot; cold (expired, `Lifetime: exact`); unknown (gap past an unproven `Lifetime: minimum`, [R45](spec.md#r45); first request of a thread; restart); hot, kept by a ping; hot by a read up to 10 s past an exact TTL; cold at 11 s past; out-of-order `At` (unknown); fork seeded from its parent; fork past the parent's TTL (unseeded) |
 | Cache result | full hit; partial hit; miss with write ≥ input; miss with write < input |
 | Breakpoints | end of `system` + last message (Claude Code); one after `tools` only; none; one inside the messages before a break |
 | TTL of the next breakpoint | 5m, 1h |
@@ -105,7 +105,6 @@ drops the combinations that cannot occur, and states the reason for each drop in
 | Billing | `api`, `subscription`, `unknown` ([§7.1](design.md#71-billing-plans)) |
 | Model tier | below and above a long-context threshold (the host prices; the library returns the same tokens) |
 | Provider rounding | explicit breakpoints; implicit, rounded to 128 tokens ([§5.1](design.md#51-the-counterfactual-boundary-b)) |
-| Prefix length | at or above the model's minimum cacheable length; below it (B\* = 0) |
 
 **B. Hand-written cases.** These test how context operations interact, which a cross product cannot do:
 
@@ -157,6 +156,9 @@ drops the combinations that cannot occur, and states the reason for each drop in
 26. A request that fails before `Compute`: the reported change is still active on the next request ([§4.6](design.md#46-replays-who-remembers-past-changes)). Pinned by `TestAChangeReportedOnARequestWithoutComputeStaysActive`; a repeated report writes nothing.
 27. Two requests of one thread in flight: the second `Compute` sets `Recomputed` ([R53](spec.md#r53)); `Preview` returns the figure `Compute` returns and stores nothing ([R26](spec.md#r26)).
 28. Two tenants with one session ID: the host's key prefix keeps the `ThreadState`s apart ([§6.1](design.md#61-call)).
+29. The minimum cacheable length (`EntryFacts.MinCacheable`, §5.1 and §6.2): a write below it is input; a later
+    breakpoint that reaches it still writes; a usage with no cache tokens makes the forwarded body input, read range
+    included. Unit tests in `internal/engine/mincacheable_test.go`; not a generated dimension.
 
 **C. Cases from real traffic.** For each difference that a shadow step ([`cortex-wiring.md`](cortex-wiring.md), migration steps 5 and 8) logs and
 no case matches, add a case. Then decide: it is a bug in `accountant`, or a new `differs` entry with a

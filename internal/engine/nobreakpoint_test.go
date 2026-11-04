@@ -132,3 +132,41 @@ func TestNoBreakpointSettingBreakStartsBeforeThePosition(t *testing.T) {
 		t.Fatalf("break %+v, want From messages[4]", br)
 	}
 }
+
+// MinCacheable only turns a write into input. With no breakpoint nothing is a write, so a cut inside the
+// cache is priced as without it.
+func TestNoBreakpointWithMinCacheableKeepsTheReadAndTheBreak(t *testing.T) {
+	ts := NewTrackers()
+	m := msgs(10, 1000)
+	f := exact5m
+	f.MinCacheable = 2048
+	req{at: t0, client: mk(nil, nil, m), facts: f, usage: Usage{CacheRead: 10000}}.run(ts)
+	fwd := append([]blk(nil), m...)
+	fwd[2] = b("cut", 200)
+	fwd = append(fwd, b("m10", 500))
+	op := rewrite("op1", "test.cut", "t:cut:1", msg(2), 1000, 200)
+	res := req{at: t0.Add(time.Minute), client: mk(nil, nil, with(m, b("m10", 500))), ops: []Operation{op},
+		fwd: mk(nil, nil, fwd), facts: f, usage: Usage{CacheRead: 1920, Input: 7780}}.run(ts)
+	noChecks(t, res)
+	if p := findOp(t, res, "op1"); p.Saved != (TierTokens{CacheRead: 800}) {
+		t.Fatalf("saved %+v, want 800 read", p.Saved)
+	}
+	br := effect(t, res, EffectBreak)
+	if br.Saved != (TierTokens{CacheRead: 7200}) || br.Caused != (TierTokens{Input: 7200}) {
+		t.Fatalf("break saved %+v caused %+v, want 7200 read to 7200 input", br.Saved, br.Caused)
+	}
+}
+
+// A prompt below MinCacheable with no cache tokens: the request left nothing cached, so the thread is not hot.
+func TestNoBreakpointWithNoCacheTokensLeavesNothingCached(t *testing.T) {
+	ts := NewTrackers()
+	m := msgs(2, 400)
+	f := exact5m
+	f.MinCacheable = 1024 // the 800-token prompt is below the minimum: the provider cached nothing
+	res := req{at: t0, client: mk(nil, nil, m), fwd: mk(nil, nil, m), facts: f, usage: Usage{Input: 800}}.run(ts)
+	noChecks(t, res)
+	st := stateOf(ts, "main")
+	if st.Cache.CachePhase == PhaseHot || st.Cache.Extent != nil {
+		t.Fatalf("cache state %+v, want cold with no extent", st.Cache)
+	}
+}

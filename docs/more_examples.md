@@ -82,7 +82,7 @@ and a ping rescue.
 | C3 | One `failed_run` removes two runs, one cached and one new. | Two spans, two tiers, one `ChangeID`. | Differs: one rate for both. |
 | C4 | A fixed restore adds content back. | A larger rewrite is a cost, by position. | Not covered. |
 | C5 | `mask` at depth on a cold turn, then warm replays. | No break when cold. Later replays are reads. | Probably agrees. |
-| C6 | A prompt below the minimum cacheable length. | B\* is 0. Everything is input. | Not covered. |
+| C6 | A prompt below the minimum cacheable length (`EntryFacts.MinCacheable`). | A cut is input, not a write. | Not covered. |
 
 ### D. Breaks caused by an operator
 
@@ -192,7 +192,7 @@ F2, F4, F5, H2, H5. Where the result is not what the plan predicted or needs a n
 
 | ID | Why |
 |---|---|
-| C6 | The minimum cacheable length is a property of the model. Nothing in `RequestMeta` or `EntryFacts` carries it, so a case cannot state it and the library cannot apply it. |
+| C6 | Covered by unit tests in `internal/engine/mincacheable_test.go`. `EntryFacts.MinCacheable` now carries the minimum (accountant#15). |
 | F6 | The model flips A, B, A inside 5 minutes. The design keeps one fingerprint per thread, so what the library should answer is a design decision. A case would only record a guess. |
 | G1 | Not applicable: the tokens are identical in every billing mode and only the host converts them. |
 | G2 | The marking of an estimate is already pinned by `estimate/bytes-ratio-json-removal`. Sonnet's factor of 1.69 is a host rate, not library logic. |
