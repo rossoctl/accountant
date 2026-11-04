@@ -1,6 +1,6 @@
 {
  "id": "rewrite/no-breakpoint/input/5m",
- "description": "The body carries no cache_control, so the provider caches nothing and bills every token as input. cmdfilter shortens a new 8,000-token output to 1,000 tokens and saves 7,000 x $3.00 = +$0.02100. B* is 0 because no client breakpoint is at or before the extent.",
+ "description": "The body carries no cache_control. The provider caches the prefix by itself, so every position counts as a breakpoint. The 29,000 tokens of turn 1 are read on turn 2. cmdfilter shortens a new 8,000-token output (message 9) to 1,000 tokens. It sits after B*, so the provider bills it as input, and the saving is 7,000 x $3.00 = +$0.02100. B* is message 8, the end of the extent.",
  "source": "more_examples.md#C2",
  "dims": {
   "kind": "rewrite",
@@ -11,6 +11,9 @@
   "breakpoints": "none"
  },
  "rates": "fixture-v1",
+ "open": [
+  "design \u00a75.1 snaps B* to the last client breakpoint at or before the previous body's end, and the client's breakpoints are the current request's own: system and the new last message. Read literally that gives the end of system, not the end of the previous body. The examples, and this case, take the end of the previous body."
+ ],
  "steps": [
   {
    "begin": {
@@ -304,16 +307,16 @@
     }
    },
    "usage": {
-    "input": 30000,
-    "cacheRead": 0,
+    "input": 1000,
+    "cacheRead": 29000,
     "cacheWrite": 0,
     "cacheWrite1h": 0
    },
    "expected": {
     "phase": "hot",
     "baselineUsage": {
-     "input": 37000,
-     "cacheRead": 0,
+     "input": 8000,
+     "cacheRead": 29000,
      "cacheWrite": 0,
      "cacheWrite1h": 0
     },
@@ -326,7 +329,11 @@
       "caused": {},
       "estimated": true
      }
-    ]
+    ],
+    "boundary": {
+     "section": "messages",
+     "index": 8
+    }
    }
   }
  ]

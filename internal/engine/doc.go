@@ -21,8 +21,11 @@
 //  3. Extents from usage. The provider reports token counts, not positions. The read extent is the
 //     last candidate position whose prefix, converted with the ratio, fits in Usage.CacheRead, with
 //     a tolerance of 128 tokens plus 2%. The candidates are the breakpoints of this and the previous
-//     request and the previous extent; with none, every position. The extent this request leaves
-//     cached (Fingerprint.Cached) is found the same way from CacheRead + CacheWrite.
+//     request and the previous extent; with no forwarded breakpoint in this request, every position. The
+//     extent this request leaves cached (Fingerprint.Cached) is found the same way from CacheRead +
+//     CacheWrite, plus Input when this request has no forwarded breakpoint and its whole prompt (Input +
+//     CacheRead + CacheWrite) reaches EntryFacts.MinCacheable, because the provider then caches the whole
+//     prompt it processed. A shorter prompt is not cached.
 //  4. The end of a change (§11 question 12). An active rewrite ends when a later splice removes
 //     its position, when the client body first differs from the previous one at or before its
 //     position (a client edit or compaction, §4.3), or when a valid rewrite or setting with the same
@@ -43,12 +46,15 @@
 //     where x is first snapped down to this request's last client breakpoint at or before it, unless
 //     a breakpoint of this request is at or after x (the provider reads only from a breakpoint). The
 //     candidates are the previous extent and the client breakpoints of this and the previous
-//     request. The row-4 prediction snaps the same way, with the forwarded breakpoints. The 128-token rounding of older OpenAI models is not modelled. The minimum cacheable
+//     request. The row-4 prediction snaps the same way, with the forwarded breakpoints. With no client
+//     breakpoint in this request every position is a breakpoint, so B* = x. With no forwarded breakpoint
+//     in this request, extent tries every position (no candidate list; see decision 3). The 128-token
+//     rounding of older OpenAI models is absorbed by the extent tolerance. The minimum cacheable
 //     length (EntryFacts.MinCacheable) turns a write into input when no breakpoint at or after the content reaches it.
 //     A usage with no cache tokens and some input does the same for the forwarded body (§5.1, §6.2).
 //  8. A break moves the forwarded tokens after the read extent, up to B* as forwarded, from read to
 //     write, at the TTL of the first forwarded breakpoint at or after B* that reaches the minimum cacheable length (5m when there
-//     is none). On an uncacheable request (§5.1) the moved tokens are input.
+//     is none). With no forwarded breakpoint, or on an uncacheable request (§5.1), the moved tokens are input.
 //     A setting break (§5.2 row 3) starts at the last candidate before the earliest
 //     SettingChange.At; with no At it starts at the read and adds penalty_unknown. Row 3 and row 4
 //     need the read to be below the prediction by more than the tolerance of decision 3.

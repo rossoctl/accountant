@@ -499,9 +499,10 @@ split only when the client body would have written the tokens.
 
 **Issues with no case, and why**
 
-- **#10 (no breakpoints).** Design §5.1 says a host of a model without explicit breakpoints passes one implicit
-  breakpoint at the end of the body. A body with none is outside that contract, and the table in §6.2 prices a
-  position with no breakpoint as input. A case would take a side in a question the spec has not settled.
+- **#10 (no breakpoints).** With no breakpoint every position counts as a breakpoint (design §5.1, §6.2). Cases
+  `rewrite/no-breakpoint/input/5m` and `rewrite/no-breakpoint/cut-inside-cache/5m` and the Go tests in
+  `internal/engine/nobreakpoint_test.go` cover it. The 128-token rounding rests on the extent tolerance and has
+  no case of its own.
 - **#12 (bad usage).** The fix is a new `Unpriced` reason. The spec does not name it. A case would invent the
   expected result.
 - **#15 (minimum length).** Fixed with `EntryFacts.MinCacheable` (design §5.1, §6.2). Unit tests in

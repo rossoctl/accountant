@@ -78,7 +78,7 @@ and a ping rescue.
 | ID | Scenario | What it tests | cg |
 |---|---|---|---|
 | C1 | A rewrite after the last breakpoint. | Input tier. | Differs: cg prices a first removal as a write. |
-| C2 | No breakpoint in the body. | Everything is input. | Differs. |
+| C2 | No breakpoint in the body (automatic prefix caching). | Every position is a breakpoint: a cut inside the cache is a read, and the break moves the rest from read to input. | Differs. |
 | C3 | One `failed_run` removes two runs, one cached and one new. | Two spans, two tiers, one `ChangeID`. | Differs: one rate for both. |
 | C4 | A fixed restore adds content back. | A larger rewrite is a cost, by position. | Not covered. |
 | C5 | `mask` at depth on a cold turn, then warm replays. | No break when cold. Later replays are reads. | Probably agrees. |

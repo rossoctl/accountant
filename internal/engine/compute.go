@@ -445,6 +445,9 @@ func prevFwdToClient(p *Fingerprint, pos Position) Position {
 // candidates are the forwarded positions where a cache entry can end: the breakpoints of this and
 // the previous request, and the previous extent. With none, every position is one.
 func (c *calcState) candidates() []bp {
+	if len(c.fwdBPs) == 0 {
+		return nil // no forwarded breakpoint: every position is a candidate (see extent)
+	}
 	out := append(append([]bp(nil), c.fwdBPs...), c.prevFwdBPs...)
 	if c.prevExt >= 0 {
 		if i, ok := c.fwd.flat(c.s.PrevPrint.Forwarded.position(c.prevExt)); ok {
@@ -534,7 +537,11 @@ func (c *calcState) phaseAndBoundary(res *Result) {
 
 	if !c.skipsPricing() {
 		c.readEnd = extent(c.fwd, c.ratio, c.usage.CacheRead, c.candidates())
-		c.cachedFwd = extent(c.fwd, c.ratio, c.usage.CacheRead+c.usage.CacheWrite, c.candidates())
+		cached := c.usage.CacheRead + c.usage.CacheWrite
+		if len(c.fwdBPs) == 0 && c.usage.Input+c.usage.CacheRead+c.usage.CacheWrite >= c.r.Facts.MinCacheable { // CacheWrite1h is part of CacheWrite
+			cached += c.usage.Input // no breakpoint: the provider caches the whole prompt it processed (only when the whole prompt reaches the minimum cacheable length, §5.1)
+		}
+		c.cachedFwd = extent(c.fwd, c.ratio, cached, c.candidates())
 	}
 
 	switch c.phase {
@@ -544,9 +551,13 @@ func (c *calcState) phaseAndBoundary(res *Result) {
 		}
 		x := readable(min(c.prevExtCli, c.clientFD-1), c.clientBPs)
 		c.bstar = -1
-		for _, cand := range append(append([]bp{{at: c.prevExtCli}}, c.clientBPs...), c.prevClientBPs...) {
-			if cand.at <= x && cand.at > c.bstar {
-				c.bstar = cand.at
+		if len(c.clientBPs) == 0 {
+			c.bstar = x // no client breakpoint: every position is one
+		} else {
+			for _, cand := range append(append([]bp{{at: c.prevExtCli}}, c.clientBPs...), c.prevClientBPs...) {
+				if cand.at <= x && cand.at > c.bstar {
+					c.bstar = cand.at
+				}
 			}
 		}
 		// The usage is evidence of what the provider read. A client edit inside the cached prefix makes it read
@@ -598,8 +609,12 @@ func (c *calcState) readCoversExtent(prev *Fingerprint) bool {
 // readable is the last position up to x that a request with the breakpoints bps can read. The
 // provider looks the cache up from a breakpoint, so a prefix that ends at x is readable when a
 // breakpoint is at or after x. Otherwise the read snaps down to the last breakpoint at or before x
-// (§5.1, §5.2 row 4). With no breakpoint nothing is read.
+// (§5.1, §5.2 row 4). With no breakpoint the provider caches the prefix by itself (automatic prefix
+// caching), so every position is a breakpoint and x is readable.
 func readable(x int, bps []bp) int {
+	if len(bps) == 0 {
+		return x
+	}
 	for _, b := range bps {
 		if b.at >= x {
 			return x
@@ -701,6 +716,9 @@ func (c *calcState) settingFrom(op Operation) (int, bool) {
 	if !known {
 		return c.readEnd, false
 	}
+	if len(c.fwdBPs) == 0 {
+		return at - 1, true // no forwarded breakpoint: every position is one
+	}
 	return lastAtOrBefore(c.candidates(), at-1), true
 }
 
@@ -737,8 +755,8 @@ func (c *calcState) addBreak(res *Result, from int, changeID string) {
 		if n := c.ratio.of(c.fwd.cumBytes(c.bstarFwd) - c.fwd.cumBytes(from)); n > 0 {
 			e.Saved.CacheRead = n
 			ttl, anyBP, ok := c.writeBP(c.fwd, c.fwdBPs, c.bstarFwd)
-			if c.noCacheTokens() || (anyBP && !ok) {
-				e.Caused.Input = n // nothing is cacheable: the moved tokens are input (§5.1)
+			if c.noCacheTokens() || (anyBP && !ok) || len(c.fwdBPs) == 0 {
+				e.Caused.Input = n // nothing is cacheable, or no breakpoint (no write tier): the moved tokens are input (§5.1)
 			} else {
 				addWrite(&e.Caused, ttl, n) // "" counts as 5m
 			}
@@ -914,7 +932,7 @@ func (c *calcState) addTier(t *TierTokens, body Body, forwarded bool, p, bstar i
 	switch {
 	case forwarded && c.noCacheTokens():
 		t.Input += n // the usage shows no read and no write: nothing was read, whatever B* says
-	case len(bps) > 0 && p <= bstar:
+	case p <= bstar: // with no breakpoint every position is one, so B* alone decides
 		t.CacheRead += n
 	case !anyBP || !ok:
 		t.Input += n
@@ -1047,6 +1065,9 @@ func (c *calcState) price(res *Result) {
 // no sibling kept the entry warm, the span is at or before the ping's extent, and the span is
 // priced at the read tier.
 func (c *calcState) interaction(res *Result, from Position, d int) {
+	if len(c.clientBPs) == 0 { // no breakpoint, no write tier: the interaction is write -> read, so none (§6.2)
+		return
+	}
 	if !c.pingHot || c.r.Facts.SharedWarm != nil || c.pingRead() == nil || c.usage.CacheRead <= 0 {
 		return
 	}

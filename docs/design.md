@@ -610,8 +610,8 @@ boundary that would have applied if no plugin had changed anything:
 ```
 x  = min( prevCachedExtent,   // what this thread's previous request left cached, in client space
           clientFirstDiff )   // the last position before the client changed its own body
-B* = the last client breakpoint at or before x
-B* = 0 when the cache expired, or when no client breakpoint is at or before x
+B* = the last client breakpoint at or before x   (with no client breakpoint, every position is one: B* = x)
+B* = 0 when the cache expired, or when the body has breakpoints and none is at or before x
 ```
 
 **The usage can overrule the hashes.** If `Usage.CacheRead` covers the whole of `prevCachedExtent`, the provider
@@ -648,9 +648,19 @@ breakpoint more than 20 blocks after the previous entry can miss with an unchang
 library then prices too high a read. Shadow differences of this kind go to the case list ([§10.3](testing.md#103-what-makes-the-list-exhaustive) C).
 
 On OpenAI models before GPT-5.6 there are no explicit breakpoints: the provider caches the longest
-prefix it can, in steps of 128 tokens. For those models, the host passes one implicit breakpoint at
-the end of the body, and the library rounds B\* and the read extent down to a multiple of 128
-tokens.
+prefix it can, in steps of 128 tokens. For those models, the host passes no breakpoint. With no breakpoint
+every position counts as a breakpoint (§6.2): B\* is the last position at or before x, and the read and
+cached extents try every position. The extent tolerance absorbs the 128-token rounding. A host that passes
+an implicit breakpoint gets the breakpoint pricing (a break moves read to write), which OpenAI does not bill.
+
+Three conditions apply the rule, each with its own scope:
+- **Candidates** (read and cached extents, setting-break start): this request has no *forwarded* breakpoint.
+  The extents describe what the provider did with the forwarded body, so only that body matters.
+- **Cached extent counts Input too**: this request has no *forwarded* breakpoint and the whole prompt (input + cache
+  read + cache write) reaches `EntryFacts.MinCacheable`. The provider then caches the whole prompt it
+  processed, read or not. A shorter prompt is processed without caching. The minimum applies to the prompt,
+  not to the input part alone.
+- **B\***: this request has no *client* breakpoint. B\* is a property of the client body, so B\* = x.
 
 The host keeps one fingerprint for each thread: the most recent request of that thread (wiring document, W5.2).
 
@@ -661,7 +671,7 @@ type Fingerprint struct {
     Client    Body      // client body, before any plugin
     Forwarded Body      // body as sent upstream
     ClientBreakpoints, ForwardedBreakpoints []Breakpoint
-    Cached    Position  // extent cached after its response: cache_read + cache_write, in forwarded space
+    Cached    Position  // extent cached after its response: cache_read + cache_write (plus input when the request has no forwarded breakpoint and its whole prompt reaches `MinCacheable`), in forwarded space
 }
 
 // Body lists every position in hash order: tools, then system, then messages. The slice index is
@@ -1011,9 +1021,15 @@ forwarded space, against the forwarded breakpoints.
 | at or before B\* | **cache read** |
 | after B\*, at or before `L` | **cache write**, at the TTL of the first breakpoint at or after the position (5m or 1h) |
 | after `L` | **input** |
-| any position, with no breakpoint in the body | **input** |
+| any position, with no breakpoint in the body, after B\* | **input** |
 | any position, when no breakpoint at or after it ends a prefix of at least `EntryFacts.MinCacheable` tokens (§5.1) | **input**, not write |
 | a position in the forwarded body, when the usage has no cache tokens and some `Input` (§5.1) | **input**, even at or before B\* |
+
+With no breakpoint in the body (automatic prefix caching, for example OpenAI), every position counts as a
+breakpoint. B\* is then the end of the cached extent, and a position at or before it is a **cache read**. A cut
+inside the cache is a read, and the break it causes moves the later tokens from read to **input**. The
+other rows keep their meaning: the minimum length turns a write into input and, with no breakpoint, decides whether the prompt is cached at all, and a usage with no cache
+tokens still prices the forwarded body as input.
 
 On a cache miss, B\* = 0, so the first row matches nothing. A position is compared in hash order:
 section first (tools, system, messages), then index. For a change with `Spans`, each span is
@@ -1066,7 +1082,7 @@ neither the ping's nor the content changes' alone. The library reports it as
 `Result.Interaction`, attributed to nobody, so the request total still equals the bill without
 the context operations minus the bill with them.
 
-**What v0 reports.** `Interaction` is the tokens of a saved span that the client body would have
+**What v0 reports.** With no client breakpoint there is no write tier, so `Interaction` is empty. `Interaction` is the tokens of a saved span that the client body would have
 written cold. `Result.InteractionCaused` is the same tokens at the read tier, as the operation
 books them. The host prices `Interaction` minus `InteractionCaused`: for 1,201 tokens on Sonnet,
 1,201 × (3.75 − 0.30)/Mtok = $0.00414. Both are zero unless all of these hold:
