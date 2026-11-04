@@ -150,7 +150,11 @@ type MessageSplice struct {
 type CacheState struct {
 	CachePhase CachePhase `json:"phase,omitempty"`
 	Extent     *Position  `json:"extent,omitempty"` // the last position the entry covers; nil when nothing is covered
-	TTL        string     `json:"ttl,omitempty"`    // "5m" | "1h"; empty when cold or unknown
+	TTL        string     `json:"ttl,omitempty"`    // "5m" | "1h": the longest TTL of a breakpoint that wrote the entry; empty when cold or unknown
+	// EntryTTL is EntryFacts.TTL of the request that wrote the entry. The next request judges the entry
+	// with it, not with its own EntryFacts.TTL, because the entry lives as long as it was written for.
+	// Zero when unknown (a state from before this field): the next request's own TTL is used then.
+	EntryTTL time.Duration `json:"entryTtl,omitempty"`
 }
 
 // EntryFacts are the facts that decide the cache phase and that only the host knows. The host

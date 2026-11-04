@@ -508,11 +508,30 @@ split only when the client body would have written the tokens.
 - **#15 (minimum length).** Fixed with `EntryFacts.MinCacheable` (design §5.1, §6.2). Unit tests in
   `internal/engine/mincacheable_test.go` pin it.
 - **#19 (`Interaction`).** Design §6.2 now reports the exact case (a span before the ping's extent). The unit test `interaction_test.go` holds the issue's numbers. A generated case waits for the Q1 decision.
-- **#16 (the clock) has cases now.** It was fixed in accountant#16: a read in the usage overrules the clock up to
-  10 seconds past an `exact` TTL, an out-of-order `At` keeps the newer fingerprint, and a fork is seeded from
+- **#16 (the clock) has cases now.** It was fixed in accountant#16: a read in the usage overrules the clock (first
+  up to 10 seconds past an `exact` TTL; accountant#41 removed the limit), an out-of-order `At` keeps the newer fingerprint, and a fork is seeded from
   `Thread.Parent` (design §5.2). The cases are in `test/cases/clock-*.json`.
 - **#11, #13, #17, #18.** The fault is not a request sequence: a token count the host did not pass (#11), saved state
   (#13), the API shape (#17) and speed (#18).
+
+## 9b. Cases from accountant#40 and #41
+
+Two reviews of context-guru#768 and #893 found that the clock used one TTL for the whole request, and the TTL of the
+current request. Four cases pin the fix. Every case has messages a = 2,000, b = 3,000, c = 2,000 tokens, and a change
+that shrinks b by 2,000 tokens. The second request adds d = 500 tokens and replays the change. Its saving is 2,000
+tokens: the read tier when the phase is hot, the write tier when it is cold. Prices are the fixture rates (read
+$0.30/M, 5m write $3.75/M, 1h write $6.00/M).
+
+| Case ID | Issue | What the spec requires | What the library did before the fix |
+|---|---|---|---|
+| `ttl/mixed-1h-head-5m-tail/read-after-10-minutes` | #40 | A 1h mark on b, a 5m mark on c. 10 minutes later the provider reads the 3,000-token head. Phase `hot`, saving 2,000 x $0.30/M = $0.00060 (read). | With `Facts.TTL` 5m: `cold`, a 1h write, 2,000 x $6.00/M = $0.01200 (20 times). |
+| `ttl/5m-entry-asked-at-1h/cold-after-30-minutes` | #41 | A 5m entry, 30 minutes, the new request asks 1h. The entry is expired: `cold`, saving 2,000 x $6.00/M = $0.01200 (1h write). | `hot`, a read: 2,000 x $0.30/M = $0.00060. |
+| `ttl/1h-entry-asked-at-5m/hot-after-10-minutes` | #41 | A 1h entry, 10 minutes, the new request has 5m marks and the provider reads 5,000. `hot`, saving $0.00060 (read). | `cold`, a 5m write: 2,000 x $3.75/M = $0.00750 (12.5 times). |
+| `clock/read-beats-clock-past-ttl/hot` | #41 | A 5m entry, a gap of 5m30s, a billed read of 5,000. `hot`, saving $0.00060 (read). | `cold`, a 5m write: $0.00750. |
+
+The case `clock/ttl-edge-past-margin/cold` (accountant#16) now bills no read at 11 seconds past the TTL. The old
+version billed a read there and expected `cold`. That rule (a 10-second margin) is gone: a billed read beats the
+clock at any gap.
 
 ## 10. Limits of this document
 

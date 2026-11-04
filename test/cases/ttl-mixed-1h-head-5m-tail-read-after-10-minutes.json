@@ -1,0 +1,295 @@
+{
+ "id": "ttl/mixed-1h-head-5m-tail/read-after-10-minutes",
+ "description": "r0 sends a 1h mark on messages[1] and a 5m mark on messages[2]. The change shrinks messages[1] from 3,000 to 1,000 tokens. The forwarded head is 2,000 + 1,000 = 3,000 tokens (1h), the tail 2,000 (5m): r0 writes 5,000, of which 3,000 at 1h. r1 comes 10 minutes later with marks on messages[1] (1h) and messages[3] (5m). The provider reads the 3,000-token 1h head and writes the 2,000 tail and the 500 new message again: read 3,000, write 2,500. The 5m tail expired, the 1h head did not. The host reports Facts.TTL 5m. The replayed 2,000 tokens are inside the head, so they are READ (2,000 x $0.30/M), not written. Before the fix the phase was cold and the saving a 1h write (2,000 x $6.00/M).",
+ "source": "issue_cases.md#40",
+ "dims": {
+  "kind": "rewrite",
+  "position": "afterBStarToL",
+  "cache": "hit",
+  "ttl": "mixed",
+  "lifetime": "exact"
+ },
+ "rates": "fixture-v1",
+ "steps": [
+  {
+   "begin": {
+    "meta": {
+     "requestId": "r0",
+     "session": "s1",
+     "model": "agent-model",
+     "at": "2026-03-02T09:00:00Z",
+     "billing": {
+      "mode": "api"
+     }
+    },
+    "client": {
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "pos": [
+      {
+       "hash": 620337896427418084,
+       "bytes": 8000
+      },
+      {
+       "hash": 12340099932563210358,
+       "bytes": 12000
+      },
+      {
+       "hash": 14899682270663221853,
+       "bytes": 8000
+      }
+     ]
+    },
+    "clientBreakpoints": [
+     {
+      "pos": {
+       "section": "messages",
+       "index": 1
+      },
+      "ttl": "1h"
+     },
+     {
+      "pos": {
+       "section": "messages",
+       "index": 2
+      },
+      "ttl": "5m"
+     }
+    ]
+   },
+   "add": [
+    {
+     "id": "o1",
+     "kind": "rewrite",
+     "operator": "mask",
+     "at": {
+      "section": "messages",
+      "index": 1
+     },
+     "sizeBefore": {
+      "bytes": 12000
+     },
+     "sizeAfter": {
+      "bytes": 4000
+     },
+     "changeId": "cg:ttl:c1"
+    }
+   ],
+   "end": {
+    "thread": {
+     "id": "main"
+    },
+    "forwarded": {
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "pos": [
+      {
+       "hash": 620337896427418084,
+       "bytes": 8000
+      },
+      {
+       "hash": 4540961017517697664,
+       "bytes": 4000
+      },
+      {
+       "hash": 8551067516420745051,
+       "bytes": 8000
+      }
+     ]
+    },
+    "breakpoints": [
+     {
+      "pos": {
+       "section": "messages",
+       "index": 1
+      },
+      "ttl": "1h"
+     },
+     {
+      "pos": {
+       "section": "messages",
+       "index": 2
+      },
+      "ttl": "5m"
+     }
+    ],
+    "facts": {
+     "ttl": "5m",
+     "lifetime": "exact"
+    }
+   },
+   "usage": {
+    "input": 0,
+    "cacheRead": 0,
+    "cacheWrite": 5000,
+    "cacheWrite1h": 3000
+   },
+   "expected": {
+    "phase": "unknown",
+    "baselineUsage": {
+     "input": 0,
+     "cacheRead": 0,
+     "cacheWrite": 7000,
+     "cacheWrite1h": 5000
+    },
+    "ops": [
+     {
+      "changeId": "cg:ttl:c1",
+      "saved": {
+       "cacheWrite1h": 2000
+      },
+      "caused": {},
+      "estimated": true,
+      "note": "the shrunk part is under the 1h mark"
+     }
+    ],
+    "unpriced": [
+     {
+      "reason": "penalty_unknown"
+     }
+    ]
+   }
+  },
+  {
+   "begin": {
+    "meta": {
+     "requestId": "r1",
+     "session": "s1",
+     "model": "agent-model",
+     "at": "2026-03-02T09:10:00Z",
+     "billing": {
+      "mode": "api"
+     }
+    },
+    "client": {
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "pos": [
+      {
+       "hash": 620337896427418084,
+       "bytes": 8000
+      },
+      {
+       "hash": 12340099932563210358,
+       "bytes": 12000
+      },
+      {
+       "hash": 14899682270663221853,
+       "bytes": 8000
+      },
+      {
+       "hash": 14661398692511680033,
+       "bytes": 2000
+      }
+     ]
+    },
+    "clientBreakpoints": [
+     {
+      "pos": {
+       "section": "messages",
+       "index": 1
+      },
+      "ttl": "1h"
+     },
+     {
+      "pos": {
+       "section": "messages",
+       "index": 3
+      },
+      "ttl": "5m"
+     }
+    ]
+   },
+   "add": [],
+   "end": {
+    "thread": {
+     "id": "main"
+    },
+    "forwarded": {
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "pos": [
+      {
+       "hash": 620337896427418084,
+       "bytes": 8000
+      },
+      {
+       "hash": 4540961017517697664,
+       "bytes": 4000
+      },
+      {
+       "hash": 8551067516420745051,
+       "bytes": 8000
+      },
+      {
+       "hash": 1426876972646721047,
+       "bytes": 2000
+      }
+     ]
+    },
+    "breakpoints": [
+     {
+      "pos": {
+       "section": "messages",
+       "index": 1
+      },
+      "ttl": "1h"
+     },
+     {
+      "pos": {
+       "section": "messages",
+       "index": 3
+      },
+      "ttl": "5m"
+     }
+    ],
+    "facts": {
+     "ttl": "5m",
+     "lifetime": "exact"
+    }
+   },
+   "usage": {
+    "input": 0,
+    "cacheRead": 3000,
+    "cacheWrite": 2500,
+    "cacheWrite1h": 0
+   },
+   "expected": {
+    "phase": "hot",
+    "baselineUsage": {
+     "input": 0,
+     "cacheRead": 5000,
+     "cacheWrite": 2500,
+     "cacheWrite1h": 0
+    },
+    "ops": [
+     {
+      "changeId": "cg:ttl:c1",
+      "saved": {
+       "cacheRead": 2000
+      },
+      "caused": {},
+      "estimated": true,
+      "note": "the 1h head is alive at minute 10: 2000 tokens are read"
+     }
+    ],
+    "boundary": {
+     "section": "messages",
+     "index": 1
+    }
+   }
+  }
+ ]
+}
