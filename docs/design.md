@@ -1239,7 +1239,7 @@ check, the operator, the detail, and the request, session and thread IDs). `Prev
    with the section and index, and the keep-alive rescue of that request is not credited ([R54](spec.md#r54)).
    A doubtful figure may only lower a saving.
 8. **Usage sign and cap:** no count in `Usage` is negative or above 2^40 (about 1.1e12 tokens), and `CacheWrite1h` is not
-   larger than `CacheWrite` (it is part of it, never an addition). The cap keeps the sum of the tiers from wrapping an `int` (on a 32-bit `int` no count can reach it). `Facts.PingUsage` is not checked here.
+   larger than `CacheWrite` (it is part of it, never an addition). On a 64-bit `int` the cap keeps the sum of the tiers from wrapping. On a 32-bit `int` the cap cannot be reached, and a sum that wraps gives a ratio that fails check 9, so nothing is priced. `Facts.PingUsage` is not checked here.
    If one count is out of range, the check `bad_usage` fails. The same rule applies to the `Usage` of a spend's `Call`;
    there `Output` must not be negative or above the cap, and `CostUSD` must not be negative, NaN or infinite. A spend
    whose `Call` fails goes to `Unpriced` with `bad_usage` (its other figures are not changed), also in `ComputeStandalone`.
@@ -1266,6 +1266,10 @@ check, the operator, the detail, and the request, session and thread IDs). `Prev
       have inserted content, for example retrieval).
     - `SizeAfter.Bytes` is at most the forwarded body total plus the sum of `max(0, SizeBefore.Bytes - SizeAfter.Bytes)`
       over the rewrites (a later operator may have removed part of its output).
+    - A `DryRun` operation (observe mode) read a real body, so only its `SizeBefore` is bounded. Its `SizeAfter` is a
+      guess that never reaches the totals (R12), so only check 12 looks at it.
+    - An active operation leaves the sums only while a well-formed report replaces it. A malformed re-report
+      replaces nothing, so the active operation still counts.
     - A report that fails a bound adds to neither sum, so one bogus report cannot raise the bound for itself. A
       `DryRun` operation adds to neither sum.
 

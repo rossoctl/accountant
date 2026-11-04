@@ -521,10 +521,13 @@ split only when the client body would have written the tokens.
 | `check/size-above-client-body/unpriced` | An operation reports 2e12 tokens (8e12 bytes) before and after, from a request whose client body is 80,000 bytes. It is `Unpriced` with `size_range`, and check 13 fails. A second operation (5,000 tokens saved at the write tier, +$0.01875) is priced as usual. |
 | `check/size-above-client-body/keeps-active-change` | A change is active. A later request reports the same `ChangeID` with an impossible size. The bad report is `Unpriced` (`size_range`) and the active change is still applied again: 5,000 read tokens, $0.00150. |
 | `check/size-after-inserting-operator/priced` | A retrieval operator inserts 25,000 tokens. The cmdfilter after it reports a `SizeBefore` of 100,000 bytes, above the 32,000-byte client body but inside the bound (132,000). It stays priced: net -5,000 write tokens, -$0.01875. |
+| `check/malformed-rereport-keeps-insertion/priced` | Request 0 stores an active insertion of 25,000 tokens. Request 1 re-reports its `ChangeID` with an impossible `SizeBefore`, and an honest cmdfilter cuts the insertion to 5,000. The bad re-report is `size_range` and replaces nothing. The honest operation stays priced: saves 20,000 write tokens, the insertion causes 25,000, net -5,000 x $3.75/M = -$0.01875. |
 | `check/bad-call-negative-output/unpriced` | A spend `Call` with `output: -5` is `Unpriced` with `bad_usage`, and the check fails. |
 | `check/bad-call-negative-cost/unpriced` | A spend `Call` with `costUSD: -0.008` is `Unpriced` with `bad_usage`, and the check fails. |
 
-The case format cannot carry these inputs, so Go tests hold them (`internal/engine/validation_inputs_test.go`):
+A `DryRun` insertion (only its `SizeBefore` is bounded) has no case: an expected op has no `dryRun` field, so the conservation check of the harness would count its hypothetical cost. `TestDryRunInsertionStaysPriced` holds it.
+
+The case format cannot carry the other inputs, so Go tests hold them (`internal/engine/validation_inputs_test.go`):
 usage tiers above 2^40 and sums that would wrap an `int` (a case bills what its forwarded body holds), and
 `NaN` or `Inf` in `CostUSD` (JSON has no such value).
 

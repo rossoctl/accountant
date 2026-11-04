@@ -129,7 +129,8 @@ func callDetail(op Operation) string {
 // A report that fails a bound adds to neither sum: one bogus report must not raise the bound for itself
 // or for the others. So the bounds are found by repetition: start with every reported rewrite, drop the
 // ones that fail, and repeat until none drops (at most one drop for each operation). A DryRun operation
-// changed no byte, so it adds to neither sum. Sums saturate.
+// changed no byte, so it adds to neither sum, and only its SizeBefore is bounded. An active operation
+// leaves the sums only while a well-formed report replaces it. Sums saturate.
 type limits struct{ before, after int }
 
 func (r *Request) limits(s ThreadState) limits {
@@ -138,25 +139,28 @@ func (r *Request) limits(s ThreadState) limits {
 	if r.ended {
 		fwd = r.Forwarded.cumBytes(len(r.Forwarded.Pos) - 1)
 	}
-	reported := map[string]bool{}
-	for _, op := range r.Ops {
-		if op.ChangeID != "" && (op.Kind == KindRewrite || op.Kind == KindSetting) {
-			reported[op.ChangeID] = true
-		}
-	}
 	type entry struct {
 		op     Operation
 		active bool
 		out    bool // dropped: it failed a bound
 	}
-	var es []*entry // the rewrites: active ones no report replaces, then the reported ones
+	var es []*entry // the rewrites: the active ones, then the reported ones
 	for _, op := range s.Active {
-		if !reported[op.ChangeID] {
-			es = append(es, &entry{op: op, active: true})
-		}
+		es = append(es, &entry{op: op, active: true})
 	}
 	for _, op := range r.Ops {
 		es = append(es, &entry{op: op})
+	}
+	// An active operation leaves the sums only while a well-formed report replaces it: the same rule as
+	// isChange. A report that fails a bound is dropped below, and then the active one counts again.
+	replaced := func(act *entry) bool {
+		for _, e := range es {
+			if !e.active && !e.out && e.op.ChangeID == act.op.ChangeID && e.op.ChangeID != "" &&
+				(e.op.Kind == KindRewrite || e.op.Kind == KindSetting) && !negative(e.op) {
+				return true
+			}
+		}
+		return false
 	}
 	sat := func(a, d int) int {
 		if a > math.MaxInt-d {
@@ -168,7 +172,7 @@ func (r *Request) limits(s ThreadState) limits {
 	for {
 		l = limits{before: client, after: fwd}
 		for _, e := range es {
-			if e.out || e.op.Kind != KindRewrite || e.op.DryRun || negative(e.op) {
+			if e.out || e.op.Kind != KindRewrite || e.op.DryRun || negative(e.op) || (e.active && replaced(e)) {
 				continue
 			}
 			add := func(b, a Size) {
@@ -208,9 +212,9 @@ func bigSize(op Operation, l limits) ([2]Size, bool) {
 	if op.Kind != KindRewrite {
 		return [2]Size{}, false
 	}
-	over := func(b, a Size) bool {
-		return b.Bytes > l.before || (!op.DryRun && a.Bytes > l.after) || (op.DryRun && a.Bytes > l.before)
-	}
+	// A DryRun operation read a real body, so its SizeBefore is bounded. Its SizeAfter is a guess that
+	// never reaches the totals (R12), so only check 12 looks at it.
+	over := func(b, a Size) bool { return b.Bytes > l.before || (!op.DryRun && a.Bytes > l.after) }
 	if over(op.SizeBefore, op.SizeAfter) {
 		return [2]Size{op.SizeBefore, op.SizeAfter}, true
 	}

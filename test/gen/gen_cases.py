@@ -2145,6 +2145,30 @@ def i44_after_insert():
                DIMS("rewrite", "mixed", "miss", operations="2", splice="true"), [s0], open_=[BSTAR_SNAP])
 
 
+def i44_malformed_rereport():
+    sysb = [("sys", 500)]
+    m = [("m0", 500), ("m1", 500)]
+    ins_c = "cg:retrieve:i44f"
+    ins = rewrite("o1", "context-guru.retrieve", "messages", 1, 0, 25000, ins_c,
+                  splice={"at": 1, "removed": 0, "inserted": 1})
+    cf = m[:1] + [("ins", 25000)] + m[1:]
+    s0 = sim(0, "r0", ([], sysb, m), ([], sysb, cf), [eop(ins_c, caused=TT(cacheWrite5m=25000))], "unknown",
+             add=[ins], unpriced=[{"reason": "penalty_unknown"}])
+    bad = rewrite("o2", "context-guru.retrieve", "messages", 1, 2_000_000_000_000, 25000, ins_c,
+                  splice={"at": 1, "removed": 0, "inserted": 1})
+    down = rewrite("o3", "context-guru.cmdfilter", "messages", 1, 25000, 5000, "cg:cmdfilter:i44f")
+    cf2 = m[:1] + [("ins2", 5000)] + m[1:]
+    s1 = sim(1500, "r1", ([], sysb, m), ([], sysb, cf2), [eop("cg:cmdfilter:i44f", saved=TT(cacheWrite5m=20000)),
+                                                          eop(ins_c, caused=TT(cacheWrite5m=25000))], "cold",
+             add=[bad, down], unpriced=[{"opId": "o2", "reason": "size_range"}], checks=["size_range"])
+    write_more("check/malformed-rereport-keeps-insertion/priced", "I44",
+               "Request 0 stores an active insertion of 25,000 tokens. Request 1 reports the same ChangeID again with an "
+               "impossible SizeBefore, and an honest cmdfilter that cuts the insertion from 25,000 to 5,000 tokens. The "
+               "bad re-report replaces nothing, so the insertion still counts in the bound of check 13 and the honest "
+               "operation stays priced: it saves 20,000 write tokens and the insertion causes 25,000 (net -5,000 x $3.75/M = -$0.01875).",
+               DIMS("rewrite", "mixed", "miss", check="size_range", splice="true"), [s0, s1], open_=[BSTAR_SNAP])
+
+
 def i44_bad_call(name, field, value, text):
     ses = f"s-i44-{name}"
     call = spend_call(6000, 400, 0.008)
@@ -2160,6 +2184,7 @@ def i44():
     i44_size_range()
     i44_keeps_active()
     i44_after_insert()
+    i44_malformed_rereport()
     i44_bad_call("negative-output", "output", -5,
                  "A model call states -5 output tokens. No response can bill that. The spend goes to Unpriced "
                  "(bad_usage) and the check bad_usage fails. The host must not add a negative cost to its totals.")

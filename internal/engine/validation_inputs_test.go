@@ -167,14 +167,73 @@ func TestSizeAfterAboveLimitIsNotPriced(t *testing.T) {
 	spanned := Operation{ID: "o2", Kind: KindRewrite, Operator: "trim", ChangeID: "c2", At: msg(0),
 		Spans:      []Span{{Section: SectionMessages, From: 0, To: 0, SizeBefore: Size{Bytes: 2000}, SizeAfter: Size{Bytes: int(bigBytes)}}},
 		SizeBefore: Size{Bytes: 2000}, SizeAfter: Size{Bytes: int(bigBytes)}}
-	if strconv.IntSize < 64 {
-		t.Skip("sizes above 2^32 need a 64-bit int")
-	}
 	q := req{at: t0, client: client, clientBPs: bps5(msg(0)), facts: exact5m, ops: []Operation{op, spanned}, usage: Usage{Input: 2000}}
 	res := q.run(NewTrackers())
 	for _, id := range []string{"o1", "o2"} {
 		if !hasUnpriced(res, ReasonSizeRange) || tierSum(findOp(t, res, id).Caused) != 0 {
 			t.Fatalf("%s: Unpriced=%+v Caused=%+v", id, res.Unpriced, findOp(t, res, id).Caused)
 		}
+	}
+}
+
+// A DryRun insertion (observe mode) is priced as would-have-saved: only its SizeBefore is bounded.
+func TestDryRunInsertionStaysPriced(t *testing.T) {
+	client := mk(nil, nil, []blk{b("a", 1000), b("b", 1000)})
+	dry := rewrite("d", "retrieve", "cd", msg(1), 0, 50000)
+	dry.DryRun = true
+	q := req{at: t0, client: client, clientBPs: bps5(msg(1)), facts: exact5m, ops: []Operation{dry}, usage: Usage{Input: 500}}
+	res := q.run(NewTrackers())
+	if hasUnpriced(res, ReasonSizeRange) {
+		t.Fatalf("Unpriced = %+v, a DryRun SizeAfter is not bounded by check 13", res.Unpriced)
+	}
+	for _, c := range res.Checks {
+		if c.Check == ReasonSizeRange {
+			t.Fatalf("Checks = %+v", res.Checks)
+		}
+	}
+	// its SizeBefore is still bounded
+	bad := rewrite("d2", "retrieve", "cd2", msg(1), 50000, 0)
+	bad.DryRun = true
+	q.ops = []Operation{bad}
+	if res := q.run(NewTrackers()); !hasUnpriced(res, ReasonSizeRange) {
+		t.Fatalf("Unpriced = %+v, a DryRun SizeBefore above the bound is size_range", res.Unpriced)
+	}
+}
+
+// A malformed re-report of an active insertion must not lower the bound for an honest downstream
+// operator: the active insertion still counts in the sums.
+func TestMalformedReReportKeepsInsertionInBound(t *testing.T) {
+	if strconv.IntSize < 64 {
+		t.Skip("sizes above 2^32 need a 64-bit int")
+	}
+	client := mk(nil, nil, []blk{b("a", 2000), b("b", 2000)})
+	fwd := mk(nil, nil, []blk{b("a", 2000), b("ins", 100000), b("b", 2000)})
+	ts := NewTrackers()
+	ci := rewrite("i", "retrieve", "ci", msg(1), 0, 100000)
+	ci.MessageSplice = &MessageSplice{At: 1, Removed: 0, Inserted: 1}
+	req{at: t0, client: client, fwd: fwd, clientBPs: bps5(msg(1)), facts: exact5m, ops: []Operation{ci},
+		usage: Usage{CacheWrite: 26000}}.run(ts)
+	hugeBytes := int64(8_000_000_000_000)
+	huge := int(hugeBytes)
+	bad := rewrite("i2", "retrieve", "ci", msg(1), huge, 100000)
+	o2 := rewrite("o2", "trim", "c2", msg(1), 100000, 20000)
+	fwd2 := mk(nil, nil, []blk{b("a", 2000), b("ins", 20000), b("b", 2000)})
+	res := req{at: t0.Add(10), client: client, fwd: fwd2, clientBPs: bps5(msg(1)), facts: exact5m,
+		ops: []Operation{bad, o2}, usage: Usage{CacheRead: 1000, CacheWrite: 5000}}.run(ts)
+	for _, u := range res.Unpriced {
+		if u.OpID == "o2" {
+			t.Fatalf("o2 is unpriced (%s): the bound lost the active insertion", u.Reason)
+		}
+	}
+	if !hasUnpriced(res, ReasonSizeRange) {
+		t.Fatalf("the huge re-report must be size_range: %+v", res.Unpriced)
+	}
+	st := ts.tracker(ThreadKey("s1", Thread{ID: "main"}), t0).snapshot()
+	found := false
+	for _, a := range st.Active {
+		found = found || (a.ChangeID == "ci" && a.SizeAfter.Bytes == 100000)
+	}
+	if !found {
+		t.Fatalf("state lost the active insertion: %+v", st.Active)
 	}
 }
