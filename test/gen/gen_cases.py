@@ -2345,6 +2345,151 @@ def c43():
                  DIMS("rewrite", "afterBStar", "hit", breakpoints="none"), [s0, s1])
 
 
+# accountant#44: input validation. A size above the whole client body, and a spend Call with a figure that
+# cannot be real. Usage tiers above 2^40 and NaN/Inf have no case form: a case bills what its forwarded body
+# holds, and JSON has no NaN. internal/engine/validation_inputs_test.go holds those.
+def i44_size_range():
+    sysb = [("sys", 2000)]
+    m = [(f"m{i}", 3000) for i in range(4)]  # 14,000 tokens with the system block
+    mc, mf = m + [("m4", 6000)], m + [("m4f", 1000)]
+    big, ok = "cg:cmdfilter:i44a", "cg:cmdfilter:i44b"
+    huge = 2_000_000_000_000  # tokens; 8e12 bytes, far above the 56,000-byte client body
+    over = rewrite("o1", "context-guru.cmdfilter", "messages", 2, huge, huge, big)
+    over["sizeBefore"]["tokens"] = huge
+    good = rewrite("o2", "context-guru.cmdfilter", "messages", 4, 6000, 1000, ok)
+    s0 = sim(0, "r0", ([], sysb, m), ([], sysb, m), [], "unknown")
+    s1 = sim(40, "r1", ([], sysb, mc), ([], sysb, mf), [eop(ok, saved=TT(cacheWrite5m=5000))], "hot",
+             add=[over, good], prev=(14000, 14000), boundary=P("messages", 3),
+             unpriced=[{"opId": "o1", "reason": "size_range"}], checks=["size_range"])
+    write_more("check/size-above-client-body/unpriced", "I44",
+               "An operator reports that it received 2e12 tokens (8e12 bytes) and produced as many, but the client body "
+               "of this request holds 80,000 bytes (20,000 tokens) and the forwarded body 60,000. Both sizes are above "
+               "every bound of check 13, so the operation is not priced (size_range) and the check is reported. (Without "
+               "the check this report would save 0 tokens; the 9.2e18-token saving of an unbounded SizeBefore is in the "
+               "Go test.) A second, honest operation on the same request is priced as usual: message 4 shrinks "
+               "from 6,000 to 1,000 tokens after B*, so 5,000 cache-write tokens are saved (5,000 x $3.75/M = $0.01875).",
+               DIMS("rewrite", "afterBStar", "hit", check="size_range"), [s0, s1])
+
+
+def i44_keeps_active():
+    sysb = [("sys", 2000)]
+    m = [(f"m{i}", 3000) for i in range(4)]
+    mc, mf = m + [("m4", 6000)], m + [("m4f", 1000)]
+    ch = "cg:cmdfilter:i44c"
+    good = rewrite("o1", "context-guru.cmdfilter", "messages", 4, 6000, 1000, ch)
+    bad = rewrite("o2", "context-guru.cmdfilter", "messages", 4, 2_000_000_000_000, 0, ch)
+    s0 = sim(0, "r0", ([], sysb, m), ([], sysb, m), [], "unknown")
+    s1 = sim(40, "r1", ([], sysb, mc), ([], sysb, mf), [eop(ch, saved=TT(cacheWrite5m=5000))], "hot",
+             add=[good], prev=(14000, 14000), boundary=P("messages", 3))
+    mc2, mf2 = mc + [("m5", 500)], mf + [("m5", 500)]
+    s2 = sim(80, "r2", ([], sysb, mc2), ([], sysb, mf2), [eop(ch, saved=TT(cacheRead=5000), note="applied again")], "hot",
+             add=[bad], prev=(20000, 15000), boundary=P("messages", 4),
+             unpriced=[{"opId": "o2", "reason": "size_range"}], checks=["size_range"])
+    write_more("check/size-above-client-body/keeps-active-change", "I44",
+               "A change is reported once (request 1) and applied again later. On request 2 a bug reports the same "
+               "ChangeID with a size of 2e12 tokens. The bad report is not priced (size_range) and it replaces "
+               "nothing: the active change is still applied again, 5,000 tokens at the read tier (the client body "
+               "would have been cached up to message 4): 5,000 x $0.30/M = $0.00150.",
+               DIMS("rewrite", "beforeBStar", "hit", check="size_range", replay="true"), [s0, s1, s2])
+
+
+def i44_after_insert():
+    sysb = [("sys", 2000)]
+    m = [("m0", 3000), ("m1", 3000)]
+    ins = rewrite("o1", "context-guru.retrieve", "messages", 1, 0, 25000, "cg:retrieve:i44d",
+                  splice={"at": 1, "removed": 0, "inserted": 1})
+    # the downstream operator receives the 25,000-token insertion (100,000 bytes): above the client body
+    # (32,000 bytes) but inside client + inserted (132,000). It cuts it to 5,000 tokens.
+    down = rewrite("o2", "context-guru.cmdfilter", "messages", 1, 25000, 5000, "cg:cmdfilter:i44d")
+    cf = m[:1] + [("ins", 5000)] + m[1:]
+    s0 = sim(0, "r0", ([], sysb, m), ([], sysb, cf), [eop("cg:retrieve:i44d", caused=TT(cacheWrite5m=25000)),
+                                                         eop("cg:cmdfilter:i44d", saved=TT(cacheWrite5m=20000))],
+             "unknown", add=[ins, down], unpriced=[{"reason": "penalty_unknown"}])
+    write_more("check/size-after-inserting-operator/priced", "I44",
+               "A retrieval operator inserts 25,000 tokens (100,000 bytes) into a 32,000-byte client body. A cmdfilter after "
+               "it receives that insertion and reports SizeBefore of 100,000 bytes: above the client body, but inside the "
+               "bound of check 13 (client + inserted bytes = 132,000). The report stays priced: no size_range check fails. "
+               "Retrieve caused 25,000 write tokens, cmdfilter saved 20,000: net -5,000 x $3.75/M = -$0.01875.",
+               DIMS("rewrite", "mixed", "miss", operations="2", splice="true"), [s0], open_=[BSTAR_SNAP])
+
+
+def i44_malformed_rereport():
+    sysb = [("sys", 500)]
+    m = [("m0", 500), ("m1", 500)]
+    ins_c = "cg:retrieve:i44f"
+    ins = rewrite("o1", "context-guru.retrieve", "messages", 1, 0, 25000, ins_c,
+                  splice={"at": 1, "removed": 0, "inserted": 1})
+    cf = m[:1] + [("ins", 25000)] + m[1:]
+    s0 = sim(0, "r0", ([], sysb, m), ([], sysb, cf), [eop(ins_c, caused=TT(cacheWrite5m=25000))], "unknown",
+             add=[ins], unpriced=[{"reason": "penalty_unknown"}])
+    bad = rewrite("o2", "context-guru.retrieve", "messages", 1, 2_000_000_000_000, 25000, ins_c,
+                  splice={"at": 1, "removed": 0, "inserted": 1})
+    down = rewrite("o3", "context-guru.cmdfilter", "messages", 1, 25000, 5000, "cg:cmdfilter:i44f")
+    cf2 = m[:1] + [("ins2", 5000)] + m[1:]
+    s1 = sim(1500, "r1", ([], sysb, m), ([], sysb, cf2), [eop("cg:cmdfilter:i44f", saved=TT(cacheWrite5m=20000)),
+                                                          eop(ins_c, caused=TT(cacheWrite5m=25000))], "cold",
+             add=[bad, down], unpriced=[{"opId": "o2", "reason": "size_range"}], checks=["size_range"])
+    write_more("check/malformed-rereport-keeps-insertion/priced", "I44",
+               "Request 0 stores an active insertion of 25,000 tokens. Request 1 reports the same ChangeID again with an "
+               "impossible SizeBefore, and an honest cmdfilter that cuts the insertion from 25,000 to 5,000 tokens. The "
+               "bad re-report replaces nothing, so the insertion still counts in the bound of check 13 and the honest "
+               "operation stays priced: it saves 20,000 write tokens and the insertion causes 25,000 (net -5,000 x $3.75/M = -$0.01875).",
+               DIMS("rewrite", "mixed", "miss", check="size_range", splice="true"), [s0, s1], open_=[BSTAR_SNAP])
+
+
+def i44_honest_chain():
+    sysb = [("sys", 500)]
+    m = [("m0", 4000), ("m1", 4000)]  # 8,500 tokens with the system block
+    ci_c = "cg:retrieve:i44g"
+    ci = rewrite("o1", "context-guru.retrieve", "messages", 1, 0, 25000, ci_c,
+                 splice={"at": 1, "removed": 0, "inserted": 1})
+    cf = m[:1] + [("ins", 25000)] + m[1:]
+    s0 = sim(0, "r0", ([], sysb, m), ([], sysb, cf), [eop(ci_c, caused=TT(cacheWrite5m=25000))], "unknown",
+             add=[ci], unpriced=[{"reason": "penalty_unknown"}])
+    bad = rewrite("bad", "context-guru.retrieve", "messages", 1, 2_000_000_000_000, 25000, ci_c,
+                  splice={"at": 1, "removed": 0, "inserted": 1})
+    v = rewrite("v", "context-guru.more", "messages", 1, 0, 22500, "cg:more:i44g",
+                splice={"at": 1, "removed": 0, "inserted": 1})
+    d = rewrite("d", "context-guru.cmdfilter", "messages", 1, 55500, 18000, "cg:cmdfilter:i44g")
+    cf2 = [("x", 18000)]
+    s1 = sim(1500, "r1", ([], sysb, m), ([], sysb, cf2), [eop("cg:more:i44g", caused=TT(cacheWrite5m=22500)),
+                                                         eop("cg:cmdfilter:i44g", saved=TT(cacheWrite5m=37500)),
+                                                         eop(ci_c, caused=TT(cacheWrite5m=25000))], "cold",
+             add=[bad, v, d], unpriced=[{"opId": "bad", "reason": "size_range"}], checks=["size_range"])
+    write_more("check/honest-chain-beside-malformed-rereport/priced", "I44",
+               "Client body 34,000 bytes (8,500 tokens). An active insertion of 25,000 tokens (100,000 bytes). On "
+               "request 1 a bug re-reports its ChangeID with an impossible SizeBefore, and two honest operations ride "
+               "beside it: v inserts 22,500 tokens, d cuts 55,500 tokens to 18,000. The forwarded body is 18,000 tokens. "
+               "Only the bad re-report is size_range. v and d stay priced: v causes 22,500 write tokens, d saves 37,500, "
+               "the active insertion causes 25,000: net -10,000 x $3.75/M = -$0.0375.",
+               DIMS("rewrite", "mixed", "miss", check="size_range", splice="true"), [s0, s1], open_=[BSTAR_SNAP])
+
+
+def i44_bad_call(name, field, value, text):
+    ses = f"s-i44-{name}"
+    call = spend_call(6000, 400, 0.008)
+    call["usage"][field] = value
+    s = ping_step(10, ses, "cg:extract_llm:i44", call)
+    s["expected"]["ops"] = [eop("cg:extract_llm:i44", call=call)]
+    s["expected"]["unpriced"] = [{"opId": "op1", "reason": "bad_usage"}]
+    s["expected"]["checks"] = ["bad_usage"]
+    write_more(f"check/bad-call-{name}/unpriced", "I44", text, DIMS("spend", "none", "none", check="bad_usage"), [s])
+
+
+def i44():
+    i44_size_range()
+    i44_keeps_active()
+    i44_after_insert()
+    i44_malformed_rereport()
+    i44_honest_chain()
+    i44_bad_call("negative-output", "output", -5,
+                 "A model call states -5 output tokens. No response can bill that. The spend goes to Unpriced "
+                 "(bad_usage) and the check bad_usage fails. The host must not add a negative cost to its totals.")
+    i44_bad_call("negative-cost", "costUSD", -0.008,
+                 "A model call states a cost of -$0.008. The spend goes to Unpriced (bad_usage) and the check "
+                 "bad_usage fails. A valid call (case spend/without-rewrite/refused) is unchanged.")
+
+
 if __name__ == "__main__":
     os.makedirs(OUT, exist_ok=True)
     for old in os.listdir(OUT):  # the generator owns this directory: drop cases that no longer exist
@@ -2352,5 +2497,5 @@ if __name__ == "__main__":
             os.remove(os.path.join(OUT, old))
     for f in (ex12, ex3, ex4, ex5, ex67, ex8, shared_prefix_cases, ex9, c01, c02, c03_04, c05, c06, c07, c08, c09, c10, c11, c12, c_threads, c_clock, c_ttl, c_mix,
               c14, c15, c16, c17, c18, a1, a2, a3, a4_b3, b1_b2, b4, b5, c1_, c2_, c2b, c3_, c5, d2, d3, d4,
-              d5, d6, e2, e345, f245, h2, h5, r9, r14, r21, r20, r20b, c42, c42b, c42c, c42d, c43):
+              d5, d6, e2, e345, f245, h2, h5, r9, r14, r21, r20, r20b, c42, c42b, c42c, c42d, c43, i44):
         f()

@@ -1,0 +1,197 @@
+{
+ "id": "check/size-after-inserting-operator/priced",
+ "description": "A retrieval operator inserts 25,000 tokens (100,000 bytes) into a 32,000-byte client body. A cmdfilter after it receives that insertion and reports SizeBefore of 100,000 bytes: above the client body, but inside the bound of check 13 (client + inserted bytes = 132,000). The report stays priced: no size_range check fails. Retrieve caused 25,000 write tokens, cmdfilter saved 20,000: net -5,000 x $3.75/M = -$0.01875.",
+ "source": "more_examples.md#I44",
+ "dims": {
+  "kind": "rewrite",
+  "position": "mixed",
+  "cache": "miss",
+  "ttl": "5m",
+  "lifetime": "exact",
+  "operations": "2",
+  "splice": "true"
+ },
+ "rates": "fixture-v1",
+ "open": [
+  "design \u00a75.1 snaps B* to the last client breakpoint at or before the previous body's end, and the client's breakpoints are the current request's own: system and the new last message. Read literally that gives the end of system, not the end of the previous body. The examples, and this case, take the end of the previous body."
+ ],
+ "steps": [
+  {
+   "begin": {
+    "meta": {
+     "requestId": "r0",
+     "session": "s1",
+     "model": "agent-model",
+     "at": "2026-03-02T09:00:00Z",
+     "billing": {
+      "mode": "api"
+     }
+    },
+    "client": {
+     "start": [
+      0,
+      0,
+      1
+     ],
+     "pos": [
+      {
+       "hash": 15745513492897880738,
+       "bytes": 8000
+      },
+      {
+       "hash": 5508475225053360789,
+       "bytes": 12000
+      },
+      {
+       "hash": 11608045664679988289,
+       "bytes": 12000
+      }
+     ]
+    },
+    "clientBreakpoints": [
+     {
+      "pos": {
+       "section": "system",
+       "index": 0
+      },
+      "ttl": "5m"
+     },
+     {
+      "pos": {
+       "section": "messages",
+       "index": 1
+      },
+      "ttl": "5m"
+     }
+    ]
+   },
+   "add": [
+    {
+     "id": "o1",
+     "kind": "rewrite",
+     "operator": "context-guru.retrieve",
+     "at": {
+      "section": "messages",
+      "index": 1
+     },
+     "sizeBefore": {
+      "bytes": 0
+     },
+     "sizeAfter": {
+      "bytes": 100000
+     },
+     "changeId": "cg:retrieve:i44d",
+     "messageSplice": {
+      "at": 1,
+      "removed": 0,
+      "inserted": 1
+     }
+    },
+    {
+     "id": "o2",
+     "kind": "rewrite",
+     "operator": "context-guru.cmdfilter",
+     "at": {
+      "section": "messages",
+      "index": 1
+     },
+     "sizeBefore": {
+      "bytes": 100000
+     },
+     "sizeAfter": {
+      "bytes": 20000
+     },
+     "changeId": "cg:cmdfilter:i44d"
+    }
+   ],
+   "end": {
+    "thread": {
+     "id": "main"
+    },
+    "forwarded": {
+     "start": [
+      0,
+      0,
+      1
+     ],
+     "pos": [
+      {
+       "hash": 15745513492897880738,
+       "bytes": 8000
+      },
+      {
+       "hash": 5508475225053360789,
+       "bytes": 12000
+      },
+      {
+       "hash": 14509858213706079781,
+       "bytes": 20000
+      },
+      {
+       "hash": 15203985634262564817,
+       "bytes": 12000
+      }
+     ]
+    },
+    "breakpoints": [
+     {
+      "pos": {
+       "section": "system",
+       "index": 0
+      },
+      "ttl": "5m"
+     },
+     {
+      "pos": {
+       "section": "messages",
+       "index": 2
+      },
+      "ttl": "5m"
+     }
+    ],
+    "facts": {
+     "ttl": "5m",
+     "lifetime": "exact"
+    }
+   },
+   "usage": {
+    "input": 0,
+    "cacheRead": 0,
+    "cacheWrite": 13000,
+    "cacheWrite1h": 0
+   },
+   "expected": {
+    "phase": "unknown",
+    "baselineUsage": {
+     "input": 0,
+     "cacheRead": 0,
+     "cacheWrite": 8000,
+     "cacheWrite1h": 0
+    },
+    "ops": [
+     {
+      "changeId": "cg:retrieve:i44d",
+      "saved": {},
+      "caused": {
+       "cacheWrite5m": 25000
+      },
+      "estimated": true
+     },
+     {
+      "changeId": "cg:cmdfilter:i44d",
+      "saved": {
+       "cacheWrite5m": 20000
+      },
+      "caused": {},
+      "estimated": true
+     }
+    ],
+    "unpriced": [
+     {
+      "reason": "penalty_unknown"
+     }
+    ]
+   }
+  }
+ ]
+}

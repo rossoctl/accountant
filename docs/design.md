@@ -57,7 +57,7 @@ and §6 the `R` numbers are written bare, to keep the comments short; they are t
 | <a id="d11"></a>D11 | What happens to a change that a later change ends? | **`Compute` finds that it has ended and stops applying it.** The context operator reports nothing after the first request (D14), so it cannot say that a change ended. No link names the change that ended it. `Compute` infers the end from the bodies and the splice (§11, question 12). The measurement at each context operator's own input ([R29](spec.md#r29)) gives the right price and stops any double count, while the change is in the state. Each change keeps the total it had until then (§4.5). |
 | <a id="d12"></a>D12 | Where does the thread ID come from? | **From the engine's `internal/thread`, in both hosts**, carried on the request. The host keeps one fingerprint per thread, keyed by `thread.Key`, and compares each request with its own thread's previous request (wiring document, W5.2). |
 | <a id="d13"></a>D13 | How does the model serve a subscription user? | **The library does not change.** It already returns tokens for each tier (D3). The request carries a `Billing` fact. The host converts tokens to dollars for an API user, and to usage-limit units for a subscription user, with an API-equivalent dollar figure beside it, marked as such (§7.1). |
-| <a id="d14"></a>D14 | Is `Compute` stateful? | **The library is stateful. `Compute` is deterministic.** A context operator reports a change once, on the first request. `Compute` applies it again on later requests until it ends, so a result depends on earlier requests. The state is a `ThreadState`, kept by the Tracker, one for each thread. `Compute` is a method of the request record. The record takes a copy of the `ThreadState` in `EndRequest`, because the thread is known only after the plugins ran (§6.1). As its last step `Compute` replaces the thread's `ThreadState` with the new one, so the host has nothing to commit and cannot forget to. A failure or a panic leaves the old `ThreadState` (see [§4.6, a request that does not reach `Compute`](#46-replays-who-remembers-past-changes)). Two requests of one thread at the same time (a retry, parallel calls of one agent) are safe: the replace is guarded by the `Version` of the `ThreadState` (optimistic locking, [R53](spec.md#r53), §6.1). `Preview` does the same calculation and stores nothing (it can differ from `Compute` only for a fork's first request, if the parent's state moved in between, [R26](spec.md#r26)), for pricing an old request again and for a look that must not move the thread forward. A test case is a sequence of requests. Rejected alternatives are listed below the table. What the state holds is open (§11, question 11). How a change ends is decided (§11, question 12). |
+| <a id="d14"></a>D14 | Is `Compute` stateful? | **The library is stateful. `Compute` is deterministic.** A context operator reports a change once, on the first request. `Compute` applies it again on later requests until it ends, so a result depends on earlier requests. The state is a `ThreadState`, kept by the Tracker, one for each thread. `Compute` is a method of the request record. The record takes a copy of the `ThreadState` in `EndRequest`, because the thread is known only after the plugins ran (§6.1). As its last step `Compute` replaces the thread's `ThreadState` with the new one, so the host has nothing to commit and cannot forget to. A failure or a panic leaves the old `ThreadState` (see [§4.6, a request that does not reach `Compute`](#46-replays-who-remembers-past-changes)). Two requests of one thread at the same time (a retry, parallel calls of one agent) are safe: the replace is guarded by the `Version` of the `ThreadState` (optimistic locking, [R53](spec.md#r53), §6.1). `Preview` does the same calculation and stores nothing (it can differ from `Compute` only for a fork's first request, if the parent's state moved in between, [R26](spec.md#r26)), for pricing an old request again and for a look that must not move the thread forward. A second `Compute` of the same request prices against the state the first call stored (the result is usually phase `hot`), so a host must not call `Compute` again to retry after a transient error; it calls `Preview`. A test case is a sequence of requests. Rejected alternatives are listed below the table. What the state holds is open (§11, question 11). How a change ends is decided (§11, question 12). |
 
 **D14, rejected alternatives.**
 
@@ -522,7 +522,7 @@ holds for the Tracker. It is the risk of the new rule. What the new design does 
    the check fails on that request. The conservation check (check 6) fails too.
 2. **What the checks do not catch.** A check works on sizes for each section. Two errors of the same
    size in one section cancel out. The checks also do not say which change is wrong. And a failed check
-   does not stop pricing: the figure is still produced, with the failure in `Result.Checks`.
+   does not stop pricing: the figure is still produced, with the failure in `Result.Checks`. (Exception: an operation with a size above the bounds of §6.5 check 13 is not priced.)
 3. **The end rule is an inference.** `Compute` must find by itself that a change has ended, because the
    context operator reports nothing after the first request (§11, question 12). A change that ends
    with bytes identical to the changed form is not found. For that case the guard in point 1 is the
@@ -1169,14 +1169,14 @@ type Result struct {
 type Unpriced struct {
     OpID   string
     Reason string // "unknown_kind", "negative_size", "penalty_unknown", "ping_result_unknown", "end_request_missing",
-                  // "no_usage", "not_spend", "bad_usage", "ratio_range", "media_tokens", "breakpoints", ...; the host adds
+                  // "no_usage", "not_spend", "bad_usage", "ratio_range", "media_tokens", "breakpoints", "size_range", ...; the host adds
                   // "operator_not_allowed" from its own allow-list (wiring document, W5.1)
 }
 
 type CheckFailure struct {
     Check    string // "sum" | "order" | "unique_change" | "spans" | "attribution" |
                     // "conservation" | "shared_warm" | "bad_usage" | "ratio_range" | "breakpoints" |
-                    // "media_tokens" | "size_tokens" (§6.5)
+                    // "media_tokens" | "size_tokens" | "size_range" (§6.5)
     Operator string // "" when the check is not about one operator
     Detail   string // numbers only, no content
 }
@@ -1255,7 +1255,7 @@ one. It shows the gross saving, and marks the net as `Estimated`.
 **Not run in v0:** check 2 (order). Attribution (check 5) holds by construction, because a break takes only
 the `ChangeID` of an operation of the same request.
 
-The library reports failed checks in `Result.Checks`. A failure does not stop pricing. `Compute` also
+The library reports failed checks in `Result.Checks`. A failure does not stop pricing. The one exception is check 13 (`size_range`), which stops the pricing of the one operation it names. `Compute` also
 logs each failure at warning level with `log/slog` (message `accountant check failed`, with the
 check, the operator, the detail, and the request, session and thread IDs). `Preview` logs nothing.
 
@@ -1277,8 +1277,12 @@ check, the operator, the detail, and the request, session and thread IDs). `Prev
 7. **Shared warm:** `EntryFacts.SharedWarm`, when set, is a position in the forwarded body. If it is not, the check fails
    with the section and index, and the keep-alive rescue of that request is not credited ([R54](spec.md#r54)).
    A doubtful figure may only lower a saving.
-8. **Usage sign:** no count in `Usage` is negative, and `CacheWrite1h` is not larger than `CacheWrite` (it is part of
-   it, never an addition). If one is, the check `bad_usage` fails.
+8. **Usage sign and cap:** no count in `Usage` is negative or above 2^40 (about 1.1e12 tokens), and `CacheWrite1h` is not
+   larger than `CacheWrite` (it is part of it, never an addition). On a 64-bit `int` the cap keeps the sum of the tiers from wrapping. On a 32-bit `int` the cap cannot be reached, and a sum that wraps gives a ratio that fails check 9, so nothing is priced. `Facts.PingUsage` is not checked here.
+   If one count is out of range, the check `bad_usage` fails. The same rule applies to the `Usage` of a spend's `Call`;
+   there `Output` must not be negative or above the cap, and `CostUSD` must not be negative, NaN or infinite. A spend
+   whose `Call` fails goes to `Unpriced` with `bad_usage` (its other figures are not changed), also in `ComputeStandalone`.
+   A valid `Call` is passed on as the host sent it.
 9. **Ratio range:** the tokens per forwarded text byte, `(Input + CacheRead + CacheWrite - media price) / (bytes - media bytes)`,
    is from 0.05 to 2.0. When the bill is below the media price, the media price is first cut to the bill (check 11), so this check does not fail for that reason. Base64 media bytes are not in the denominator, and the media price (1 token per 250 bytes) is not in the numerator.
    If it is outside that range, the usage does not fit the body, and the check `ratio_range` fails. A ratio of 0
@@ -1299,6 +1303,32 @@ check, the operator, the detail, and the request, session and thread IDs). `Prev
 12. **Size tokens (`size_tokens`):** a `Size.Tokens` is between 0.05 tokens for each text byte and 2.0 tokens for each byte
     of its range (the limits of check 9). If it is not, the host's count is a bug: the library ignores it, converts the
     bytes, and reports the check.
+13. **Size range (`size_range`):** the sizes of a rewrite are inside two bounds, on the operation and on each span.
+    - `SizeBefore.Bytes` is at most the largest body the operator could have received: the client body total plus
+      the sum of `max(0, SizeAfter.Bytes - SizeBefore.Bytes)` over the request's rewrites (an operator before it may
+      have inserted content, for example retrieval).
+    - `SizeAfter.Bytes` is at most the forwarded body total plus the sum of `max(0, SizeBefore.Bytes - SizeAfter.Bytes)`
+      over the rewrites (a later operator may have removed part of its output).
+    - A `DryRun` operation (observe mode) read a real body, so only its `SizeBefore` is bounded. Its `SizeAfter` is a
+      guess that never reaches the totals (R12), so only check 12 looks at it.
+    - Every active operation counts in the sums, even when a report with its `ChangeID` replaces it. Whether that
+      report is honest is what the check decides, so the bound must not depend on it. The bound is found from
+      the loose side: all operations and all non-negative reports count first, a failing report is dropped, and
+      the sums are made again until none drops. So an honest report is never unpriced by the failure of another.
+      The price is a bound that is loose by the size of a replaced operation. (The copy `EndRequest` stored of a
+      report of this request has the same sizes as the report, and counts once.)
+    - A report that fails a bound adds to neither sum, so one bogus report cannot raise the bound for itself. A
+      `DryRun` operation adds to neither sum.
+
+    If a bound fails, the report is a bug. That one operation goes to `Unpriced` with `size_range`, and the check
+    reports the failing span's sizes and the two bounds. The other operations are priced as usual, and the `sum`
+    check still runs. Like a negative size, a `size_range` report is not a change: it replaces no active change with
+    its `ChangeID` and is not stored (§4.6). This is the narrow exception to "a failure does not stop pricing": the
+    `sum` check alone cannot tell a wrong report from a wrong guess, but a size above every possible body is wrong
+    in every case, and its tokens would otherwise reach the totals unbounded. Active operations are not checked
+    again: if a client compacts its body below an active size, the `sum` check flags it.
+    Positions: `NewBody` saturates the byte count of one position (and its media bytes) at the largest `int32`, so a
+    position over 2 GiB does not wrap negative.
 
 If check 8, 9 or 10 fails, the library prices nothing for the request. Each operation goes to `Unpriced` with the
 reason `bad_usage`, `ratio_range` or `breakpoints` (the first check that fails, in that order), no cache effect is
@@ -1352,7 +1382,7 @@ missing, report too little and say why.
 | Situation | Result |
 |---|---|
 | `accountant.Compute` panics | The host recovers, writes no saving for the request, and increments `ops_price_panics`. The request and its spend record are unchanged. |
-| A malformed context operation (unknown kind, negative size) | Goes to `Unpriced` with a reason. The other context operations are priced. |
+| A malformed context operation (unknown kind, negative size, a size above the bounds of check 13, a spend whose `Call` has a negative or non-finite figure) | Goes to `Unpriced` with a reason (`unknown_kind`, `negative_size`, `size_range`, `bad_usage`). The other context operations are priced. |
 | A `spend` whose `Call` has no usage (a ping that timed out: the host sent it and read no response) | `Unpriced` with `ping_result_unknown`. The cost is missing, not zero, so the window must not show its rescue as a net gain. The rescue is still credited from the read on the request that follows (§4.4) |
 | Usage is negative, does not fit the body (tokens per byte outside 0.05 to 2.0), or the request has more than 4 breakpoints or an unknown TTL | Nothing is priced. Every operation goes to `Unpriced` with `bad_usage`, `ratio_range` or `breakpoints`, and a check of the same name fails (§6.5, checks 8 to 10). |
 | Sum check fails | Pricing goes on. A warning is logged. The failure is counted for each plugin on `/v1/pipeline`. |

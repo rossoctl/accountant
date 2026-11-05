@@ -124,4 +124,5 @@ const (
 	ReasonRatioRange        = engine.ReasonRatioRange
 	ReasonMediaTokens       = engine.ReasonMediaTokens
 	ReasonBreakpoints       = engine.ReasonBreakpoints
+	ReasonSizeRange         = engine.ReasonSizeRange
 )
