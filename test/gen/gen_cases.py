@@ -1352,7 +1352,7 @@ def s909():
              "hot", prev=(3170, 3170), usage=U(read=3000, write=220), base=U(write=3220), add=[op],
              cbp=BP(("system", 0), ("messages", 1)), fbp=BP(("system", 0), ("messages", 1)),
              effects=[split, brk])
-    write_more("split/short-conversation/tail-changed", "S909",
+    write_issue("split/short-conversation/tail-changed", "context-guru-909",
                "cachesplit on a short conversation. The volatile tail is 150 tokens of a 3,170-token entry. The tail "
                "changes and the turn adds 50 tokens. The provider reads the 3,000-token stable half. That read is "
                "within the read tolerance (128 tokens plus 2%) of the whole previous entry, but it is not proof that "
@@ -2236,6 +2236,33 @@ def r20():
                  DIMS("setting-breakpoint", "system", "no-effect", hash="differs"), [s0, s1])
 
 
+
+# context-guru#909 guard: the s909 shape, but the system text did not change. The host moved a cache mark onto
+# the system block, so the client hash and the volatile half's hash differ. The provider read the whole
+# previous entry, so nothing broke and the client body would have read it in full too: no split effect.
+def r909_system_hash():
+    SPL = "cg:cachesplit:g909"
+    m0 = [("m0", 20)]
+    m1 = m0 + [("m1", 50)]
+    op = rewrite("o1", "context-guru.cachesplit", "system", 0, 3150, 3150, SPL)
+    bps = BP(("system", 0), ("messages", 0))
+    s0 = sim(0, "r0", ([], [("sysblk", 3150)], m0), ([], [("sysstable", 3000), ("sysvol", 150)], m0), [],
+             "unknown", add=[op], cbp=bps, fbp=bps)
+    s1 = sim(40, "r1", ([], [("sysblk2", 3150)], m1), ([], [("sysstable", 3000), ("sysvol2", 150)], m1), [],
+             "hot", add=[op], prev=(3170, 3170), usage=U(read=3170, write=50), base=U(read=3170, write=50),
+             cbp=BP(("system", 0), ("messages", 1)), fbp=BP(("system", 0), ("messages", 1)),
+             boundary=P("messages", 0),
+             effects=[effect("break", "", frm=P("messages", 1), to=P("messages", 0),
+                             note="the system block has a new hash; the provider read the whole 3,170 tokens, so B* "
+                                  "is the end of what it read and no token moves")])
+    write_issue("split/tail-unchanged-hash-differs-system/no-effect", "context-guru-909",
+                "The s909 shape with one change: the system text is the same, but a cache mark moved onto the system "
+                "block, so its hash and the hash of the volatile half differ. The entry is 3,170 tokens. The provider "
+                "reads all 3,170 and writes the 50 new tokens. Nothing changed in content, so the client body, with one "
+                "system block, would have read 3,170 too. The read passes the first forwarded difference, so the hash "
+                "difference moved no content. No split effect: 3,170 x $0.30 + 50 x $3.75 on both sides, a zero total.",
+                DIMS("setting-breakpoint", "system", "no-effect", hash="differs"), [s0, s1])
+
 # ---------------------------------------------------------------------------------------------
 # accountant#42 and #43: media in the ratio, and a long body with no breakpoint.
 MEDIA_PER_TOKEN = 250  # the library price of base64 media: 1 token for each 250 bytes (design §4.2 rule 7)
@@ -2525,6 +2552,6 @@ if __name__ == "__main__":
         if old.endswith(".json"):
             os.remove(os.path.join(OUT, old))
     for f in (ex12, ex3, ex4, ex5, ex67, ex8, shared_prefix_cases, ex9, c01, c02, c03_04, c05, c06, c07, c08, c09, c10, c11, c12, c_threads, c_clock, c_ttl, c_mix,
-              c14, s909, c15, c16, c17, c18, a1, a2, a3, a4_b3, b1_b2, b4, b5, c1_, c2_, c2b, c3_, c5, d2, d3, d4,
+              c14, s909, r909_system_hash, c15, c16, c17, c18, a1, a2, a3, a4_b3, b1_b2, b4, b5, c1_, c2_, c2b, c3_, c5, d2, d3, d4,
               d5, d6, e2, e345, f245, h2, h5, r9, r14, r21, r20, r20b, c42, c42b, c42c, c42d, c43, i44):
         f()

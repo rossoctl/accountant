@@ -1,7 +1,7 @@
 {
  "id": "split/short-conversation/tail-changed",
  "description": "cachesplit on a short conversation. The volatile tail is 150 tokens of a 3,170-token entry. The tail changes and the turn adds 50 tokens. The provider reads the 3,000-token stable half. That read is within the read tolerance (128 tokens plus 2%) of the whole previous entry, but it is not proof that nothing broke: the client changed its system block. B* stays before that block. The client body would write all 3,220 tokens, so the split saves 3,000 x ($3.75 - $0.30) = +$0.01035.",
- "source": "more_examples.md#S909",
+ "source": "issue_cases.md#context-guru-909",
  "dims": {
   "kind": "setting-breakpoint",
   "position": "system",

@@ -497,6 +497,20 @@ client moves the mark. The text did not change. These cases model it as a messag
 have this one cause. #21 asks the library to take B\* from the usage when the hashes disagree. #20 asks it to credit a
 split only when the client body would have written the tokens.
 
+### Cases from context-guru#909 (`cachesplit` on a short conversation)
+
+The split must be credited on a short conversation, and must not be credited when only a hash moved. Design
+§5.1 states the rule. Two cases pin the two sides.
+
+| Case ID | What happens | Result |
+|---|---|---|
+| `split/short-conversation/tail-changed` | The entry is 3,170 tokens: 3,000 stable, 150 volatile, 20 and 50 in messages. The client changes its system block. The provider reads 3,000 and writes 220. | The read is within the tolerance (3,000 + 128 + 60 = 3,188 >= 3,170) of the whole extent, but it stops at the split. B* stays before the system block. Split effect: 3,000 x ($3.75 - $0.30) = +$0.01035. |
+| `split/tail-unchanged-hash-differs-system/no-effect` | The same shape. The system text is the same, but a cache mark moved onto it, so its hash differs. The provider reads all 3,170 and writes 50. | The read (3,170) passes the forwarded first difference (3,000). The hash difference moved no content. B* is the end of the extent. No split effect: the client body would have read 3,170 too. |
+
+Before the fix for #909, the first case lost its effect: the B\* rule took the read as proof that nothing broke.
+A first version of the fix booked a phantom 3,000-token effect (+$0.01035) in the second case. The guard case
+pins that.
+
 ### Cases from accountant#42 and #43
 
 | Case ID | Issue | What the spec requires | What the library did before the fix |

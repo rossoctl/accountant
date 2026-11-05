@@ -1,0 +1,303 @@
+{
+ "id": "split/tail-unchanged-hash-differs-system/no-effect",
+ "description": "The s909 shape with one change: the system text is the same, but a cache mark moved onto the system block, so its hash and the hash of the volatile half differ. The entry is 3,170 tokens. The provider reads all 3,170 and writes the 50 new tokens. Nothing changed in content, so the client body, with one system block, would have read 3,170 too. The read passes the first forwarded difference, so the hash difference moved no content. No split effect: 3,170 x $0.30 + 50 x $3.75 on both sides, a zero total.",
+ "source": "issue_cases.md#context-guru-909",
+ "dims": {
+  "kind": "setting-breakpoint",
+  "position": "system",
+  "cache": "no-effect",
+  "ttl": "5m",
+  "lifetime": "exact",
+  "hash": "differs"
+ },
+ "rates": "fixture-v1",
+ "steps": [
+  {
+   "begin": {
+    "meta": {
+     "requestId": "r0",
+     "session": "s1",
+     "model": "agent-model",
+     "at": "2026-03-02T09:00:00Z",
+     "billing": {
+      "mode": "api"
+     }
+    },
+    "client": {
+     "start": [
+      0,
+      0,
+      1
+     ],
+     "pos": [
+      {
+       "hash": 885571863807092659,
+       "bytes": 12600
+      },
+      {
+       "hash": 9528295941040901530,
+       "bytes": 80
+      }
+     ]
+    },
+    "clientBreakpoints": [
+     {
+      "pos": {
+       "section": "system",
+       "index": 0
+      },
+      "ttl": "5m"
+     },
+     {
+      "pos": {
+       "section": "messages",
+       "index": 0
+      },
+      "ttl": "5m"
+     }
+    ]
+   },
+   "add": [
+    {
+     "id": "o1",
+     "kind": "rewrite",
+     "operator": "context-guru.cachesplit",
+     "at": {
+      "section": "system",
+      "index": 0
+     },
+     "sizeBefore": {
+      "bytes": 12600
+     },
+     "sizeAfter": {
+      "bytes": 12600
+     },
+     "changeId": "cg:cachesplit:g909"
+    }
+   ],
+   "end": {
+    "thread": {
+     "id": "main"
+    },
+    "forwarded": {
+     "start": [
+      0,
+      0,
+      2
+     ],
+     "pos": [
+      {
+       "hash": 2865962820075549315,
+       "bytes": 12000
+      },
+      {
+       "hash": 10381131768827026075,
+       "bytes": 600
+      },
+      {
+       "hash": 564924536860814850,
+       "bytes": 80
+      }
+     ]
+    },
+    "breakpoints": [
+     {
+      "pos": {
+       "section": "system",
+       "index": 0
+      },
+      "ttl": "5m"
+     },
+     {
+      "pos": {
+       "section": "messages",
+       "index": 0
+      },
+      "ttl": "5m"
+     }
+    ],
+    "facts": {
+     "ttl": "5m",
+     "lifetime": "exact"
+    }
+   },
+   "usage": {
+    "input": 0,
+    "cacheRead": 0,
+    "cacheWrite": 3170,
+    "cacheWrite1h": 0
+   },
+   "expected": {
+    "phase": "unknown",
+    "baselineUsage": {
+     "input": 0,
+     "cacheRead": 0,
+     "cacheWrite": 3170,
+     "cacheWrite1h": 0
+    },
+    "ops": [],
+    "unpriced": [
+     {
+      "reason": "penalty_unknown"
+     }
+    ]
+   }
+  },
+  {
+   "begin": {
+    "meta": {
+     "requestId": "r1",
+     "session": "s1",
+     "model": "agent-model",
+     "at": "2026-03-02T09:00:40Z",
+     "billing": {
+      "mode": "api"
+     }
+    },
+    "client": {
+     "start": [
+      0,
+      0,
+      1
+     ],
+     "pos": [
+      {
+       "hash": 3467587440105460523,
+       "bytes": 12600
+      },
+      {
+       "hash": 6838060351443844114,
+       "bytes": 80
+      },
+      {
+       "hash": 6673563090433941340,
+       "bytes": 200
+      }
+     ]
+    },
+    "clientBreakpoints": [
+     {
+      "pos": {
+       "section": "system",
+       "index": 0
+      },
+      "ttl": "5m"
+     },
+     {
+      "pos": {
+       "section": "messages",
+       "index": 1
+      },
+      "ttl": "5m"
+     }
+    ]
+   },
+   "add": [
+    {
+     "id": "o1",
+     "kind": "rewrite",
+     "operator": "context-guru.cachesplit",
+     "at": {
+      "section": "system",
+      "index": 0
+     },
+     "sizeBefore": {
+      "bytes": 12600
+     },
+     "sizeAfter": {
+      "bytes": 12600
+     },
+     "changeId": "cg:cachesplit:g909"
+    }
+   ],
+   "end": {
+    "thread": {
+     "id": "main"
+    },
+    "forwarded": {
+     "start": [
+      0,
+      0,
+      2
+     ],
+     "pos": [
+      {
+       "hash": 2865962820075549315,
+       "bytes": 12000
+      },
+      {
+       "hash": 4734246201698247683,
+       "bytes": 600
+      },
+      {
+       "hash": 12203232428117526250,
+       "bytes": 80
+      },
+      {
+       "hash": 1883204665323108468,
+       "bytes": 200
+      }
+     ]
+    },
+    "breakpoints": [
+     {
+      "pos": {
+       "section": "system",
+       "index": 0
+      },
+      "ttl": "5m"
+     },
+     {
+      "pos": {
+       "section": "messages",
+       "index": 1
+      },
+      "ttl": "5m"
+     }
+    ],
+    "facts": {
+     "ttl": "5m",
+     "lifetime": "exact"
+    }
+   },
+   "usage": {
+    "input": 0,
+    "cacheRead": 3170,
+    "cacheWrite": 50,
+    "cacheWrite1h": 0
+   },
+   "expected": {
+    "phase": "hot",
+    "baselineUsage": {
+     "input": 0,
+     "cacheRead": 3170,
+     "cacheWrite": 50,
+     "cacheWrite1h": 0
+    },
+    "ops": [],
+    "effects": [
+     {
+      "kind": "break",
+      "changeId": "",
+      "saved": {},
+      "caused": {},
+      "inBaseline": true,
+      "from": {
+       "section": "messages",
+       "index": 1
+      },
+      "to": {
+       "section": "messages",
+       "index": 0
+      },
+      "note": "the system block has a new hash; the provider read the whole 3,170 tokens, so B* is the end of what it read and no token moves"
+     }
+    ],
+    "boundary": {
+     "section": "messages",
+     "index": 0
+    }
+   }
+  }
+ ]
+}
