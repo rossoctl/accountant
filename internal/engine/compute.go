@@ -1123,20 +1123,34 @@ func (c *calcState) rescue(res *Result) {
 // headTTL adds the two legs of a head held at 1h (§4.4): the premium on every request that writes
 // the head at 1h, and the rescue on a request that reads it after the 5m TTL.
 func (c *calcState) headTTL(res *Result) {
-	id := ""
-	for _, it := range c.items {
+	id, headTo := "", -1
+	for k, it := range c.items {
 		if !it.ended && strings.HasPrefix(it.op.ChangeID, "headttl:") {
-			id = it.op.ChangeID
+			id, headTo = it.op.ChangeID, -1
+			for _, sp := range it.spans {
+				if fp, ok := c.toFwd(k, sp.to); ok {
+					headTo = max(headTo, mustFlat(c.fwd, fp))
+				}
+			}
 		}
 	}
 	if id == "" {
 		return
 	}
-	// markPremium books the 1h writes of a breakpoint the host added after the client's last one, from input.
-	// They are not a 5m write moved to 1h, so ttlPremium leaves them out: each token is booked once.
-	if n := c.usage.CacheWrite1h - c.markWrite1h; n > 0 {
+	// The premium is about the head: the 5m write of the head that the 1h mark turned into a 1h write. Three
+	// bounds keep every token booked once:
+	//  - markPremium books the 1h writes of a breakpoint the host added after the client's last one, from
+	//    input, not from a 5m write, so they are left out (markWrite1h);
+	//  - an operation prices the content it adds at the write tier itself, and the client body has none of it,
+	//    so it is no 5m write moved to 1h: the head's own tokens cap the premium;
+	//  - the part of the head the provider read is not written at all.
+	prem := c.usage.CacheWrite1h - c.markWrite1h
+	if headTo >= 0 {
+		prem = min(prem, max(c.ratio.upTo(c.fwd, headTo)-c.usage.CacheRead, 0))
+	}
+	if prem > 0 {
 		e := CacheEffect{Kind: EffectTTLPremium, ChangeID: id, TTL: "1h", Estimated: true}
-		e.Saved.CacheWrite5m, e.Caused.CacheWrite1h = n, n
+		e.Saved.CacheWrite5m, e.Caused.CacheWrite1h = prem, prem
 		c.addEffect(res, e)
 	}
 	prev := c.s.PrevPrint
@@ -1221,7 +1235,9 @@ func (c *calcState) markPremium() *CacheEffect {
 	if total <= 0 {
 		return nil
 	}
-	// the parts of the range, each at the TTL of the breakpoint that ends it
+	// the parts of the range, each at the TTL of the breakpoint that ends it. A breakpoint at the same position
+	// as an earlier one is skipped, so the first in list order is booked (as writeBP does). Each part is
+	// converted alone, so the sum can differ from the whole range by a token a part (check 6 allows it).
 	var n5, n1 int
 	prev := lo
 	for _, b := range c.fwdBPs {

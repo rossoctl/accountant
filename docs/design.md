@@ -477,8 +477,14 @@ forwarded body writes it. The rule:
 - **Each part is written at its own TTL (§6.2).** The range is cut at every forwarded breakpoint. A part is
   written at the TTL of the first breakpoint at or after it. Example: client mark at `tools[0]`, host marks at
   `system[0]` (1h) and the last message (5m): the system tokens cost 1.0 each, the message tokens 0.25 each. The
-  order 5m then 1h gives 0.25 and 1.0. The effect's `TTL` field is `1h` when any part is 1h. If the effect must
-  cut `n` (the usage is smaller than the range), it cuts the 5m parts first, so the dearer part stays booked.
+  order 5m then 1h gives 0.25 and 1.0. The effect's `TTL` field is `1h` when any part is 1h. The range's tokens are cut
+  to the smaller of the forwarded range, the client range and `Usage.CacheWrite`. The cut has two sources: the
+  client range is smaller when an operation added content there (the operation prices that content), and the
+  usage is smaller than the range. The cut takes the 5m parts first, so the dearer part stays booked.
+- **Two breakpoints at one position with different TTLs:** the first in list order is booked, as `writeBP` does.
+  The input is rare. A host that sends both gives the library no way to tell which the provider used.
+- **Rounding:** the parts are converted one by one, so their sum can differ from the whole range by one token
+  for each part. The conservation check allows that tolerance.
 - **A 1h breakpoint counts as 1h only up to `Usage.CacheWrite1h`.** A bill with fewer 1h writes than the 1h
   breakpoints name shows the provider wrote at 5m, so the rest is booked at 5m. This books the lower premium.
   It is the bill's figure, not a guess: the provider charged 1.25x for those tokens.
@@ -489,6 +495,14 @@ forwarded body writes it. The rule:
   `messages[0]` (1,000, 5m), host 1h mark at `messages[2]`, 2,000 tail tokens; `CacheWrite1h` = 3,000.
   `ttlPremium` books 1,000 x 0.75 = 750. `markPremium` books 2,000 x 1.0 = 2,000. The bill difference is
   4,500 -> 7,250 units = 2,750 = 750 + 2,000. When only one effect applies, each is as before.
+- **`ttlPremium` is bounded to the head.** Its `n` is also capped by the tokens of the head (the forwarded
+  prefix up to the `headttl` operation's span, less what the provider read). An operation that adds content
+  inside the marked range prices it itself at the write tier, and the client body has none of it, so it is no
+  5m write moved to 1h. Arithmetic: the case above with an operation that adds 500 tokens at `messages[1]`:
+  `CacheWrite1h` = 3,500. `markPremium` books 2,000 x 1.0 = 2,000. The operation books 500 x 2.0 = 1,000.
+  The head books 1,000 x 0.75 = 750. The sum is 3,750 = the bill difference (4,500 -> 8,250). Without the cap `ttlPremium` would book
+  1,500 and overstate by 375. If the client's last breakpoint is before the head, `markPremium` books the head
+  (input to 1h) and `ttlPremium` is zero.
 - Arithmetic: 3,016 tokens after the client's mark, 5m. Client body: 3,016 x 1.00 = 3,016. Forwarded body:
   3,016 x 1.25 = 3,770. The mark costs 754 input-token units. At 1h the write is 2.0x: it costs 3,016.
 - **A cold request pays it too.** The client body writes up to its own last breakpoint and bills the rest as

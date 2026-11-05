@@ -609,6 +609,8 @@ usage tiers above 2^40 and sums that would wrap an `int` (a case bills what its 
 | `markpremium/with-headttl/first-request/1h` | A `headttl` head (1,000, 1h) and a host 1h mark at the tail (2,000 after the client's 5m mark). `ttlPremium` books the head only, 1,000 x $2.25/M = -$0.00225. `markPremium` books 2,000 x $3.00/M = -$0.00600. No token is booked twice. |
 | `markpremium/mixed-ttl/1h-inside-5m-last/5m` | The client marks tools[0]. The host marks system[0] at 1h and the last message at 5m. 1,000 tokens at 1h and 2,000 at 5m: -$0.00450. |
 | `markpremium/mixed-ttl/5m-inside-1h-last/5m` | The host marks system[0] at 5m and the last message at 1h. 1,000 at 5m and 2,000 at 1h: -$0.00675. |
+| `markpremium/with-headttl-and-adding-op/first-request/1h` | As the headttl case, plus an operation that adds 500 tokens inside the range. `ttlPremium` books the head only (-$0.00225), `markPremium` 2,000 tokens (-$0.00600), the operation 500 at 1h (-$0.00300). Total -$0.01125 = the bill difference. |
+| `markpremium/headttl-after-client-mark/first-request/1h` | The client's last mark is before the head. `markPremium` books the head with the tail, 3,000 x $3.00/M = -$0.00900. No `ttlPremium`. |
 
 Every `markPremium` case states `from` and `to`: the range is `(from, to]`.
 
