@@ -307,7 +307,7 @@ numbers are not used: those requirements were dropped.
   breakpoint, so the tier of a position and the size of a cache-break penalty depend on where the
   breakpoints are, and on their TTL.
 - <a id="r38"></a>**R38.** Context operations that change the cache state are covered: a keep-alive ping, `cachesplit`, and
-  a breakpoint TTL change. Each one is priced as the difference between two states.
+  a breakpoint TTL change, and a breakpoint the host adds (its write premium over input, `markPremium`). Each one is priced as the difference between two states.
 - <a id="r45"></a>**R45.** The cache state distinguishes a proven expiry from an unproven floor. A provider whose
   TTL is only a guaranteed minimum (no documented maximum) never scores `cold` from elapsed time
   alone — that would invent a saving the provider may not have billed. See [§5.2](design.md#52-classifying-a-break).

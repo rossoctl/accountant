@@ -960,6 +960,7 @@ func (c *calcState) cacheEffects(res *Result) {
 	}
 	c.headTTL(res)
 	c.split(res)
+	c.markPremium(res)
 	switch {
 	case c.unknown || c.s.PrevPrint == nil:
 		return // row 6
@@ -1170,6 +1171,47 @@ func (c *calcState) split(res *Result) {
 	e.To = &to
 	addWrite(&e.Saved, ttlName(c.r.Facts.TTL), n)
 	e.Caused.CacheRead = n
+	c.addEffect(res, e)
+}
+
+// markPremium adds the cost of a breakpoint the host added after the client's last one (§4.4). The client body
+// bills the tokens after its last breakpoint as plain input (1.0x). With the host's breakpoint the provider
+// writes them, at 1.25x for 5m and 2.0x for 1h. The effect moves n tokens from input to the write tier:
+// it nets zero in tokens and costs 0.25 n (5m) or 1.0 n (1h) in input-token units. It does not depend on
+// the phase: a cold client body also bills the tail as input.
+//
+// The range is the forwarded positions the provider wrote (after the read, up to what it cached) between
+// the client's last breakpoint, as forwarded, and the forwarded body's last breakpoint. n is the smaller of
+// that range in the forwarded body and in the client body. Content an operation added or removed in the
+// range is priced by that operation, so the smaller figure leaves it out. If an operation did both, n can be
+// too large; the error lowers the saving (R45). A removed client breakpoint is not priced here.
+func (c *calcState) markPremium(res *Result) {
+	if len(c.fwdBPs) == 0 || len(c.clientBPs) == 0 || c.noCacheTokens() || c.cachedFwd < 0 {
+		return // with no client breakpoint every position is one, so a host breakpoint adds none
+	}
+	last := c.fwdBPs[len(c.fwdBPs)-1]
+	lo := max(c.bstarFwd, c.readEnd)
+	cl := c.clientBPs[len(c.clientBPs)-1].at
+	lo = max(lo, mustFlat(c.fwd, c.clientToFwd(c.client.position(cl))))
+	hi := min(last.at, c.cachedFwd)
+	if hi <= lo {
+		return
+	}
+	cLo := mustFlat(c.client, c.fwdToClient(c.fwd.position(lo)))
+	cHi := mustFlat(c.client, c.fwdToClient(c.fwd.position(hi)))
+	n := min(c.ratio.between(c.fwd, lo, hi), c.ratio.between(c.client, cLo, cHi), c.usage.CacheWrite)
+	if n <= 0 {
+		return
+	}
+	ttl := "5m" // "" counts as 5m; the bill must show a 1h write for the 1h premium
+	if last.ttl == "1h" && c.usage.CacheWrite1h > 0 {
+		ttl = "1h"
+	}
+	e := CacheEffect{Kind: EffectMarkPremium, ChangeID: c.changeAt(last.at), TTL: ttl, Estimated: true}
+	to := c.fwd.position(hi)
+	e.To = &to
+	e.Saved.Input = n
+	addWrite(&e.Caused, ttl, n)
 	c.addEffect(res, e)
 }
 

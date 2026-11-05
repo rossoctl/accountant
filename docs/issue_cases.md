@@ -596,6 +596,19 @@ The case format cannot carry the other inputs, so Go tests hold them (`internal/
 usage tiers above 2^40 and sums that would wrap an `int` (a case bills what its forwarded body holds), and
 `NaN` or `Inf` in `CostUSD` (JSON has no such value).
 
+## 9d. Cases from accountant#49 (a breakpoint the host adds)
+
+| Case ID | What the spec requires |
+|---|---|
+| `markpremium/added-tail/hot/5m` | The client marks messages[0] (5,000 tokens). The host adds a mark at the last message. The provider reads 5,000 and writes 6,000. Client body: 6,000 input. `markPremium` moves 6,000 from input to write 5m: 6,000 x ($3.75 - $3.00)/M = -$0.00450. |
+| `markpremium/added-tail/cold/5m` | The same on a first request. The client body writes 5,000 and bills 6,000 as input, so the premium is the same, -$0.00450. |
+| `markpremium/added-tail/hot/1h` | The same with 1h marks: 6,000 x ($6.00 - $3.00)/M = -$0.01800. |
+| `markpremium/inside-previous-read/hot/5m` | The next request repeats the body. The provider reads 11,000 and writes none. No `markPremium` (the first request pays it once). |
+| `markpremium/host-mark-is-client-mark/cold/5m` | The forwarded marks equal the client's. No `markPremium`. |
+| `markpremium/with-mark-text/hot/5m` | The host reports a +4-token rewrite for the mark and adds the breakpoint. The operation prices its 4 tokens (write, -$0.000015). `markPremium` prices the 6,000 shared tokens (-$0.00450) and has the rewrite's `ChangeID`. |
+
+Not covered by a case: a removed client breakpoint (the inverse). It is out of scope; see the design, §4.4.
+
 ## 10. Limits of this document
 
 - **The expected figures were computed by hand** from the spec's rules and the issue text. Cases 1, 3,

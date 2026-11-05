@@ -397,7 +397,7 @@ allows it.
 A `CacheEffect` has a kind, a prefix range, and a `ChangeID`. The range is `From` to `To`. A nil `From`
 is the start of the prompt, and a nil `To` is the end of the body. One exception: a `break` with no B\*
 (no client breakpoint at or before the first difference, §5.1) has an empty range. Its `To` is nil, it moves
-no tokens, and the `Saved` and `Caused` tiers are zero. Five kinds cover it:
+no tokens, and the `Saved` and `Caused` tiers are zero. Six kinds cover it:
 
 - **`break`: a prefix is broken.** The provider no longer reads content it read before. `From` is the
   end of what it still reads and `To` is B\* (§6.2). The `ChangeID` is the change that caused it (§5.2),
@@ -412,6 +412,11 @@ no tokens, and the `Saved` and `Caused` tiers are zero. Five kinds cover it:
   cached. Example: the head of the request is held for 1h, not 5m. It has **two legs:** a cost on
   **every request that writes** the head at 1h (`ttlPremium`), and a saving on each request that reads
   the 1h entry after a gap longer than 5m (`ttlRescue`). `TTL` says which entry the effect is about.
+- **`markPremium`: a breakpoint the host added is paid for.** The forwarded body has a breakpoint after the
+  client's last one. The provider writes the tokens between the two at the write tier (1.25x for 5m, 2.0x for
+  1h). The client body bills the same tokens as plain input (1.0x). The effect moves `n` tokens from
+  `Saved.Input` to `Caused.CacheWrite5m` or `Caused.CacheWrite1h`, so it nets zero tokens and costs
+  `0.25 n` input-token units at 5m (`1.0 n` at 1h). It is a cost only. See "A breakpoint the host adds" below.
 
 **When the library adds a rescue.** All three conditions must be true. They are the
 conditions of the current `keepaliveSavedUSD`:
@@ -455,6 +460,34 @@ the figure would overstate the bet. So, like a keep-alive window:
 
 A head entry that is written at 1h and never read again has only the cost leg, so its total is
 negative — the same visibility a keep-alive window that rescued nothing has.
+
+**A breakpoint the host adds (`markPremium`, accountant#49).** Example: the client marks `messages[0]`, the
+host also marks the last message. The client body bills what follows its last breakpoint as input. The
+forwarded body writes it. The rule:
+
+- `n` is the number of tokens the provider **wrote** between L_c and L_f, where L_c is the client's last
+  breakpoint (mapped into the forwarded body) and L_f is the forwarded body's last breakpoint. "Wrote" means
+  after the read (`Usage.CacheRead`, and B\*) and not past what the request cached. `n` is the smaller of the
+  range's tokens in the forwarded body and in the client body. Content an operation added or removed in the
+  range is priced by that operation, so the smaller figure leaves it out. If one request adds and removes in the
+  range, `n` can be too large; the error can only lower a saving (R45).
+- Arithmetic: 3,016 tokens after the client's mark, 5m. Client body: 3,016 x 1.00 = 3,016. Forwarded body:
+  3,016 x 1.25 = 3,770. The mark costs 754 input-token units. At 1h the write is 2.0x: it costs 3,016.
+- **A cold request pays it too.** The client body writes up to its own last breakpoint and bills the rest as
+  input, so the tail is still 1.0x there. The premium does not depend on the phase.
+- **No premium** when: the provider wrote none of the range (the host's mark is inside the previous read, or
+  the entry already held it); the forwarded body has no breakpoint after the client's last; the client has no
+  breakpoint (every position is one, so the host adds none); or the usage shows no cache tokens at all.
+- **The ChangeID** is the `ChangeID` of the applied operation whose forwarded span covers the host's breakpoint
+  (the host's `rewrite` for the mark), or empty when none does. Check 5 allows both.
+- **Relation to the next request.** The entry this request wrote up to L_f is read by the next request. That
+  benefit is real, and the `rescue`, `break` and operation pricing of the next request already counts it,
+  because the client body has no entry there: it is not counted a second time here. `markPremium` is the cost
+  leg only, as `ttlPremium` is. A `ChangeID` that keeps only this leg shows a negative total until a later
+  request reads the entry.
+- **A removed client breakpoint is not priced.** The inverse (the client body writes the tokens, the forwarded
+  body bills them as input) would be a saving for the host, not a cost. Leaving it out can only lower a saving,
+  which is the safe direction (R45). It is a separate effect and out of scope here.
 
 ### 4.5 Changes that end
 
@@ -1213,7 +1246,7 @@ type TierTokens struct {
     Input, CacheWrite5m, CacheWrite1h, CacheRead int
 }
 
-type CacheEffectKind string // break | rescue | split | ttlPremium | ttlRescue
+type CacheEffectKind string // break | rescue | split | ttlPremium | ttlRescue | markPremium | markPremium
 
 // CacheEffect is a change in how the provider bills content that is already there (§4.4). It is
 // output only. ID is unique inside the Result: "ce:" + a number.
@@ -1284,11 +1317,11 @@ check, the operator, the detail, and the request, session and thread IDs). `Prev
 2. **Order:** the context operations are in pipeline order, so a context operator's output positions are mapped through the `MessageSplice` of the context operations before it. An active context operation keeps its client-space position and its pipeline position, and is mapped through this request's splices (§4.3).
 3. **Unique `ChangeID`:** no two `rewrite` or `setting` context operations of one request, reported or active, have the same `ChangeID`. A `spend` or a cache effect may share the `ChangeID` of the change it belongs to.
 4. **Spans:** for a context operation with `Spans`, its `SizeBefore` and `SizeAfter` equal the sums over its spans.
-5. **Attribution:** a `break` effect's `ChangeID` is the `ChangeID` of a context operation of the same request, or empty. A `rescue`, `ttlPremium` and `ttlRescue` are exempt: their `ChangeID` is a keep-alive window or a head entry, which names no operation of this request.
+5. **Attribution:** a `break` effect's `ChangeID` is the `ChangeID` of a context operation of the same request, or empty. A `markPremium` has the `ChangeID` of the operation whose span covers the host's breakpoint, or none. A `markPremium` has the `ChangeID` of the operation whose span covers the host's breakpoint, or none. A `rescue`, `ttlPremium` and `ttlRescue` are exempt: their `ChangeID` is a keep-alive window or a head entry, which names no operation of this request.
 6. **Conservation:** the request total of the applied context operations and the cache effects equals the bill difference (§6.3). The ranges of operations unpriced for `media_tokens` are taken out of the bill difference (as `DryRun` operations are left out), because the operation prices none of it; every other operation stays in the check.
    Each size is compared at the request ratio, so a correct `Size.Tokens` passes (the gap between the host's tokens
    and the ratio's figure for the same bytes is taken out of the total). `DryRun` context operations are left out,
-   because their content went upstream unchanged.
+   because their content went upstream unchanged. A `markPremium` moves tokens between tiers and nets zero tokens, like every cache effect, so the check does not change: the bill difference is the client tokens less the billed tokens, and a premium changes neither.
 7. **Shared warm:** `EntryFacts.SharedWarm`, when set, is a position in the forwarded body. If it is not, the check fails
    with the section and index, and the keep-alive rescue of that request is not credited ([R54](spec.md#r54)).
    A doubtful figure may only lower a saving.

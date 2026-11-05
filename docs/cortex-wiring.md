@@ -330,7 +330,7 @@ A cache effect (`Result.CacheEffects`, design §4.4) is not an operation and has
 settles it by its `Kind`. A `break` with a `ChangeID` goes to the operator of the `rewrite` or `setting`
 with the same `ChangeID` in the result, reported or active. A `rescue` goes to the keeper, by its window.
 A `ttlPremium` and a `ttlRescue` go to the head entry named by their `ChangeID`. A `break` with no
-`ChangeID` goes to `Event.UnattributedBreakUSD`.
+`ChangeID` goes to `Event.UnattributedBreakUSD`. A `markPremium` (the write premium of a breakpoint the host added) goes to the operator of the `rewrite` with the same `ChangeID`, and with none to the host's own account for the mark. It is a cost only.
 
 A `break` cache effect has both sides (design §6.3): `Saved.CacheRead` is the read that did not happen,
 and `Caused.CacheWrite5m` is the write that happened instead. They are one fact, the rate

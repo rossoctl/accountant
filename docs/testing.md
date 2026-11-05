@@ -94,7 +94,7 @@ drops the combinations that cannot occur, and states the reason for each drop in
 | Dimension | Values |
 |---|---|
 | Report | first report of the change; applied again from the state ([D14](design.md#d14)); applied again after the state was lost ([question 13](design.md#q13)) |
-| Kind | `rewrite` smaller, `rewrite` larger (a restore is one), cache effect (`break`, `rescue`, `split`, `ttlPremium`, `ttlRescue`) |
+| Kind | `rewrite` smaller, `rewrite` larger (a restore is one), cache effect (`break`, `rescue`, `split`, `ttlPremium`, `ttlRescue`, `markPremium`) |
 | Position | before B\*; after B\* and at or before `L`; after `L`; no breakpoint in the body; spans on both sides of B\* |
 | Cache state | hot; cold (expired, `Lifetime: exact`); unknown (gap past an unproven `Lifetime: minimum`, [R45](spec.md#r45); first request of a thread; restart); hot, kept by a ping; hot by a billed read at any gap past an exact TTL (30 s past); cold at 11 s past with no read; a 5m entry asked at 1h after 30 minutes (cold); a 1h entry with a 5m request after 10 minutes (hot); a mixed 1h head and 5m tail after 10 minutes (hot, head read); a billed read extends a live 1h head over a clock-dead 5m tail at 6 minutes (hot, tail read); a fork of a mixed entry at 10 minutes (seeded, hot); out-of-order `At` (unknown); fork seeded from its parent; fork past the parent's TTL (unseeded) |
 | Cache result | full hit; partial hit; miss with write ≥ input; miss with write < input |

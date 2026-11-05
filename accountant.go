@@ -102,11 +102,12 @@ const (
 	BillingSubscription = engine.BillingSubscription
 	BillingUnknown      = engine.BillingUnknown
 
-	EffectBreak      = engine.EffectBreak
-	EffectRescue     = engine.EffectRescue
-	EffectSplit      = engine.EffectSplit
-	EffectTTLPremium = engine.EffectTTLPremium
-	EffectTTLRescue  = engine.EffectTTLRescue
+	EffectBreak       = engine.EffectBreak
+	EffectRescue      = engine.EffectRescue
+	EffectSplit       = engine.EffectSplit
+	EffectTTLPremium  = engine.EffectTTLPremium
+	EffectTTLRescue   = engine.EffectTTLRescue
+	EffectMarkPremium = engine.EffectMarkPremium
 
 	CauseModelChanged = engine.CauseModelChanged
 )
