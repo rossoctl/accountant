@@ -1333,6 +1333,35 @@ def c14():
                            "empty-ChangeID break is added beside the split effect) is not stated"])
 
 
+# context-guru#909: a split on a short conversation. The volatile tail is a large part of the entry, so the
+# stable half the provider read is within the read tolerance (128 tokens plus 2%) of the whole previous entry.
+# The B* rule then took the read as proof that nothing broke and set B* to the end of the extent. The split
+# effect needs B* before the changed system block, so it was lost.
+def s909():
+    SPL9 = "cg:cachesplit:s909"
+    m0 = [("m0", 20)]
+    m1 = m0 + [("m1", 50)]
+    op = rewrite("o1", "context-guru.cachesplit", "system", 0, 3150, 3150, SPL9)
+    s0 = sim(0, "r0", ([], [("sysblk", 3150)], m0), ([], [("sysstable", 3000), ("sysvol", 150)], m0), [],
+             "unknown", add=[op], cbp=BP(("system", 0), ("messages", 0)), fbp=BP(("system", 0), ("messages", 0)))
+    brk = effect("break", "", note="the client changed its own system block: B* is before it, so the range is "
+                 "empty (To nil) and the break moves no tokens")
+    split = effect("split", SPL9, saved=TT(cacheWrite5m=3000), caused=TT(cacheRead=3000), to=P("system", 0),
+                   note="the stable half is read, not written")
+    s1 = sim(40, "r1", ([], [("sysblk2", 3150)], m1), ([], [("sysstable", 3000), ("sysvol2", 150)], m1), [],
+             "hot", prev=(3170, 3170), usage=U(read=3000, write=220), base=U(write=3220), add=[op],
+             cbp=BP(("system", 0), ("messages", 1)), fbp=BP(("system", 0), ("messages", 1)),
+             effects=[split, brk])
+    write_more("split/short-conversation/tail-changed", "S909",
+               "cachesplit on a short conversation. The volatile tail is 150 tokens of a 3,170-token entry. The tail "
+               "changes and the turn adds 50 tokens. The provider reads the 3,000-token stable half. That read is "
+               "within the read tolerance (128 tokens plus 2%) of the whole previous entry, but it is not proof that "
+               "nothing broke: the client changed its system block. B* stays before that block. The client body would "
+               "write all 3,220 tokens, so the split saves 3,000 x ($3.75 - $0.30) = +$0.01035.",
+               DIMS("setting-breakpoint", "system", "split"), [s0, s1],
+               open_=["design §5.2 rows 1 and 2: which row names the break beside the split effect is not stated"])
+
+
 def c15():
     sysb = [("s0", 200), ("s1", 800), ("s2", 1500)]
     m = [("m0", 5000), ("m1", 2000)]
@@ -2496,6 +2525,6 @@ if __name__ == "__main__":
         if old.endswith(".json"):
             os.remove(os.path.join(OUT, old))
     for f in (ex12, ex3, ex4, ex5, ex67, ex8, shared_prefix_cases, ex9, c01, c02, c03_04, c05, c06, c07, c08, c09, c10, c11, c12, c_threads, c_clock, c_ttl, c_mix,
-              c14, c15, c16, c17, c18, a1, a2, a3, a4_b3, b1_b2, b4, b5, c1_, c2_, c2b, c3_, c5, d2, d3, d4,
+              c14, s909, c15, c16, c17, c18, a1, a2, a3, a4_b3, b1_b2, b4, b5, c1_, c2_, c2b, c3_, c5, d2, d3, d4,
               d5, d6, e2, e345, f245, h2, h5, r9, r14, r21, r20, r20b, c42, c42b, c42c, c42d, c43, i44):
         f()

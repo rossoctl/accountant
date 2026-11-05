@@ -829,7 +829,7 @@ func (c *calcState) phaseAndBoundary(res *Result) {
 		// The comparison is in tokens, not positions: a position is an index into one body, and the previous and
 		// the current forwarded bodies may differ before the extent (a block a plugin added), so equal
 		// indices would not mean equal prefixes.
-		if c.prevExt >= 0 && !c.skipsPricing() && c.readCoversExtent(prev) && c.clientFD <= c.prevExtCli && c.prevExtCli > c.bstar {
+		if c.prevExt >= 0 && !c.skipsPricing() && c.readCoversExtent(prev) && c.clientFD <= c.prevExtCli && c.prevExtCli > c.bstar && !c.splitChangedSystem() {
 			c.bstar = c.prevExtCli
 		}
 	case PhaseUnknown:
@@ -1617,4 +1617,21 @@ func (c *calcState) nextState() ThreadState {
 		next.PrevPrint, next.Cache = p, c.s.Cache
 	}
 	return next
+}
+
+// splitChangedSystem says a delivered cachesplit sits on a system section whose client text changed since
+// the previous request. The split exists for that case: the volatile tail moved, the client body would have
+// missed from the system block on, and the forwarded body read only the stable half. A read that comes within
+// the tolerance of the previous extent (a short turn adds less than 128 tokens plus 2%) is then no proof that
+// nothing broke: the read is the stable half, and the extent is the whole previous entry (context-guru#909).
+func (c *calcState) splitChangedSystem() bool {
+	if c.clientFD >= c.client.sectionEnd(1) {
+		return false
+	}
+	for _, it := range c.items {
+		if !it.ended && strings.HasPrefix(it.op.ChangeID, "cg:cachesplit:") {
+			return c.fwd.sectionEnd(1)-c.fwd.Start[1] > c.client.sectionEnd(1)-c.client.Start[1]
+		}
+	}
+	return false
 }

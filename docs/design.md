@@ -640,6 +640,12 @@ Without this rule every saving replayed on the request is priced at the write ra
 those tokens (accountant#21). A client edit inside the extent makes the provider read less, so the rule does not
 apply to it.
 
+The rule has one exception, a delivered cachesplit on a system block the client changed. The split exists for
+the turn where the volatile tail moved: the client body would miss from the system block on, and the forwarded
+body reads only the stable half. On a short conversation that half is within the read tolerance (128 tokens
+plus 2%) of the whole previous extent, so the read looks like a full read. It is not proof that nothing broke.
+B* then stays before the changed block and the split effect is booked (context-guru#909).
+
 All three terms are in client space (§4.3). `prevCachedExtent` is the previous request's cached
 extent, mapped from its forwarded body back into its client body through its splices. That is the
 extent the client body would have left cached with no context operator: a change that shortened the
