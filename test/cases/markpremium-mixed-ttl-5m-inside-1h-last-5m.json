@@ -1,11 +1,11 @@
 {
- "id": "markpremium/added-tail/cold/5m",
- "description": "The same marks on a cold first request. The client body would write messages[0] (5,000 tokens) under its own mark and bill the other 6,000 as input. The forwarded body writes all 11,000. The difference is the same: 6,000 x ($3.75 - $3.00) = -$0.00450. A cold request does not remove the premium, because the client body also leaves the tail as input.",
+ "id": "markpremium/mixed-ttl/5m-inside-1h-last/5m",
+ "description": "The client marks tools[0]. The host adds a mark at system[0] and one at the last message, with different TTLs. The provider writes each part at the TTL of the first mark at or after it (design 6.2). The 3,000 tokens after the client's mark move from input to those tiers: 1,000 x ($3.75 - $3.00) + 2,000 x ($6.00 - $3.00) = -$0.00675.",
  "source": "issue_cases.md#49",
  "dims": {
   "kind": "setting-breakpoint",
   "position": "messages",
-  "cache": "mark-premium",
+  "cache": "mark-premium-mixed",
   "ttl": "5m",
   "lifetime": "exact"
  },
@@ -25,28 +25,32 @@
     "client": {
      "start": [
       0,
-      0,
-      0
+      1,
+      2
      ],
      "pos": [
       {
-       "hash": 625792648282977192,
-       "bytes": 20000
+       "hash": 632773372940024569,
+       "bytes": 4000
       },
       {
-       "hash": 14262701665749340094,
-       "bytes": 12000
+       "hash": 6645332947218154758,
+       "bytes": 4000
       },
       {
-       "hash": 4853614007946103283,
-       "bytes": 12000
+       "hash": 11870035676972628745,
+       "bytes": 4000
+      },
+      {
+       "hash": 11306110233053041765,
+       "bytes": 4000
       }
      ]
     },
     "clientBreakpoints": [
      {
       "pos": {
-       "section": "messages",
+       "section": "tools",
        "index": 0
       },
       "ttl": "5m"
@@ -61,28 +65,39 @@
     "forwarded": {
      "start": [
       0,
-      0,
-      0
+      1,
+      2
      ],
      "pos": [
       {
-       "hash": 625792648282977192,
-       "bytes": 20000
+       "hash": 632773372940024569,
+       "bytes": 4000
       },
       {
-       "hash": 14262701665749340094,
-       "bytes": 12000
+       "hash": 6645332947218154758,
+       "bytes": 4000
       },
       {
-       "hash": 4853614007946103283,
-       "bytes": 12000
+       "hash": 11870035676972628745,
+       "bytes": 4000
+      },
+      {
+       "hash": 11306110233053041765,
+       "bytes": 4000
       }
      ]
     },
     "breakpoints": [
      {
       "pos": {
-       "section": "messages",
+       "section": "tools",
+       "index": 0
+      },
+      "ttl": "5m"
+     },
+     {
+      "pos": {
+       "section": "system",
        "index": 0
       },
       "ttl": "5m"
@@ -90,9 +105,9 @@
      {
       "pos": {
        "section": "messages",
-       "index": 2
+       "index": 1
       },
-      "ttl": "5m"
+      "ttl": "1h"
      }
     ],
     "facts": {
@@ -103,15 +118,15 @@
    "usage": {
     "input": 0,
     "cacheRead": 0,
-    "cacheWrite": 11000,
-    "cacheWrite1h": 0
+    "cacheWrite": 4000,
+    "cacheWrite1h": 2000
    },
    "expected": {
     "phase": "unknown",
     "baselineUsage": {
-     "input": 6000,
+     "input": 3000,
      "cacheRead": 0,
-     "cacheWrite": 5000,
+     "cacheWrite": 1000,
      "cacheWrite1h": 0
     },
     "ops": [],
@@ -120,16 +135,21 @@
       "kind": "markPremium",
       "changeId": "",
       "saved": {
-       "input": 6000
+       "input": 3000
       },
       "caused": {
-       "cacheWrite5m": 6000
+       "cacheWrite5m": 1000,
+       "cacheWrite1h": 2000
+      },
+      "from": {
+       "section": "tools",
+       "index": 0
       },
       "to": {
        "section": "messages",
-       "index": 2
+       "index": 1
       },
-      "ttl": "5m",
+      "ttl": "1h",
       "note": "the client body bills these tokens as input; the host's mark makes the provider write them"
      }
     ],

@@ -500,6 +500,8 @@ type calcState struct {
 	clientFD   int
 	prevExtCli int // prevExt in client space, flat in the previous client body; -1 = none
 
+	markWrite1h int // the 1h write tokens that markPremium books; headTTL leaves them out
+
 	derivedPingRead *Position // pingRead's cache; derivedPingOK is false when the ping read nothing
 	derivedPingOK   bool
 }
@@ -958,9 +960,15 @@ func (c *calcState) cacheEffects(res *Result) {
 	if c.pingHot {
 		c.rescue(res)
 	}
+	mark := c.markPremium()
+	if mark != nil {
+		c.markWrite1h = mark.Caused.CacheWrite1h
+	}
 	c.headTTL(res)
 	c.split(res)
-	c.markPremium(res)
+	if mark != nil {
+		c.addEffect(res, *mark)
+	}
 	switch {
 	case c.unknown || c.s.PrevPrint == nil:
 		return // row 6
@@ -1124,7 +1132,9 @@ func (c *calcState) headTTL(res *Result) {
 	if id == "" {
 		return
 	}
-	if n := c.usage.CacheWrite1h; n > 0 {
+	// markPremium books the 1h writes of a breakpoint the host added after the client's last one, from input.
+	// They are not a 5m write moved to 1h, so ttlPremium leaves them out: each token is booked once.
+	if n := c.usage.CacheWrite1h - c.markWrite1h; n > 0 {
 		e := CacheEffect{Kind: EffectTTLPremium, ChangeID: id, TTL: "1h", Estimated: true}
 		e.Saved.CacheWrite5m, e.Caused.CacheWrite1h = n, n
 		c.addEffect(res, e)
@@ -1174,20 +1184,28 @@ func (c *calcState) split(res *Result) {
 	c.addEffect(res, e)
 }
 
-// markPremium adds the cost of a breakpoint the host added after the client's last one (§4.4). The client body
-// bills the tokens after its last breakpoint as plain input (1.0x). With the host's breakpoint the provider
-// writes them, at 1.25x for 5m and 2.0x for 1h. The effect moves n tokens from input to the write tier:
-// it nets zero in tokens and costs 0.25 n (5m) or 1.0 n (1h) in input-token units. It does not depend on
-// the phase: a cold client body also bills the tail as input.
+// markPremium finds the cost of a breakpoint the host added after the client's last one (§4.4). The client
+// body bills the tokens after its last breakpoint as plain input (1.0x). With the host's breakpoints the
+// provider writes them, each part at the TTL of the first forwarded breakpoint at or after it (§6.2): 1.25x
+// for 5m, 2.0x for 1h. The effect moves n tokens from input to those tiers. It nets zero in tokens and costs
+// 0.25 per 5m token and 1.0 per 1h token in input-token units. It does not depend on the phase: a cold client
+// body also bills the tail as input.
 //
-// The range is the forwarded positions the provider wrote (after the read, up to what it cached) between
-// the client's last breakpoint, as forwarded, and the forwarded body's last breakpoint. n is the smaller of
-// that range in the forwarded body and in the client body. Content an operation added or removed in the
-// range is priced by that operation, so the smaller figure leaves it out. If an operation did both, n can be
-// too large; the error lowers the saving (R45). A removed client breakpoint is not priced here.
-func (c *calcState) markPremium(res *Result) {
+// The range is (lo, hi]: lo is the later of B*, the read, and the client's last breakpoint as forwarded;
+// hi is the earlier of the forwarded body's last breakpoint and what the request cached. n is the smaller of
+// the range in the forwarded body and in the client body, and of Usage.CacheWrite. Content an operation added
+// or removed in the range is priced by that operation, so the smaller figure leaves it out. If one request
+// adds and removes there, n can be too large; the error lowers the saving (R45). When n is cut, the 5m
+// parts are cut first, so the dearer 1h parts stay booked (a doubtful figure may only lower a saving).
+// A 1h breakpoint counts as 1h only up to Usage.CacheWrite1h: a bill with no 1h write shows the provider wrote
+// at 5m, so 5m is the tier it paid.
+//
+// It returns nil when nothing applies: no forwarded or client breakpoint (with none every position is one, so
+// the host adds none), no cache tokens in the usage (the body was uncacheable), nothing cached, or no write in
+// the range. A removed client breakpoint is not priced here.
+func (c *calcState) markPremium() *CacheEffect {
 	if len(c.fwdBPs) == 0 || len(c.clientBPs) == 0 || c.noCacheTokens() || c.cachedFwd < 0 {
-		return // with no client breakpoint every position is one, so a host breakpoint adds none
+		return nil
 	}
 	last := c.fwdBPs[len(c.fwdBPs)-1]
 	lo := max(c.bstarFwd, c.readEnd)
@@ -1195,24 +1213,54 @@ func (c *calcState) markPremium(res *Result) {
 	lo = max(lo, mustFlat(c.fwd, c.clientToFwd(c.client.position(cl))))
 	hi := min(last.at, c.cachedFwd)
 	if hi <= lo {
-		return
+		return nil
 	}
 	cLo := mustFlat(c.client, c.fwdToClient(c.fwd.position(lo)))
 	cHi := mustFlat(c.client, c.fwdToClient(c.fwd.position(hi)))
-	n := min(c.ratio.between(c.fwd, lo, hi), c.ratio.between(c.client, cLo, cHi), c.usage.CacheWrite)
-	if n <= 0 {
-		return
+	total := min(c.ratio.between(c.fwd, lo, hi), c.ratio.between(c.client, cLo, cHi), c.usage.CacheWrite)
+	if total <= 0 {
+		return nil
 	}
-	ttl := "5m" // "" counts as 5m; the bill must show a 1h write for the 1h premium
-	if last.ttl == "1h" && c.usage.CacheWrite1h > 0 {
-		ttl = "1h"
+	// the parts of the range, each at the TTL of the breakpoint that ends it
+	var n5, n1 int
+	prev := lo
+	for _, b := range c.fwdBPs {
+		if b.at <= prev {
+			continue
+		}
+		end := min(b.at, hi)
+		if k := c.ratio.between(c.fwd, prev, end); k > 0 {
+			if b.ttl == "1h" {
+				n1 += k
+			} else {
+				n5 += k
+			}
+		}
+		prev = end
+		if prev >= hi {
+			break
+		}
 	}
-	e := CacheEffect{Kind: EffectMarkPremium, ChangeID: c.changeAt(last.at), TTL: ttl, Estimated: true}
-	to := c.fwd.position(hi)
-	e.To = &to
-	e.Saved.Input = n
-	addWrite(&e.Caused, ttl, n)
-	c.addEffect(res, e)
+	if cut := n5 + n1 - total; cut > 0 {
+		d := min(cut, n5)
+		n5 -= d
+		n1 -= min(cut-d, n1)
+	}
+	if n1 > c.usage.CacheWrite1h { // the bill shows fewer 1h writes than the breakpoints name
+		n5 += n1 - c.usage.CacheWrite1h
+		n1 = c.usage.CacheWrite1h
+	}
+	if n5+n1 <= 0 {
+		return nil
+	}
+	from, to := c.fwd.position(lo), c.fwd.position(hi)
+	e := &CacheEffect{Kind: EffectMarkPremium, ChangeID: c.changeAt(last.at), From: &from, To: &to, TTL: "5m", Estimated: true}
+	if n1 > 0 {
+		e.TTL = "1h"
+	}
+	e.Saved.Input = n5 + n1
+	e.Caused.CacheWrite5m, e.Caused.CacheWrite1h = n5, n1
+	return e
 }
 
 // headEnd is the last forwarded position that a 1h breakpoint of the previous request covers; -1

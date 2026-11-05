@@ -33,6 +33,9 @@ func TestAnAddedTailBreakpointPaysTheWritePremiumWhenHot(t *testing.T) {
 		facts: exact5m, usage: Usage{CacheRead: 1000, CacheWrite: 2063}}.run(ts)
 	e := effect(t, res, EffectMarkPremium)
 	// the client body bills m1 and m2 (2000 tokens) as input; the forwarded one writes them
+	if from := (Position{SectionMessages, 0}); e.From == nil || *e.From != from {
+		t.Fatalf("From = %v, want messages[0]: the range starts at the client's last breakpoint", e.From)
+	}
 	if e.Saved != (TierTokens{Input: 2000}) || e.Caused != (TierTokens{CacheWrite5m: 2000}) || e.InBaseline ||
 		e.ChangeID != "host:tailbreakpoint:x" || e.TTL != "5m" || !e.Estimated {
 		t.Fatalf("effect = %+v, want 2000 input -> 2000 write5m, host:tailbreakpoint:x", e)
@@ -71,11 +74,11 @@ func TestAnAddedTailBreakpointAt1hPaysTheOneHourPremium(t *testing.T) {
 func TestNoPremiumWhenTheHostMarkIsInsideThePreviousRead(t *testing.T) {
 	ts := NewTrackers()
 	warm(t, ts, "5m")
-	// the provider reads all of msg(0..1): the host's mark at msg(1) wrote nothing new
+	// the provider reads msg(0) and writes msg(1) under the host's new mark
 	m := msgs(2, 1000)
 	res := req{at: t0.Add(10 * time.Second), client: mk(nil, nil, m), clientBPs: bps5(msg(0)),
 		fwdBPs: bps5(msg(0), msg(1)), facts: exact5m, usage: Usage{CacheRead: 1000, CacheWrite: 1000}}.run(ts)
-	e := effect(t, res, EffectMarkPremium) // msg(1) is new: written
+	e := effect(t, res, EffectMarkPremium) // msg(1) is new: the provider wrote it
 	if e.Caused != (TierTokens{CacheWrite5m: 1000}) {
 		t.Fatalf("effect = %+v", e)
 	}
@@ -114,4 +117,83 @@ func noEffectOf(t *testing.T, res Result, kind CacheEffectKind) {
 			t.Fatalf("unexpected %s effect: %+v", kind, e)
 		}
 	}
+}
+
+// weight is the cost of a tier mix in input-token units.
+func weight(t TierTokens) float64 {
+	return float64(t.Input) + 1.25*float64(t.CacheWrite5m) + 2*float64(t.CacheWrite1h) + 0.1*float64(t.CacheRead)
+}
+
+func net(res Result) float64 {
+	var n float64
+	for _, o := range res.Ops {
+		n += weight(o.Saved) - weight(o.Caused)
+	}
+	for _, e := range res.CacheEffects {
+		if !e.InBaseline {
+			n += weight(e.Saved) - weight(e.Caused)
+		}
+	}
+	return n
+}
+
+func bp1h(p Position) Breakpoint { return Breakpoint{Pos: p, TTL: "1h"} }
+
+// A headttl change holds the head at 1h and the host adds a 1h mark at the tail. ttlPremium must book
+// the head only; markPremium books the tail. Each token is booked once.
+// Client body bills: sys 1000 w5m, m0 1000 w5m, m1+m2 2000 input = 4500.
+// Forwarded bills: sys 1000 w1h, m0 1000 w5m, m1+m2 2000 w1h = 7250. The difference is 2750.
+func TestHeadTTLAndAHostTailMarkBookEachTokenOnce(t *testing.T) {
+	sysB, m := []blk{b("sys", 1000)}, msgs(3, 1000)
+	head := rewrite("h", "headttl", "headttl:s1:sys", sys(0), 1000, 1000)
+	res := req{at: t0, client: mk(nil, sysB, m), clientBPs: bps5(sys(0), msg(0)), ops: []Operation{head},
+		fwdBPs: []Breakpoint{bp1h(sys(0)), bp5(msg(0)), bp1h(msg(2))},
+		facts:  EntryFacts{TTL: time.Hour, Lifetime: LifetimeExact},
+		usage:  Usage{CacheWrite: 4000, CacheWrite1h: 3000}}.run(NewTrackers())
+	if p := effect(t, res, EffectTTLPremium); p.Saved != (TierTokens{CacheWrite5m: 1000}) || p.Caused != (TierTokens{CacheWrite1h: 1000}) {
+		t.Fatalf("ttlPremium = %+v, want the head only: 1000 w5m -> 1000 w1h", p)
+	}
+	if e := effect(t, res, EffectMarkPremium); e.Saved != (TierTokens{Input: 2000}) || e.Caused != (TierTokens{CacheWrite1h: 2000}) {
+		t.Fatalf("markPremium = %+v, want 2000 input -> 2000 w1h", e)
+	}
+	if got := net(res); got != -2750 {
+		t.Fatalf("net = %v, want -2750", got)
+	}
+	noChecks(t, res)
+}
+
+// The range crosses breakpoints of different TTLs. Each part is written at the TTL of the first breakpoint
+// at or after it (§6.2).
+func TestMarkPremiumPricesEachPartAtItsOwnTTL(t *testing.T) {
+	tools, sysB, m := []blk{b("t", 1000)}, []blk{b("sys", 1000)}, msgs(2, 1000)
+	cases := []struct {
+		name string
+		fwd  []Breakpoint
+		use  Usage
+		want TierTokens
+	}{
+		{"1h inside, 5m last", []Breakpoint{bp5(tool(0)), bp1h(sys(0)), bp5(msg(1))}, Usage{CacheWrite: 4000, CacheWrite1h: 1000},
+			TierTokens{CacheWrite5m: 2000, CacheWrite1h: 1000}},
+		{"5m inside, 1h last", []Breakpoint{bp5(tool(0)), bp5(sys(0)), bp1h(msg(1))}, Usage{CacheWrite: 4000, CacheWrite1h: 2000},
+			TierTokens{CacheWrite5m: 1000, CacheWrite1h: 2000}},
+	}
+	for _, c := range cases {
+		res := req{at: t0, client: mk(tools, sysB, m), clientBPs: bps5(tool(0)), fwdBPs: c.fwd,
+			facts: EntryFacts{TTL: time.Hour, Lifetime: LifetimeExact}, usage: c.use}.run(NewTrackers())
+		e := effect(t, res, EffectMarkPremium)
+		if e.Saved != (TierTokens{Input: 3000}) || e.Caused != c.want {
+			t.Errorf("%s: effect = %+v, want 3000 input -> %+v", c.name, e, c.want)
+		}
+		if got := net(res); got != -(1.25*float64(c.want.CacheWrite5m)+2*float64(c.want.CacheWrite1h))+3000 {
+			t.Errorf("%s: net = %v", c.name, got)
+		}
+		noChecks(t, res)
+	}
+}
+
+// A usage with no cache tokens: the forwarded body was uncacheable, so the marks wrote nothing.
+func TestNoPremiumWhenTheUsageShowsNoCacheTokens(t *testing.T) {
+	res := req{at: t0, client: mk(nil, nil, msgs(3, 1000)), clientBPs: bps5(msg(0)), fwdBPs: bps5(msg(0), msg(2)),
+		facts: exact5m, usage: Usage{Input: 3000}}.run(NewTrackers())
+	noEffectOf(t, res, EffectMarkPremium)
 }

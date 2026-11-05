@@ -2561,7 +2561,7 @@ def c49():
     s0 = sim(0, "r0", ([], [], m0), ([], [], m0), [], "unknown", cbp=cb0, fbp=cb0, usage=U(write=5000))
     s1 = sim(10, "r1", ([], [], m3), ([], [], m3), [], "hot", prev=(5000, 5000), cbp=cb3, fbp=fb3,
              usage=U(read=5000, write=6000), base=U(read=5000, inp=6000),
-             effects=[effect("markPremium", "", saved=TT(input=6000), caused=TT(cacheWrite5m=6000), to=P("messages", 2),
+             effects=[effect("markPremium", "", saved=TT(input=6000), caused=TT(cacheWrite5m=6000), frm=P("messages", 0), to=P("messages", 2),
                              ttl="5m", note=note)])
     write_issue("markpremium/added-tail/hot/5m", 49,
                 "The client has one breakpoint, at messages[0]. The host adds one at the last message. The provider reads "
@@ -2574,10 +2574,10 @@ def c49():
     # cold: the first request. The client body writes m0 and bills the rest as input.
     s0 = sim(0, "r0", ([], [], m3), ([], [], m3), [], "unknown", cbp=cb3, fbp=fb3, usage=U(write=11000),
              base=U(write=5000, inp=6000),
-             effects=[effect("markPremium", "", saved=TT(input=6000), caused=TT(cacheWrite5m=6000), to=P("messages", 2),
+             effects=[effect("markPremium", "", saved=TT(input=6000), caused=TT(cacheWrite5m=6000), frm=P("messages", 0), to=P("messages", 2),
                              ttl="5m", note=note)])
-    write_issue("markpremium/added-tail/cold/5m", 49,
-                "The same marks on a cold first request. The client body would write messages[0] (5,000 tokens) under its "
+    write_issue("markpremium/added-tail/first-request/5m", 49,
+                "The same marks on a first request (phase unknown, nothing cached). The client body would write messages[0] (5,000 tokens) under its "
                 "own mark and bill the other 6,000 as input. The forwarded body writes all 11,000. The difference is "
                 "the same: 6,000 x ($3.75 - $3.00) = -$0.00450. A cold request does not remove the premium, because "
                 "the client body also leaves the tail as input.",
@@ -2591,7 +2591,7 @@ def c49():
              base=U(write=5000, w1h=5000))
     s1 = sim(10, "r1", ([], [], m3), ([], [], m3), [], "hot", prev=(5000, 5000), cbp=cb1h, fbp=fb1h, facts=f1h,
              usage=U(read=5000, write=6000, w1h=6000), base=U(read=5000, inp=6000),
-             effects=[effect("markPremium", "", saved=TT(input=6000), caused=TT(cacheWrite1h=6000), to=P("messages", 2),
+             effects=[effect("markPremium", "", saved=TT(input=6000), caused=TT(cacheWrite1h=6000), frm=P("messages", 0), to=P("messages", 2),
                              ttl="1h", note=note)])
     write_issue("markpremium/added-tail/hot/1h", 49,
                 "The same host mark with 1h breakpoints. The provider writes the 6,000 tail tokens at the 1h rate. The "
@@ -2601,7 +2601,7 @@ def c49():
     # no write: the same body again, the provider reads both marks
     s0 = sim(0, "r0", ([], [], m3), ([], [], m3), [], "unknown", cbp=cb3, fbp=fb3, usage=U(write=11000),
              base=U(write=5000, inp=6000),
-             effects=[effect("markPremium", "", saved=TT(input=6000), caused=TT(cacheWrite5m=6000), to=P("messages", 2),
+             effects=[effect("markPremium", "", saved=TT(input=6000), caused=TT(cacheWrite5m=6000), frm=P("messages", 0), to=P("messages", 2),
                              ttl="5m", note=note)])
     s1 = sim(10, "r1", ([], [], m3), ([], [], m3), [], "hot", prev=(11000, 11000), cbp=cb3, fbp=fb3,
              usage=U(read=11000), base=U(read=11000))
@@ -2624,7 +2624,7 @@ def c49():
     s0 = sim(0, "r0", ([], [], m0), ([], [], m0), [], "unknown", cbp=cb0, fbp=cb0, usage=U(write=5000))
     s1 = sim(10, "r1", ([], [], m3), ([], [], m3b), [], "hot", prev=(5000, 5000), add=[op], cbp=cb3, fbp=fb3,
              usage=U(read=5000, write=6004), base=U(read=5000, inp=6000),
-             effects=[effect("markPremium", MP, saved=TT(input=6000), caused=TT(cacheWrite5m=6000), to=P("messages", 2),
+             effects=[effect("markPremium", MP, saved=TT(input=6000), caused=TT(cacheWrite5m=6000), frm=P("messages", 0), to=P("messages", 2),
                              ttl="5m", note=note)])
     s1["expected"]["ops"] = [eop(MP, caused=TT(cacheWrite5m=4), note="the 4 bytes-tokens the mark's text adds, at the write rate")]
     write_issue("markpremium/with-mark-text/hot/5m", 49,
@@ -2633,6 +2633,46 @@ def c49():
                 "that both bodies hold, and carries the host's ChangeID: 6,000 x $0.75 = -$0.00450. The two do not "
                 "count the same token twice.",
                 DIMS("setting-breakpoint", "messages", "mark-premium"), [s0, s1])
+
+    # headttl plus a host 1h tail mark: each token is booked once
+    sysb, ms = [("sys", 1000)], [("m0", 1000), ("m1", 1000), ("m2", 1000)]
+    HT = "headttl:main:sysa49"
+    hop = rewrite("o1", "context-guru.headttl", "system", 0, 1000, 1000, HT)
+    cbp = [{"pos": P("system", 0), "ttl": "5m"}, {"pos": P("messages", 0), "ttl": "5m"}]
+    fbp = [{"pos": P("system", 0), "ttl": "1h"}, {"pos": P("messages", 0), "ttl": "5m"}, {"pos": P("messages", 2), "ttl": "1h"}]
+    s0 = sim(0, "r0", ([], sysb, ms), ([], sysb, ms), [], "unknown", add=[hop], cbp=cbp, fbp=fbp,
+             usage=U(write=4000, w1h=3000), base=U(write=2000, inp=2000),
+             effects=[effect("ttlPremium", HT, saved=TT(cacheWrite5m=1000), caused=TT(cacheWrite1h=1000), ttl="1h",
+                             note="the head only"),
+                      effect("markPremium", "", saved=TT(input=2000), caused=TT(cacheWrite1h=2000), frm=P("messages", 0),
+                             to=P("messages", 2), ttl="1h", note=note)],
+             facts={"ttl": "1h", "lifetime": "exact"})
+    write_issue("markpremium/with-headttl/first-request/1h", 49,
+                "headttl holds the 1,000-token system head at 1h and the host adds a 1h mark at the last message. The "
+                "client body writes sys and m0 (2,000, 5m) and bills m1 and m2 as input. ttlPremium books the head "
+                "only: 1,000 x ($6.00 - $3.75) = -$0.00225. markPremium books the 2,000 tail tokens: "
+                "2,000 x ($6.00 - $3.00) = -$0.00600. No token is booked twice. Total -$0.00825 equals the bill "
+                "difference.",
+                DIMS("setting-breakpoint", "messages", "mark-premium-headttl", ttl="1h"), [s0])
+
+    # mixed TTLs inside the range, both orders. The client marks tools[0].
+    tools1, sys1, ms1 = [("t", 1000)], [("sys", 1000)], [("m0", 1000), ("m1", 1000)]
+    ctb = [{"pos": P("tools", 0), "ttl": "5m"}]
+    for name, fb, u, caused, cost in (
+            ("1h-inside-5m-last", [("tools", 0, "5m"), ("system", 0, "1h"), ("messages", 1, "5m")], U(write=4000, w1h=1000),
+             TT(cacheWrite5m=2000, cacheWrite1h=1000), "1,000 x ($6.00 - $3.00) + 2,000 x ($3.75 - $3.00) = -$0.00450"),
+            ("5m-inside-1h-last", [("tools", 0, "5m"), ("system", 0, "5m"), ("messages", 1, "1h")], U(write=4000, w1h=2000),
+             TT(cacheWrite5m=1000, cacheWrite1h=2000), "1,000 x ($3.75 - $3.00) + 2,000 x ($6.00 - $3.00) = -$0.00675")):
+        fbp2 = [{"pos": P(sec, i), "ttl": t} for sec, i, t in fb]
+        s0 = sim(0, "r0", (tools1, sys1, ms1), (tools1, sys1, ms1), [], "unknown", cbp=ctb, fbp=fbp2, usage=u,
+                 base=U(write=1000, inp=3000),
+                 effects=[effect("markPremium", "", saved=TT(input=3000), caused=caused, frm=P("tools", 0),
+                                 to=P("messages", 1), ttl="1h", note=note)])
+        write_issue(f"markpremium/mixed-ttl/{name}/5m", 49,
+                    "The client marks tools[0]. The host adds a mark at system[0] and one at the last message, with "
+                    "different TTLs. The provider writes each part at the TTL of the first mark at or after it (design "
+                    f"6.2). The 3,000 tokens after the client's mark move from input to those tiers: {cost}.",
+                    DIMS("setting-breakpoint", "messages", "mark-premium-mixed"), [s0])
 
 
 if __name__ == "__main__":

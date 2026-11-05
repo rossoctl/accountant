@@ -601,11 +601,16 @@ usage tiers above 2^40 and sums that would wrap an `int` (a case bills what its 
 | Case ID | What the spec requires |
 |---|---|
 | `markpremium/added-tail/hot/5m` | The client marks messages[0] (5,000 tokens). The host adds a mark at the last message. The provider reads 5,000 and writes 6,000. Client body: 6,000 input. `markPremium` moves 6,000 from input to write 5m: 6,000 x ($3.75 - $3.00)/M = -$0.00450. |
-| `markpremium/added-tail/cold/5m` | The same on a first request. The client body writes 5,000 and bills 6,000 as input, so the premium is the same, -$0.00450. |
+| `markpremium/added-tail/first-request/5m` | The same on a first request (phase unknown). The client body writes 5,000 and bills 6,000 as input, so the premium is the same, -$0.00450. |
 | `markpremium/added-tail/hot/1h` | The same with 1h marks: 6,000 x ($6.00 - $3.00)/M = -$0.01800. |
 | `markpremium/inside-previous-read/hot/5m` | The next request repeats the body. The provider reads 11,000 and writes none. No `markPremium` (the first request pays it once). |
 | `markpremium/host-mark-is-client-mark/cold/5m` | The forwarded marks equal the client's. No `markPremium`. |
 | `markpremium/with-mark-text/hot/5m` | The host reports a +4-token rewrite for the mark and adds the breakpoint. The operation prices its 4 tokens (write, -$0.000015). `markPremium` prices the 6,000 shared tokens (-$0.00450) and has the rewrite's `ChangeID`. |
+| `markpremium/with-headttl/first-request/1h` | A `headttl` head (1,000, 1h) and a host 1h mark at the tail (2,000 after the client's 5m mark). `ttlPremium` books the head only, 1,000 x $2.25/M = -$0.00225. `markPremium` books 2,000 x $3.00/M = -$0.00600. No token is booked twice. |
+| `markpremium/mixed-ttl/1h-inside-5m-last/5m` | The client marks tools[0]. The host marks system[0] at 1h and the last message at 5m. 1,000 tokens at 1h and 2,000 at 5m: -$0.00450. |
+| `markpremium/mixed-ttl/5m-inside-1h-last/5m` | The host marks system[0] at 5m and the last message at 1h. 1,000 at 5m and 2,000 at 1h: -$0.00675. |
+
+Every `markPremium` case states `from` and `to`: the range is `(from, to]`.
 
 Not covered by a case: a removed client breakpoint (the inverse). It is out of scope; see the design, §4.4.
 
