@@ -241,3 +241,48 @@ func TestHeadTTLAfterTheClientsLastBreakpointIsBookedOnce(t *testing.T) {
 	}
 	noChecks(t, res)
 }
+
+// Reviewer trace 1 (round 3): headttl at sys(0); client marks sys(0) 5m and msg(2) 5m; the host adds a 1h
+// mark at msg(0). Body: sys 1000, m0 2000, m1 1000, m2 1000. The provider writes sys and m0 at 1h
+// (CacheWrite 5000, CacheWrite1h 3000). The client body writes all 5000 at 5m.
+// True difference: 3000 x 0.75 = 2250 units. The head alone is 1000, so ttlPremium must book the m0 tokens too.
+func TestAHostMarkBeforeTheClientsLastBreakpointPaysTheUpgradeOnEveryToken(t *testing.T) {
+	sysB := []blk{b("sys", 1000)}
+	m := []blk{b("m0", 2000), b("m1", 1000), b("m2", 1000)}
+	head := rewrite("h", "headttl", "headttl:s1:sys", sys(0), 1000, 1000)
+	res := req{at: t0, client: mk(nil, sysB, m), clientBPs: bps5(sys(0), msg(2)), ops: []Operation{head},
+		fwdBPs: []Breakpoint{bp1h(sys(0)), bp1h(msg(0)), bp5(msg(2))},
+		facts:  EntryFacts{TTL: time.Hour, Lifetime: LifetimeExact},
+		usage:  Usage{CacheWrite: 5000, CacheWrite1h: 3000}}.run(NewTrackers())
+	if p := effect(t, res, EffectTTLPremium); p.Saved != (TierTokens{CacheWrite5m: 3000}) || p.Caused != (TierTokens{CacheWrite1h: 3000}) {
+		t.Fatalf("ttlPremium = %+v, want 3000 w5m -> 3000 w1h", p)
+	}
+	if got := net(res); got != -2250 {
+		t.Fatalf("net = %v, want -2250", got)
+	}
+	noChecks(t, res)
+}
+
+// Reviewer trace 2 (round 3): headttl at sys(0); client marks sys(0) 5m and msg(0) 5m; an operation adds
+// 500 tokens at tools[0]. Forwarded: tools 500, sys 1000, m0 1000; marks at sys(0) 1h and msg(0) 5m.
+// The provider writes tools and sys at 1h (1500) and m0 at 5m (1000).
+// True difference: baseline 2000 x 1.25 = 2500, billed 1500 x 2.0 + 1000 x 1.25 = 4250, so -1750.
+// The operation books its 500 at 1h (-1000). ttlPremium books the sys head only (-750). Total -1750.
+func TestAnAddingOperationBeforeTheHeadIsNotBookedByTTLPremium(t *testing.T) {
+	sysB := []blk{b("sys", 1000)}
+	m := []blk{b("m0", 1000)}
+	head := rewrite("h", "headttl", "headttl:s1:sys", sys(0), 1000, 1000)
+	add := rewrite("a", "host.add", "host:add:t", tool(0), 0, 500)
+	res := req{at: t0, client: mk(nil, sysB, m), clientBPs: bps5(sys(0), msg(0)), ops: []Operation{head, add},
+		fwd:    mk([]blk{b("t", 500)}, sysB, m),
+		fwdBPs: []Breakpoint{bp1h(sys(0)), bp5(msg(0))},
+		facts:  EntryFacts{TTL: time.Hour, Lifetime: LifetimeExact},
+		usage:  Usage{CacheWrite: 2500, CacheWrite1h: 1500}}.run(NewTrackers())
+	if p := effect(t, res, EffectTTLPremium); p.Caused != (TierTokens{CacheWrite1h: 1000}) {
+		t.Fatalf("ttlPremium = %+v, want 1000 (the sys head only)", p)
+	}
+	if got := net(res); got != -1750 {
+		t.Fatalf("net = %v, want -1750", got)
+	}
+	noChecks(t, res)
+}

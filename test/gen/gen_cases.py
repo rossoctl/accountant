@@ -2711,6 +2711,45 @@ def c49():
                 "($6.00 - $3.00)/M = -$0.00900. ttlPremium adds nothing, so the head is booked once.",
                 DIMS("setting-breakpoint", "system", "mark-premium-headttl", ttl="1h"), [s0])
 
+    # round 3, trace 1: a host 1h mark before the client's last breakpoint. The head is 1,000 and m0 is 2,000.
+    HT4 = "headttl:main:sysd49"
+    sd, md = [("sys", 1000)], [("m0", 2000), ("m1", 1000), ("m2", 1000)]
+    s0 = sim(0, "r0", ([], sd, md), ([], sd, md), [], "unknown",
+             add=[rewrite("o1", "context-guru.headttl", "system", 0, 1000, 1000, HT4)],
+             cbp=BP(("system", 0), ("messages", 2)),
+             fbp=[{"pos": P("system", 0), "ttl": "1h"}, {"pos": P("messages", 0), "ttl": "1h"}, {"pos": P("messages", 2), "ttl": "5m"}],
+             usage=U(write=5000, w1h=3000), base=U(write=5000),
+             effects=[effect("ttlPremium", HT4, saved=TT(cacheWrite5m=3000), caused=TT(cacheWrite1h=3000), frm=None,
+                             to=P("messages", 0), ttl="1h", note="the client body writes sys and m0 at 5m; the 1h marks write them at 1h")],
+             facts={"ttl": "1h", "lifetime": "exact"})
+    write_issue("markpremium/host-1h-mark-before-client-last/first-request/1h", 49,
+                "headttl, a host 1h mark at messages[0], and the client's last mark at messages[2] (5m). The provider "
+                "writes sys (1,000) and m0 (2,000) at 1h. The client body writes all 5,000 at 5m. Every token in sys and m0 "
+                "moves from 5m to 1h: 3,000 x ($6.00 - $3.75)/M = -$0.00675. The head alone is 1,000, so a premium "
+                "bounded to the head would book only -$0.00225.",
+                DIMS("setting-breakpoint", "messages", "mark-premium-headttl", ttl="1h"), [s0])
+
+    # round 3, trace 2: an operation adds 500 tokens before the head
+    HT5 = "headttl:main:syse49"
+    se, me = [("sys", 1000)], [("m0", 1000)]
+    te = [("t", 500)]
+    s0 = sim(0, "r0", ([], se, me), (te, se, me), [], "unknown",
+             add=[rewrite("o1", "context-guru.headttl", "system", 0, 1000, 1000, HT5),
+                  rewrite("o2", "context-guru.addtool", "tools", 0, 0, 500, "cg:addtool:e49")],
+             cbp=BP(("system", 0), ("messages", 0)),
+             fbp=[{"pos": P("system", 0), "ttl": "1h"}, {"pos": P("messages", 0), "ttl": "5m"}],
+             usage=U(write=2500, w1h=1500), base=U(write=2000),
+             effects=[effect("ttlPremium", HT5, saved=TT(cacheWrite5m=1000), caused=TT(cacheWrite1h=1000), frm=None,
+                             to=P("system", 0), ttl="1h", note="the head only: the added tool is the operation's")])
+    s0["expected"]["ops"] = [eop("cg:addtool:e49", caused=TT(cacheWrite1h=500),
+                                 note="the added 500 tokens are written at 1h; the client body has none of them")]
+    write_issue("markpremium/adding-op-before-head/first-request/1h", 49,
+                "headttl and an operation that adds a 500-token tool before the head. The provider writes tools and sys "
+                "at 1h (1,500). The client body writes sys and m0 at 5m (2,000). The operation books its 500 tokens at "
+                "1h: -$0.00300. ttlPremium books the 1,000-token head only: -$0.00225. The total -$0.00525 equals the "
+                "bill difference (2,500 to 4,250 units).",
+                DIMS("setting-breakpoint", "system", "mark-premium-headttl", ttl="1h"), [s0])
+
 
 if __name__ == "__main__":
     os.makedirs(OUT, exist_ok=True)

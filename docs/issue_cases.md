@@ -611,6 +611,10 @@ usage tiers above 2^40 and sums that would wrap an `int` (a case bills what its 
 | `markpremium/mixed-ttl/5m-inside-1h-last/5m` | The host marks system[0] at 5m and the last message at 1h. 1,000 at 5m and 2,000 at 1h: -$0.00675. |
 | `markpremium/with-headttl-and-adding-op/first-request/1h` | As the headttl case, plus an operation that adds 500 tokens inside the range. `ttlPremium` books the head only (-$0.00225), `markPremium` 2,000 tokens (-$0.00600), the operation 500 at 1h (-$0.00300). Total -$0.01125 = the bill difference. |
 | `markpremium/headttl-after-client-mark/first-request/1h` | The client's last mark is before the head. `markPremium` books the head with the tail, 3,000 x $3.00/M = -$0.00900. No `ttlPremium`. |
+| `markpremium/host-1h-mark-before-client-last/first-request/1h` | headttl, a host 1h mark at messages[0], the client's last mark at messages[2] (5m). The provider writes sys (1,000) and m0 (2,000) at 1h; the client body writes all at 5m. `ttlPremium` books all 3,000 tokens, 3,000 x $2.25/M = -$0.00675 (the head alone is 1,000). |
+| `markpremium/adding-op-before-head/first-request/1h` | headttl and an operation that adds a 500-token tool before the head. The operation books its 500 at 1h (-$0.00300). `ttlPremium` books the 1,000-token head only (-$0.00225). Total = the bill difference. |
+
+Both cases come from round 3 of the review of accountant#50. `TestEveryTierMoveIsBookedOnce` (`internal/engine/oracle_test.go`) checks the same identity for 960 combinations (and 3,840 more with other block sizes) against an independent oracle, in input-token units with the tier rates. Check 6 sums tiers in tokens, so it cannot see a move between tiers.
 
 Every `markPremium` case states `from` and `to`: the range is `(from, to]`.
 
