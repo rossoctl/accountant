@@ -640,6 +640,21 @@ Without this rule every saving replayed on the request is priced at the write ra
 those tokens (accountant#21). A client edit inside the extent makes the provider read less, so the rule does not
 apply to it.
 
+The rule has one exception: a delivered cachesplit, a client diff before the end of the system section (the
+tools section counts too), and a read that stops at the split. The split exists for the turn where the volatile
+tail moved: the client body would miss from the system block on, and the forwarded body reads only the stable
+half. On a short conversation that half is within the read tolerance (128 tokens plus 2%) of the whole previous
+extent, so the read looks like a full read. It is not proof that nothing broke. The exception holds when the
+billed read is at most the forwarded prefix before the first forwarded difference (`upTo(fwd, fwdFD-1)`), with
+no tolerance. Then the full-read rule does not apply. B* is not moved to the end of the extent, so it stays where
+the hashes put it (none, or before the changed block), and the split effect is booked (context-guru#909).
+
+If the read is within the tolerance of the whole extent AND reaches past the forwarded first difference, the
+exception does not hold. A real tail change always stops the read at the tail, short of the extent. A read that
+passes it read text the hashes call changed, so the hash difference moved no content (a cache mark moved onto the
+system block). The full-read rule applies: B* is the end of the extent, the split effect is not booked, and the
+client body would have read the entry in full too (accountant#20, #21).
+
 All three terms are in client space (§4.3). `prevCachedExtent` is the previous request's cached
 extent, mapped from its forwarded body back into its client body through its splices. That is the
 extent the client body would have left cached with no context operator: a change that shortened the

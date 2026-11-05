@@ -829,7 +829,7 @@ func (c *calcState) phaseAndBoundary(res *Result) {
 		// The comparison is in tokens, not positions: a position is an index into one body, and the previous and
 		// the current forwarded bodies may differ before the extent (a block a plugin added), so equal
 		// indices would not mean equal prefixes.
-		if c.prevExt >= 0 && !c.skipsPricing() && c.readCoversExtent(prev) && c.clientFD <= c.prevExtCli && c.prevExtCli > c.bstar {
+		if c.prevExt >= 0 && !c.skipsPricing() && c.readCoversExtent(prev) && c.clientFD <= c.prevExtCli && c.prevExtCli > c.bstar && !c.splitChangedSystem() {
 			c.bstar = c.prevExtCli
 		}
 	case PhaseUnknown:
@@ -1147,14 +1147,8 @@ func (c *calcState) headTTL(res *Result) {
 // the forwarded prefix before the first difference, capped by what the provider read, less what the
 // client body would have read up to B* anyway.
 func (c *calcState) split(res *Result) {
-	id := ""
-	for _, it := range c.items {
-		if !it.ended && strings.HasPrefix(it.op.ChangeID, "cg:cachesplit:") {
-			id = it.op.ChangeID
-		}
-	}
-	delivered := c.fwd.sectionEnd(1)-c.fwd.Start[1] > c.client.sectionEnd(1)-c.client.Start[1]
-	if id == "" || !delivered || c.phase != PhaseHot || c.fwdFD <= 0 || c.usage.CacheRead == 0 {
+	id := c.splitItem()
+	if id == "" || !c.splitDelivered() || c.phase != PhaseHot || c.fwdFD <= 0 || c.usage.CacheRead == 0 {
 		return
 	}
 	// The split pays only when the volatile tail changed: then the client body, with one block, would have
@@ -1617,4 +1611,40 @@ func (c *calcState) nextState() ThreadState {
 		next.PrevPrint, next.Cache = p, c.s.Cache
 	}
 	return next
+}
+
+// splitItem is the id of the live cachesplit item, or "" when there is none. split and splitChangedSystem
+// share it. headTTL scans for a different prefix ("headttl:"), so it keeps its own loop.
+func (c *calcState) splitItem() string {
+	id := ""
+	for _, it := range c.items {
+		if !it.ended && strings.HasPrefix(it.op.ChangeID, "cg:cachesplit:") {
+			id = it.op.ChangeID
+		}
+	}
+	return id
+}
+
+// splitDelivered says the forwarded system section has more positions than the client one: the split is in
+// the forwarded body.
+func (c *calcState) splitDelivered() bool {
+	return c.fwd.sectionEnd(1)-c.fwd.Start[1] > c.client.sectionEnd(1)-c.client.Start[1]
+}
+
+// splitChangedSystem says a delivered cachesplit sits on a system section whose client text changed since
+// the previous request, and the read stopped at the split. The split exists for that case: the volatile tail
+// moved, the client body would have missed from the system block on, and the forwarded body read only the
+// stable half. A read that comes within the tolerance of the previous extent (a short turn adds less than 128
+// tokens plus 2%) is then no proof that nothing broke: the read is the stable half, and the extent is the
+// whole previous entry (context-guru#909).
+//
+// A read that passes the forwarded first difference is different. It read text the hashes call changed, so
+// the hash difference moved no content (a cache mark moved onto the block). The exception does not apply,
+// and the full-read rule stands (accountant#20, #21). The comparison has no tolerance: the tolerance is
+// the very window in which the two cases look alike.
+func (c *calcState) splitChangedSystem() bool {
+	if c.clientFD >= c.client.sectionEnd(1) || c.splitItem() == "" || !c.splitDelivered() {
+		return false
+	}
+	return c.fwdFD > 0 && c.usage.CacheRead <= c.ratio.upTo(c.fwd, c.fwdFD-1)
 }
