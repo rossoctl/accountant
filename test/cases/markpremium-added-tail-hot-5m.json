@@ -1,0 +1,231 @@
+{
+ "id": "markpremium/added-tail/hot/5m",
+ "description": "The client has one breakpoint, at messages[0]. The host adds one at the last message. The provider reads the 5,000 tokens of messages[0] and writes the 6,000 tokens after it at the 5m rate. The client body would bill them as input. The mark costs 6,000 x ($3.75 - $3.00) = -$0.00450 (markPremium). The host reports no operation for the mark itself, so the effect has no ChangeID. The next request reads what this one wrote: that gain is priced on that request, not here.",
+ "source": "issue_cases.md#49",
+ "dims": {
+  "kind": "setting-breakpoint",
+  "position": "messages",
+  "cache": "mark-premium",
+  "ttl": "5m",
+  "lifetime": "exact"
+ },
+ "rates": "fixture-v1",
+ "steps": [
+  {
+   "begin": {
+    "meta": {
+     "requestId": "r0",
+     "session": "s1",
+     "model": "agent-model",
+     "at": "2026-03-02T09:00:00Z",
+     "billing": {
+      "mode": "api"
+     }
+    },
+    "client": {
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "pos": [
+      {
+       "hash": 625792648282977192,
+       "bytes": 20000
+      }
+     ]
+    },
+    "clientBreakpoints": [
+     {
+      "pos": {
+       "section": "messages",
+       "index": 0
+      },
+      "ttl": "5m"
+     }
+    ]
+   },
+   "add": [],
+   "end": {
+    "thread": {
+     "id": "main"
+    },
+    "forwarded": {
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "pos": [
+      {
+       "hash": 625792648282977192,
+       "bytes": 20000
+      }
+     ]
+    },
+    "breakpoints": [
+     {
+      "pos": {
+       "section": "messages",
+       "index": 0
+      },
+      "ttl": "5m"
+     }
+    ],
+    "facts": {
+     "ttl": "5m",
+     "lifetime": "exact"
+    }
+   },
+   "usage": {
+    "input": 0,
+    "cacheRead": 0,
+    "cacheWrite": 5000,
+    "cacheWrite1h": 0
+   },
+   "expected": {
+    "phase": "unknown",
+    "baselineUsage": {
+     "input": 0,
+     "cacheRead": 0,
+     "cacheWrite": 5000,
+     "cacheWrite1h": 0
+    },
+    "ops": [],
+    "unpriced": [
+     {
+      "reason": "penalty_unknown"
+     }
+    ]
+   }
+  },
+  {
+   "begin": {
+    "meta": {
+     "requestId": "r1",
+     "session": "s1",
+     "model": "agent-model",
+     "at": "2026-03-02T09:00:10Z",
+     "billing": {
+      "mode": "api"
+     }
+    },
+    "client": {
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "pos": [
+      {
+       "hash": 625792648282977192,
+       "bytes": 20000
+      },
+      {
+       "hash": 14262701665749340094,
+       "bytes": 12000
+      },
+      {
+       "hash": 4853614007946103283,
+       "bytes": 12000
+      }
+     ]
+    },
+    "clientBreakpoints": [
+     {
+      "pos": {
+       "section": "messages",
+       "index": 0
+      },
+      "ttl": "5m"
+     }
+    ]
+   },
+   "add": [],
+   "end": {
+    "thread": {
+     "id": "main"
+    },
+    "forwarded": {
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "pos": [
+      {
+       "hash": 625792648282977192,
+       "bytes": 20000
+      },
+      {
+       "hash": 14262701665749340094,
+       "bytes": 12000
+      },
+      {
+       "hash": 4853614007946103283,
+       "bytes": 12000
+      }
+     ]
+    },
+    "breakpoints": [
+     {
+      "pos": {
+       "section": "messages",
+       "index": 0
+      },
+      "ttl": "5m"
+     },
+     {
+      "pos": {
+       "section": "messages",
+       "index": 2
+      },
+      "ttl": "5m"
+     }
+    ],
+    "facts": {
+     "ttl": "5m",
+     "lifetime": "exact"
+    }
+   },
+   "usage": {
+    "input": 0,
+    "cacheRead": 5000,
+    "cacheWrite": 6000,
+    "cacheWrite1h": 0
+   },
+   "expected": {
+    "phase": "hot",
+    "baselineUsage": {
+     "input": 6000,
+     "cacheRead": 5000,
+     "cacheWrite": 0,
+     "cacheWrite1h": 0
+    },
+    "ops": [],
+    "effects": [
+     {
+      "kind": "markPremium",
+      "changeId": "",
+      "saved": {
+       "input": 6000
+      },
+      "caused": {
+       "cacheWrite5m": 6000
+      },
+      "from": {
+       "section": "messages",
+       "index": 0
+      },
+      "to": {
+       "section": "messages",
+       "index": 2
+      },
+      "ttl": "5m",
+      "note": "the client body bills these tokens as input; the host's mark makes the provider write them"
+     }
+    ]
+   }
+  }
+ ]
+}

@@ -1,0 +1,258 @@
+{
+ "id": "markpremium/with-mark-text/hot/5m",
+ "description": "The host reports a rewrite for the mark's own text (+4 tokens) and adds the breakpoint. The operation prices its 4 tokens at the write rate (-$0.00001500). The markPremium effect prices the 6,000 tokens that both bodies hold, and carries the host's ChangeID: 6,000 x $0.75 = -$0.00450. The two do not count the same token twice.",
+ "source": "issue_cases.md#49",
+ "dims": {
+  "kind": "setting-breakpoint",
+  "position": "messages",
+  "cache": "mark-premium",
+  "ttl": "5m",
+  "lifetime": "exact"
+ },
+ "rates": "fixture-v1",
+ "steps": [
+  {
+   "begin": {
+    "meta": {
+     "requestId": "r0",
+     "session": "s1",
+     "model": "agent-model",
+     "at": "2026-03-02T09:00:00Z",
+     "billing": {
+      "mode": "api"
+     }
+    },
+    "client": {
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "pos": [
+      {
+       "hash": 625792648282977192,
+       "bytes": 20000
+      }
+     ]
+    },
+    "clientBreakpoints": [
+     {
+      "pos": {
+       "section": "messages",
+       "index": 0
+      },
+      "ttl": "5m"
+     }
+    ]
+   },
+   "add": [],
+   "end": {
+    "thread": {
+     "id": "main"
+    },
+    "forwarded": {
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "pos": [
+      {
+       "hash": 625792648282977192,
+       "bytes": 20000
+      }
+     ]
+    },
+    "breakpoints": [
+     {
+      "pos": {
+       "section": "messages",
+       "index": 0
+      },
+      "ttl": "5m"
+     }
+    ],
+    "facts": {
+     "ttl": "5m",
+     "lifetime": "exact"
+    }
+   },
+   "usage": {
+    "input": 0,
+    "cacheRead": 0,
+    "cacheWrite": 5000,
+    "cacheWrite1h": 0
+   },
+   "expected": {
+    "phase": "unknown",
+    "baselineUsage": {
+     "input": 0,
+     "cacheRead": 0,
+     "cacheWrite": 5000,
+     "cacheWrite1h": 0
+    },
+    "ops": [],
+    "unpriced": [
+     {
+      "reason": "penalty_unknown"
+     }
+    ]
+   }
+  },
+  {
+   "begin": {
+    "meta": {
+     "requestId": "r1",
+     "session": "s1",
+     "model": "agent-model",
+     "at": "2026-03-02T09:00:10Z",
+     "billing": {
+      "mode": "api"
+     }
+    },
+    "client": {
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "pos": [
+      {
+       "hash": 625792648282977192,
+       "bytes": 20000
+      },
+      {
+       "hash": 14262701665749340094,
+       "bytes": 12000
+      },
+      {
+       "hash": 4853614007946103283,
+       "bytes": 12000
+      }
+     ]
+    },
+    "clientBreakpoints": [
+     {
+      "pos": {
+       "section": "messages",
+       "index": 0
+      },
+      "ttl": "5m"
+     }
+    ]
+   },
+   "add": [
+    {
+     "id": "o1",
+     "kind": "rewrite",
+     "operator": "context-guru.tailbreakpoint",
+     "at": {
+      "section": "messages",
+      "index": 2
+     },
+     "sizeBefore": {
+      "bytes": 12000
+     },
+     "sizeAfter": {
+      "bytes": 12016
+     },
+     "changeId": "cg:tailbreakpoint:a49"
+    }
+   ],
+   "end": {
+    "thread": {
+     "id": "main"
+    },
+    "forwarded": {
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "pos": [
+      {
+       "hash": 625792648282977192,
+       "bytes": 20000
+      },
+      {
+       "hash": 14262701665749340094,
+       "bytes": 12000
+      },
+      {
+       "hash": 17356557112522869019,
+       "bytes": 12016
+      }
+     ]
+    },
+    "breakpoints": [
+     {
+      "pos": {
+       "section": "messages",
+       "index": 0
+      },
+      "ttl": "5m"
+     },
+     {
+      "pos": {
+       "section": "messages",
+       "index": 2
+      },
+      "ttl": "5m"
+     }
+    ],
+    "facts": {
+     "ttl": "5m",
+     "lifetime": "exact"
+    }
+   },
+   "usage": {
+    "input": 0,
+    "cacheRead": 5000,
+    "cacheWrite": 6004,
+    "cacheWrite1h": 0
+   },
+   "expected": {
+    "phase": "hot",
+    "baselineUsage": {
+     "input": 6000,
+     "cacheRead": 5000,
+     "cacheWrite": 0,
+     "cacheWrite1h": 0
+    },
+    "ops": [
+     {
+      "changeId": "cg:tailbreakpoint:a49",
+      "saved": {},
+      "caused": {
+       "cacheWrite5m": 4
+      },
+      "estimated": true,
+      "note": "the 4 bytes-tokens the mark's text adds, at the write rate"
+     }
+    ],
+    "effects": [
+     {
+      "kind": "markPremium",
+      "changeId": "cg:tailbreakpoint:a49",
+      "saved": {
+       "input": 6000
+      },
+      "caused": {
+       "cacheWrite5m": 6000
+      },
+      "from": {
+       "section": "messages",
+       "index": 0
+      },
+      "to": {
+       "section": "messages",
+       "index": 2
+      },
+      "ttl": "5m",
+      "note": "the client body bills these tokens as input; the host's mark makes the provider write them"
+     }
+    ]
+   }
+  }
+ ]
+}

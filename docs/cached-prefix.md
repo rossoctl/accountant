@@ -38,6 +38,11 @@ Other OpenAI facts that the model depends on:
   tail. After 10 minutes the head is still alive and the tail is not. The library judges each part with the TTL of
   its own breakpoint, and with the TTL the entry was written with, not the TTL of the new request (§5.2). A billed
   read of a part is proof that the part was alive.
+- **A breakpoint costs a write.** On Anthropic the tokens up to a breakpoint are written at 1.25x (5m) or 2.0x (1h),
+  and the tokens after the last breakpoint are plain input at 1.0x. A breakpoint a host adds after the client's last
+  one therefore turns input into a write for the tokens between them: a premium of 0.25x (5m) or 1.0x (1h). The
+  library books it as a `markPremium` effect (design §4.4). The entry it writes is read by the next request, and
+  that read is priced on that request.
 - **Writes have a price from GPT-5.6.** A read costs 0.1 times the uncached input rate, a write costs
   1.25 times for 30 minutes and 2.5 times for 12 hours. These are total rates and not surcharges.
   Earlier models have a cached-input rate and no write charge.

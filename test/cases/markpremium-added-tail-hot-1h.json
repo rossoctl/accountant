@@ -1,0 +1,231 @@
+{
+ "id": "markpremium/added-tail/hot/1h",
+ "description": "The same host mark with 1h breakpoints. The provider writes the 6,000 tail tokens at the 1h rate. The client body bills them as input: 6,000 x ($6.00 - $3.00) = -$0.01800.",
+ "source": "issue_cases.md#49",
+ "dims": {
+  "kind": "setting-breakpoint",
+  "position": "messages",
+  "cache": "mark-premium",
+  "ttl": "1h",
+  "lifetime": "exact"
+ },
+ "rates": "fixture-v1",
+ "steps": [
+  {
+   "begin": {
+    "meta": {
+     "requestId": "r0",
+     "session": "s1",
+     "model": "agent-model",
+     "at": "2026-03-02T09:00:00Z",
+     "billing": {
+      "mode": "api"
+     }
+    },
+    "client": {
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "pos": [
+      {
+       "hash": 625792648282977192,
+       "bytes": 20000
+      }
+     ]
+    },
+    "clientBreakpoints": [
+     {
+      "pos": {
+       "section": "messages",
+       "index": 0
+      },
+      "ttl": "1h"
+     }
+    ]
+   },
+   "add": [],
+   "end": {
+    "thread": {
+     "id": "main"
+    },
+    "forwarded": {
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "pos": [
+      {
+       "hash": 625792648282977192,
+       "bytes": 20000
+      }
+     ]
+    },
+    "breakpoints": [
+     {
+      "pos": {
+       "section": "messages",
+       "index": 0
+      },
+      "ttl": "1h"
+     }
+    ],
+    "facts": {
+     "ttl": "1h",
+     "lifetime": "exact"
+    }
+   },
+   "usage": {
+    "input": 0,
+    "cacheRead": 0,
+    "cacheWrite": 5000,
+    "cacheWrite1h": 5000
+   },
+   "expected": {
+    "phase": "unknown",
+    "baselineUsage": {
+     "input": 0,
+     "cacheRead": 0,
+     "cacheWrite": 5000,
+     "cacheWrite1h": 5000
+    },
+    "ops": [],
+    "unpriced": [
+     {
+      "reason": "penalty_unknown"
+     }
+    ]
+   }
+  },
+  {
+   "begin": {
+    "meta": {
+     "requestId": "r1",
+     "session": "s1",
+     "model": "agent-model",
+     "at": "2026-03-02T09:00:10Z",
+     "billing": {
+      "mode": "api"
+     }
+    },
+    "client": {
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "pos": [
+      {
+       "hash": 625792648282977192,
+       "bytes": 20000
+      },
+      {
+       "hash": 14262701665749340094,
+       "bytes": 12000
+      },
+      {
+       "hash": 4853614007946103283,
+       "bytes": 12000
+      }
+     ]
+    },
+    "clientBreakpoints": [
+     {
+      "pos": {
+       "section": "messages",
+       "index": 0
+      },
+      "ttl": "1h"
+     }
+    ]
+   },
+   "add": [],
+   "end": {
+    "thread": {
+     "id": "main"
+    },
+    "forwarded": {
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "pos": [
+      {
+       "hash": 625792648282977192,
+       "bytes": 20000
+      },
+      {
+       "hash": 14262701665749340094,
+       "bytes": 12000
+      },
+      {
+       "hash": 4853614007946103283,
+       "bytes": 12000
+      }
+     ]
+    },
+    "breakpoints": [
+     {
+      "pos": {
+       "section": "messages",
+       "index": 0
+      },
+      "ttl": "1h"
+     },
+     {
+      "pos": {
+       "section": "messages",
+       "index": 2
+      },
+      "ttl": "1h"
+     }
+    ],
+    "facts": {
+     "ttl": "1h",
+     "lifetime": "exact"
+    }
+   },
+   "usage": {
+    "input": 0,
+    "cacheRead": 5000,
+    "cacheWrite": 6000,
+    "cacheWrite1h": 6000
+   },
+   "expected": {
+    "phase": "hot",
+    "baselineUsage": {
+     "input": 6000,
+     "cacheRead": 5000,
+     "cacheWrite": 0,
+     "cacheWrite1h": 0
+    },
+    "ops": [],
+    "effects": [
+     {
+      "kind": "markPremium",
+      "changeId": "",
+      "saved": {
+       "input": 6000
+      },
+      "caused": {
+       "cacheWrite1h": 6000
+      },
+      "from": {
+       "section": "messages",
+       "index": 0
+      },
+      "to": {
+       "section": "messages",
+       "index": 2
+      },
+      "ttl": "1h",
+      "note": "the client body bills these tokens as input; the host's mark makes the provider write them"
+     }
+    ]
+   }
+  }
+ ]
+}

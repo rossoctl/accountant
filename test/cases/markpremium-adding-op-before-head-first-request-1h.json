@@ -1,0 +1,190 @@
+{
+ "id": "markpremium/adding-op-before-head/first-request/1h",
+ "description": "headttl and an operation that adds a 500-token tool before the head. The provider writes tools and sys at 1h (1,500). The client body writes sys and m0 at 5m (2,000). The operation books its 500 tokens at 1h: -$0.00300. ttlPremium books the 1,000-token head only: -$0.00225. The total -$0.00525 equals the bill difference (2,500 to 4,250 units).",
+ "source": "issue_cases.md#49",
+ "dims": {
+  "kind": "setting-breakpoint",
+  "position": "system",
+  "cache": "mark-premium-headttl",
+  "ttl": "1h",
+  "lifetime": "exact"
+ },
+ "rates": "fixture-v1",
+ "steps": [
+  {
+   "begin": {
+    "meta": {
+     "requestId": "r0",
+     "session": "s1",
+     "model": "agent-model",
+     "at": "2026-03-02T09:00:00Z",
+     "billing": {
+      "mode": "api"
+     }
+    },
+    "client": {
+     "start": [
+      0,
+      0,
+      1
+     ],
+     "pos": [
+      {
+       "hash": 15745513492897880738,
+       "bytes": 4000
+      },
+      {
+       "hash": 5508475225053360789,
+       "bytes": 4000
+      }
+     ]
+    },
+    "clientBreakpoints": [
+     {
+      "pos": {
+       "section": "system",
+       "index": 0
+      },
+      "ttl": "5m"
+     },
+     {
+      "pos": {
+       "section": "messages",
+       "index": 0
+      },
+      "ttl": "5m"
+     }
+    ]
+   },
+   "add": [
+    {
+     "id": "o1",
+     "kind": "rewrite",
+     "operator": "context-guru.headttl",
+     "at": {
+      "section": "system",
+      "index": 0
+     },
+     "sizeBefore": {
+      "bytes": 4000
+     },
+     "sizeAfter": {
+      "bytes": 4000
+     },
+     "changeId": "headttl:main:syse49"
+    },
+    {
+     "id": "o2",
+     "kind": "rewrite",
+     "operator": "context-guru.addtool",
+     "at": {
+      "section": "tools",
+      "index": 0
+     },
+     "sizeBefore": {
+      "bytes": 0
+     },
+     "sizeAfter": {
+      "bytes": 2000
+     },
+     "changeId": "cg:addtool:e49"
+    }
+   ],
+   "end": {
+    "thread": {
+     "id": "main"
+    },
+    "forwarded": {
+     "start": [
+      0,
+      1,
+      2
+     ],
+     "pos": [
+      {
+       "hash": 632773372940024569,
+       "bytes": 2000
+      },
+      {
+       "hash": 6645332947218154758,
+       "bytes": 4000
+      },
+      {
+       "hash": 11870035676972628745,
+       "bytes": 4000
+      }
+     ]
+    },
+    "breakpoints": [
+     {
+      "pos": {
+       "section": "system",
+       "index": 0
+      },
+      "ttl": "1h"
+     },
+     {
+      "pos": {
+       "section": "messages",
+       "index": 0
+      },
+      "ttl": "5m"
+     }
+    ],
+    "facts": {
+     "ttl": "5m",
+     "lifetime": "exact"
+    }
+   },
+   "usage": {
+    "input": 0,
+    "cacheRead": 0,
+    "cacheWrite": 2500,
+    "cacheWrite1h": 1500
+   },
+   "expected": {
+    "phase": "unknown",
+    "baselineUsage": {
+     "input": 0,
+     "cacheRead": 0,
+     "cacheWrite": 2000,
+     "cacheWrite1h": 0
+    },
+    "ops": [
+     {
+      "changeId": "cg:addtool:e49",
+      "saved": {},
+      "caused": {
+       "cacheWrite1h": 500
+      },
+      "estimated": true,
+      "note": "the added 500 tokens are written at 1h; the client body has none of them"
+     }
+    ],
+    "effects": [
+     {
+      "kind": "ttlPremium",
+      "changeId": "headttl:main:syse49",
+      "saved": {
+       "cacheWrite5m": 1000
+      },
+      "caused": {
+       "cacheWrite1h": 1000
+      },
+      "to": {
+       "section": "system",
+       "index": 0
+      },
+      "ttl": "1h",
+      "note": "the head only: the added tool is the operation's"
+     }
+    ],
+    "unpriced": [
+     {
+      "reason": "penalty_unknown"
+     }
+    ]
+   }
+  }
+ ]
+}

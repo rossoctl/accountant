@@ -596,6 +596,30 @@ The case format cannot carry the other inputs, so Go tests hold them (`internal/
 usage tiers above 2^40 and sums that would wrap an `int` (a case bills what its forwarded body holds), and
 `NaN` or `Inf` in `CostUSD` (JSON has no such value).
 
+## 9d. Cases from accountant#49 (a breakpoint the host adds)
+
+| Case ID | What the spec requires |
+|---|---|
+| `markpremium/added-tail/hot/5m` | The client marks messages[0] (5,000 tokens). The host adds a mark at the last message. The provider reads 5,000 and writes 6,000. Client body: 6,000 input. `markPremium` moves 6,000 from input to write 5m: 6,000 x ($3.75 - $3.00)/M = -$0.00450. |
+| `markpremium/added-tail/first-request/5m` | The same on a first request (phase unknown). The client body writes 5,000 and bills 6,000 as input, so the premium is the same, -$0.00450. |
+| `markpremium/added-tail/hot/1h` | The same with 1h marks: 6,000 x ($6.00 - $3.00)/M = -$0.01800. |
+| `markpremium/inside-previous-read/hot/5m` | The next request repeats the body. The provider reads 11,000 and writes none. No `markPremium` (the first request pays it once). |
+| `markpremium/host-mark-is-client-mark/cold/5m` | The forwarded marks equal the client's. No `markPremium`. |
+| `markpremium/with-mark-text/hot/5m` | The host reports a +4-token rewrite for the mark and adds the breakpoint. The operation prices its 4 tokens (write, -$0.000015). `markPremium` prices the 6,000 shared tokens (-$0.00450) and has the rewrite's `ChangeID`. |
+| `markpremium/with-headttl/first-request/1h` | A `headttl` head (1,000, 1h) and a host 1h mark at the tail (2,000 after the client's 5m mark). `ttlPremium` books the head only, 1,000 x $2.25/M = -$0.00225. `markPremium` books 2,000 x $3.00/M = -$0.00600. No token is booked twice. |
+| `markpremium/mixed-ttl/1h-inside-5m-last/5m` | The client marks tools[0]. The host marks system[0] at 1h and the last message at 5m. 1,000 tokens at 1h and 2,000 at 5m: -$0.00450. |
+| `markpremium/mixed-ttl/5m-inside-1h-last/5m` | The host marks system[0] at 5m and the last message at 1h. 1,000 at 5m and 2,000 at 1h: -$0.00675. |
+| `markpremium/with-headttl-and-adding-op/first-request/1h` | As the headttl case, plus an operation that adds 500 tokens inside the range. `ttlPremium` books the head only (-$0.00225), `markPremium` 2,000 tokens (-$0.00600), the operation 500 at 1h (-$0.00300). Total -$0.01125 = the bill difference. |
+| `markpremium/headttl-after-client-mark/first-request/1h` | The client's last mark is before the head. `markPremium` books the head with the tail, 3,000 x $3.00/M = -$0.00900. No `ttlPremium`. |
+| `markpremium/host-1h-mark-before-client-last/first-request/1h` | headttl, a host 1h mark at messages[0], the client's last mark at messages[2] (5m). The provider writes sys (1,000) and m0 (2,000) at 1h; the client body writes all at 5m. `ttlPremium` books all 3,000 tokens, 3,000 x $2.25/M = -$0.00675 (the head alone is 1,000). |
+| `markpremium/adding-op-before-head/first-request/1h` | headttl and an operation that adds a 500-token tool before the head. The operation books its 500 at 1h (-$0.00300). `ttlPremium` books the 1,000-token head only (-$0.00225). Total = the bill difference. |
+
+Both cases come from round 3 of the review of accountant#50. `TestEveryTierMoveIsBookedOnce` (`internal/engine/oracle_test.go`) checks the same identity for 960 combinations (and 3,840 more with other block sizes) against an independent oracle, in input-token units with the tier rates. Check 6 sums tiers in tokens, so it cannot see a move between tiers.
+
+Every `markPremium` case states `from` and `to`: the range is `(from, to]`.
+
+Not covered by a case: a removed client breakpoint (the inverse). It is out of scope; see the design, §4.4.
+
 ## 10. Limits of this document
 
 - **The expected figures were computed by hand** from the spec's rules and the issue text. Cases 1, 3,

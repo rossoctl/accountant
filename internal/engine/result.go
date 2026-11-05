@@ -57,11 +57,12 @@ type TierTokens struct {
 type CacheEffectKind string
 
 const (
-	EffectBreak      CacheEffectKind = "break"      // a prefix the provider read is written again: a cost
-	EffectRescue     CacheEffectKind = "rescue"     // a keep-alive ping kept an entry alive: write becomes read
-	EffectSplit      CacheEffectKind = "split"      // cachesplit: the stable half is read, not written
-	EffectTTLPremium CacheEffectKind = "ttlPremium" // headttl, cost leg: on every request that writes the head at 1h
-	EffectTTLRescue  CacheEffectKind = "ttlRescue"  // headttl, read leg: a request reads the 1h entry after the 5m TTL
+	EffectBreak       CacheEffectKind = "break"       // a prefix the provider read is written again: a cost
+	EffectRescue      CacheEffectKind = "rescue"      // a keep-alive ping kept an entry alive: write becomes read
+	EffectSplit       CacheEffectKind = "split"       // cachesplit: the stable half is read, not written
+	EffectTTLPremium  CacheEffectKind = "ttlPremium"  // headttl, cost leg: on every request that writes the head at 1h
+	EffectTTLRescue   CacheEffectKind = "ttlRescue"   // headttl, read leg: a request reads the 1h entry after the 5m TTL
+	EffectMarkPremium CacheEffectKind = "markPremium" // a breakpoint the host added: the new tail is written, not billed as input
 )
 
 // CacheEffect is a change in how the provider bills content that is already there (§4.4). It

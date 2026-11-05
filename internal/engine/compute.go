@@ -500,6 +500,9 @@ type calcState struct {
 	clientFD   int
 	prevExtCli int // prevExt in client space, flat in the previous client body; -1 = none
 
+	pass         int          // 0 before cacheEffects, 1 on the scratch pass, 2 on the real one
+	countedBreak *CacheEffect // the break that is part of the bill difference, found on the scratch pass
+
 	derivedPingRead *Position // pingRead's cache; derivedPingOK is false when the ping read nothing
 	derivedPingOK   bool
 }
@@ -953,13 +956,31 @@ func mustFlat(b Body, p Position) int {
 	return min(b.sectionEnd(s)-1, len(b.Pos)-1)
 }
 
-// cacheEffects classifies a break (§5.2) and adds a rescue (§4.4).
+// cacheEffects classifies a break (§5.2) and adds a rescue (§4.4). The premiums need to know whether a
+// counted break covers a position (it already moved the position from read to a write), so the effects
+// are found twice: once on a scratch result to find that break, once for real.
 func (c *calcState) cacheEffects(res *Result) {
+	if c.pass == 0 {
+		c.pass = 1
+		var scratch Result
+		c.cacheEffects(&scratch)
+		c.countedBreak = nil
+		for i := range scratch.CacheEffects {
+			if e := scratch.CacheEffects[i]; e.Kind == EffectBreak && !e.InBaseline && e.To != nil {
+				c.countedBreak = &e
+			}
+		}
+		c.pass = 2
+	}
 	if c.pingHot {
 		c.rescue(res)
 	}
-	c.headTTL(res)
+	ttlp, mark := c.premiums()
+	c.headTTL(res, ttlp)
 	c.split(res)
+	if mark != nil {
+		c.addEffect(res, *mark)
+	}
 	switch {
 	case c.unknown || c.s.PrevPrint == nil:
 		return // row 6
@@ -1112,21 +1133,23 @@ func (c *calcState) rescue(res *Result) {
 }
 
 // headTTL adds the two legs of a head held at 1h (§4.4): the premium on every request that writes
-// the head at 1h, and the rescue on a request that reads it after the 5m TTL.
-func (c *calcState) headTTL(res *Result) {
+// the head at 1h (found by premiums, which books each token once), and the rescue on a request that reads
+// it after the 5m TTL. A premium that no headttl change owns keeps the ChangeID premiums found.
+func (c *calcState) headTTL(res *Result, premium *CacheEffect) {
 	id := ""
 	for _, it := range c.items {
 		if !it.ended && strings.HasPrefix(it.op.ChangeID, "headttl:") {
 			id = it.op.ChangeID
 		}
 	}
+	if premium != nil {
+		if id != "" {
+			premium.ChangeID = id
+		}
+		c.addEffect(res, *premium)
+	}
 	if id == "" {
 		return
-	}
-	if n := c.usage.CacheWrite1h; n > 0 {
-		e := CacheEffect{Kind: EffectTTLPremium, ChangeID: id, TTL: "1h", Estimated: true}
-		e.Saved.CacheWrite5m, e.Caused.CacheWrite1h = n, n
-		c.addEffect(res, e)
 	}
 	prev := c.s.PrevPrint
 	if prev == nil || c.s.Cache.TTL != "1h" || c.r.Meta.At.Sub(prev.At) <= 5*time.Minute || c.usage.CacheRead == 0 {
@@ -1171,6 +1194,139 @@ func (c *calcState) split(res *Result) {
 	addWrite(&e.Saved, ttlName(c.r.Facts.TTL), n)
 	e.Caused.CacheRead = n
 	c.addEffect(res, e)
+}
+
+// premiums books the tier moves that the forwarded breakpoints make on content both bodies hold (§4.4).
+//
+// THE IDENTITY (design §4.4, "The tier moves of a written token"). Take each forwarded position i that the
+// provider wrote, after the read and not past what the request cached, and j, its position in the client
+// body. f(i) is the tier the forwarded body billed it in. c(j) is the tier the client body would have billed
+// it in: input after its last breakpoint, a write at the TTL of the first client breakpoint at or after j,
+// or, under a counted break, the write that break priced. x is the tokens both bodies hold there: the
+// smaller of the two sizes. An operation prices the rest, the content it added or removed.
+//
+//	c(j) input,    f(i) write 5m or 1h -> markPremium  Input     -> write  (0.25 or 1.0)
+//	c(j) write 5m, f(i) write 1h       -> ttlPremium   write 5m  -> write 1h (0.75)
+//	any other pair                     -> nothing (equal, or a saving that is left out)
+//
+// Every token is in one row at most, and no token an operation prices is in any row, so the operations,
+// markPremium and ttlPremium together book each written token once. TestEveryTierMoveIsBookedOnce checks
+// the sum with the tier rates against an independent oracle (check 6 sums tokens, so it cannot see this). A token the client body
+// would have written at 1h and the forwarded body writes at 5m is not priced: that is a saving, and leaving
+// it out can only lower one (R45). A removed client breakpoint is not priced for the same reason.
+// The bytes of each row are added first and converted once, so rounding costs one token a row, not one a
+// position. The 1h rows are capped by Usage.CacheWrite1h, the input-to-write row by Usage.CacheWrite: a
+// bill shows what the provider wrote. When the cap cuts, the dearer premium goes last (a doubtful figure may
+// only lower a saving). With no cache tokens in the usage, or nothing cached, nothing is booked.
+// A position that no mapping reaches (content a splice inserted) is the operation's, so it is skipped.
+func (c *calcState) premiums() (ttl, mark *CacheEffect) {
+	if len(c.fwdBPs) == 0 || c.noCacheTokens() || c.cachedFwd < 0 {
+		return nil, nil
+	}
+	lo := c.readEnd
+	type acc struct{ bytes, media, first, last int }
+	var in5, in1, up acc // input -> 5m, input -> 1h, 5m -> 1h
+	in5.first, in1.first, up.first = -1, -1, -1
+	add := func(a *acc, i, b, m int) {
+		a.bytes += b
+		a.media += m
+		if a.first < 0 {
+			a.first = i
+		}
+		a.last = i
+	}
+	hi := min(c.cachedFwd, len(c.fwd.Pos)-1)
+	for i := lo + 1; i <= hi; i++ {
+		ft, _, fok := c.writeBP(c.fwd, c.fwdBPs, i)
+		if !fok {
+			continue
+		}
+		j := mustFlat(c.client, c.fwdToClient(c.fwd.position(i)))
+		if j < 0 || mustFlat(c.fwd, c.clientToFwd(c.client.position(j))) != i {
+			continue
+		}
+		covered := i <= c.bstarFwd // the client body reads it
+		if covered && c.countedBreak == nil {
+			continue // nothing broke: the provider read it too, or the break is in the baseline
+		}
+		fb, cb := c.fwd.cumBytes(i)-c.fwd.cumBytes(i-1), c.client.cumBytes(j)-c.client.cumBytes(j-1)
+		fm, cm := c.fwd.cumMedia(i)-c.fwd.cumMedia(i-1), c.client.cumMedia(j)-c.client.cumMedia(j-1)
+		b, m := min(fb, cb), min(fm, cm)
+		if covered { // the break priced every forwarded token here as a write, the added ones too
+			b, m = fb, fm
+		}
+		var ct string
+		var cok bool
+		if covered {
+			// the counted break moved it from read to a write; it priced that write at one TTL (addBreak)
+			cok = c.countedBreak.Caused.Input == 0
+			ct = "5m"
+			if c.countedBreak.Caused.CacheWrite1h > 0 {
+				ct = "1h"
+			}
+		} else if len(c.clientBPs) == 0 {
+			ct, cok = "5m", true // with no breakpoint the provider caches the whole prompt (§5.1)
+		} else {
+			ct, _, cok = c.writeBP(c.client, c.clientBPs, j)
+		}
+		switch {
+		case !cok && len(c.clientBPs) > 0:
+			if ft == "1h" {
+				add(&in1, i, b, m)
+			} else {
+				add(&in5, i, b, m)
+			}
+		case cok && ct != "1h" && ft == "1h":
+			add(&up, i, b, m)
+		}
+	}
+	n5, n1, t := c.ratio.tokensOf(in5.bytes, in5.media), c.ratio.tokensOf(in1.bytes, in1.media), c.ratio.tokensOf(up.bytes, up.media)
+	if cut := n5 + n1 - c.usage.CacheWrite; cut > 0 {
+		d := min(cut, n5)
+		n5 -= d
+		n1 -= min(cut-d, n1)
+	}
+	if over := n1 + t - c.usage.CacheWrite1h; over > 0 { // the bill shows fewer 1h writes than the breakpoints name
+		d := min(over, n1)
+		n5 += d // written at 5m instead
+		n1 -= d
+		t -= min(over-d, t)
+	}
+	span := func(a acc) (*Position, *Position) {
+		var from *Position
+		if a.first > 0 {
+			p := c.fwd.position(a.first - 1)
+			from = &p
+		}
+		to := c.fwd.position(a.last)
+		return from, &to
+	}
+	if n5+n1 > 0 {
+		first := in5
+		if in5.first < 0 || (in1.first >= 0 && in1.first < in5.first) {
+			first = in1
+		}
+		first.last = max(in5.last, in1.last)
+		mark = &CacheEffect{Kind: EffectMarkPremium, ChangeID: c.changeAt(c.fwdBPs[len(c.fwdBPs)-1].at), TTL: "5m", Estimated: true}
+		if n1 > 0 {
+			mark.TTL = "1h"
+		}
+		mark.From, mark.To = span(first)
+		mark.Saved.Input = n5 + n1
+		mark.Caused.CacheWrite5m, mark.Caused.CacheWrite1h = n5, n1
+	}
+	if t > 0 {
+		ttl = &CacheEffect{Kind: EffectTTLPremium, TTL: "1h", Estimated: true}
+		ttl.From, ttl.To = span(up)
+		ttl.Saved.CacheWrite5m, ttl.Caused.CacheWrite1h = t, t
+		for k := len(c.fwdBPs) - 1; k >= 0; k-- { // the change of the last 1h breakpoint, if one reported it
+			if b := c.fwdBPs[k]; b.ttl == "1h" && b.at <= up.last {
+				ttl.ChangeID = c.changeAt(b.at)
+				break
+			}
+		}
+	}
+	return ttl, mark
 }
 
 // headEnd is the last forwarded position that a 1h breakpoint of the previous request covers; -1

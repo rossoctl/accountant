@@ -397,7 +397,7 @@ allows it.
 A `CacheEffect` has a kind, a prefix range, and a `ChangeID`. The range is `From` to `To`. A nil `From`
 is the start of the prompt, and a nil `To` is the end of the body. One exception: a `break` with no B\*
 (no client breakpoint at or before the first difference, §5.1) has an empty range. Its `To` is nil, it moves
-no tokens, and the `Saved` and `Caused` tiers are zero. Five kinds cover it:
+no tokens, and the `Saved` and `Caused` tiers are zero. Six kinds cover it:
 
 - **`break`: a prefix is broken.** The provider no longer reads content it read before. `From` is the
   end of what it still reads and `To` is B\* (§6.2). The `ChangeID` is the change that caused it (§5.2),
@@ -412,6 +412,11 @@ no tokens, and the `Saved` and `Caused` tiers are zero. Five kinds cover it:
   cached. Example: the head of the request is held for 1h, not 5m. It has **two legs:** a cost on
   **every request that writes** the head at 1h (`ttlPremium`), and a saving on each request that reads
   the 1h entry after a gap longer than 5m (`ttlRescue`). `TTL` says which entry the effect is about.
+- **`markPremium`: a breakpoint the host added is paid for.** The forwarded body has a breakpoint after the
+  client's last one. The provider writes the tokens between the two at the write tier (1.25x for 5m, 2.0x for
+  1h). The client body bills the same tokens as plain input (1.0x). The effect moves `n` tokens from
+  `Saved.Input` to `Caused.CacheWrite5m` or `Caused.CacheWrite1h`, so it nets zero tokens and costs
+  `0.25 n` input-token units at 5m (`1.0 n` at 1h). It is a cost only. See "A breakpoint the host adds" below.
 
 **When the library adds a rescue.** All three conditions must be true. They are the
 conditions of the current `keepaliveSavedUSD`:
@@ -448,13 +453,102 @@ If the model priced only the reading request, every write that never paid off wo
 the figure would overstate the bet. So, like a keep-alive window:
 
 - **On each 1h-writing request,** the library adds a `ttlPremium` effect for the head's breakpoint TTL
-  (`TTL` `1h`, in place of `5m`) and only a cost: `Caused.CacheWrite1h` for the head's tokens, less the 5m write it replaced. Its
+  (`TTL` `1h`, in place of `5m`) and only a cost: `Caused.CacheWrite1h` for the tokens the client body would have written at 5m, less that 5m write (the head, and any token the host's 1h mark moved the same way, see the identity below). Its
   `ChangeID` names the head entry (`"headttl:" + Thread + ":" + head content key`).
 - **On each request that reads that entry after the 5m TTL,** the library adds a `ttlRescue` effect with
   the same `ChangeID` and the saving (write → read, §6.2).
 
 A head entry that is written at 1h and never read again has only the cost leg, so its total is
 negative — the same visibility a keep-alive window that rescued nothing has.
+
+**The tier moves of a written token (`markPremium`, `ttlPremium`, accountant#49).** A forwarded breakpoint
+can change what a token costs without changing the token. Example: the client marks `messages[0]`, the host
+also marks the last message. The client body bills the tokens after its last mark as input. The forwarded
+body writes them. The library books these moves with two effects. It must book each token once, and at the
+tier the client body would have billed it.
+
+*The identity.* Take each forwarded position `i` that the provider wrote (after the read, and not past what the
+request cached). Call `j` its position in the client body. Let `f(i)` be the tier the forwarded body billed it
+in (write 5m or write 1h, from the breakpoint that writes it, §6.2). Let `c(j)` be the tier the client body
+would have billed it in. Let `x` be the tokens both bodies hold there: the smaller of the two sizes. An
+operation prices the rest, the content it added or removed. Then:
+
+| `c(j)` (client body) | `f(i)` (forwarded body) | Booked by | Rate (input-token units) |
+|---|---|---|---|
+| input (after its last breakpoint) | write 5m | `markPremium` | 0.25 |
+| input | write 1h | `markPremium` | 1.00 |
+| write 5m | write 1h | `ttlPremium` | 0.75 |
+| write 5m or 1h | same tier | nobody | 0 |
+| write 1h | write 5m | nobody (a saving, left out) | R45 |
+| read (a counted `break` covers it) | write | the `break` for read to write 5m; then `ttlPremium` for 5m to 1h | 0.75 (from 5m) |
+
+Every token is in exactly one row, and no token an operation prices is in any row, so a written token is
+booked once: by the operation, by `markPremium`, by `ttlPremium`, or by none. The sum of `Saved - Caused`
+over the operations and the counted effects, with the rates applied, equals the bill difference. Check 6 sums
+tiers in tokens, so it cannot see a move between tiers. `TestEveryTierMoveIsBookedOnce` is the check with the
+rates: a hand-written oracle bills the forwarded body and the client body on a model cache, and the library
+must return the same difference for every combination of the table (960 of them: four client breakpoint
+sets, headttl or not, a host mark at any block with 5m or 1h or none, no operation or an adding or a removing
+one, cold or warm).
+
+Rules that follow from the table:
+
+- **`markPremium` is the input rows.** It is a cost: `Saved.Input` moves to `Caused.CacheWrite5m` and
+  `Caused.CacheWrite1h`. The `From` and `To` are the first and the last position of its tokens, `(From, To]`,
+  as `break` sets them. A nil `From` is the start of the prompt.
+- **`ttlPremium` is the 5m to 1h row,** for every token the client body wrote at 5m and the forwarded body
+  writes at 1h, not only the head. A host 1h mark before the client's last breakpoint (client sys 1,000 and m0
+  2,000 written at 5m, host 1h mark at m0) moves 3,000 tokens from 5m to 1h: 3,000 x 0.75 = 2,250. The head
+  alone is 1,000, so a head-only bound would book 750 and overstate the saving by 1,500. Its `ChangeID` is the
+  `headttl:` change when one is active, else the change of the last 1h breakpoint that a reported operation
+  covers, else empty. The earlier rule (`n` is `Usage.CacheWrite1h`) booked the same tokens, and also the tail
+  the host marked, and the tokens an operation added: this is the correction.
+- **Content an operation adds or removes is the operation's.** The position is in both rows' range only for the
+  tokens both bodies hold. Example: `headttl` at `system[0]`, a 500-token tool added before the head, the
+  provider writes tools and sys at 1h (1,500) and m0 at 5m (1,000). The client body writes sys and m0 at 5m
+  (2,000 x 1.25 = 2,500); the bill is 1,500 x 2.0 + 1,000 x 1.25 = 4,250. The difference is 1,750. The
+  operation books its 500 at 1h (1,000). `ttlPremium` books the head, 1,000 x 0.75 = 750. The sum is 1,750.
+- **A position under a counted `break`** (the client body reads it, the forwarded body writes it) has the
+  `break` price it as read to write 5m for all the forwarded tokens there, the added ones too. The 5m to 1h
+  step on it is `ttlPremium`'s, on the same tokens.
+- **Each part is written at its own TTL (§6.2).** The positions are cut at every forwarded breakpoint. A part
+  is written at the TTL of the first breakpoint at or after it. Example: client mark at `tools[0]`, host marks
+  at `system[0]` (1h) and the last message (5m): the system tokens cost 1.0 each, the message tokens 0.25
+  each. The effect's `TTL` field is `1h` when any part is 1h.
+- **The caps.** The tokens of `markPremium` are cut to `Usage.CacheWrite`, the 1h tokens of both effects to
+  `Usage.CacheWrite1h`. The cut has two sources: the usage is smaller than the positions, or an operation
+  priced part of them (the smaller size is used). The cut takes the 5m parts first, so the dearer part stays
+  booked. A 1h breakpoint counts as 1h only up to `Usage.CacheWrite1h`: a bill with fewer 1h writes than the 1h
+  breakpoints name shows the provider wrote the rest at 5m, so the rest is booked at 5m. It is the bill's
+  figure.
+- **Two breakpoints at one position with different TTLs:** the first in list order is booked, as `writeBP` does.
+  The input is rare. A host that sends both gives the library no way to tell which the provider used.
+- **Rounding:** the bytes of each row are added first and converted once, so rounding costs one token a row.
+  The conservation check allows that tolerance.
+- **A cold request pays it too.** The client body writes up to its own last breakpoint and bills the rest as
+  input, so the tail is still 1.0x there. The premium does not depend on the phase.
+- **No premium** when: the provider wrote none of the positions (the host's mark is inside the previous
+  read); the forwarded body has no breakpoint; the usage shows no cache tokens at all; or nothing was cached.
+  With no client breakpoint the provider caches the whole prompt (§5.1), so the client tier is write 5m: the
+  host adds no input to write move, only a 5m to 1h one.
+- **Arithmetic:** 3,016 tokens after the client's mark, 5m. Client body: 3,016 x 1.00 = 3,016. Forwarded body:
+  3,016 x 1.25 = 3,770. The mark costs 754 input-token units. At 1h the write is 2.0x: it costs 3,016.
+- **What the table does not book (both can only lower a saving, R45).** (1) The previous request left an
+  entry marked after the client's last breakpoint. The host's mark lets the provider read it, and the client
+  body could not. That read is a saving; the inverse effect is not booked. (2) An operation adds content in
+  the first block of a warm request, inside a prefix the `break` already moved. The `break` and the operation
+  price that content at different tiers; the base commit books the same figures. In the table these are the
+  118 combinations marked lower than the truth, and the library is never higher.
+- **The ChangeID** of `markPremium` is the `ChangeID` of the applied operation whose forwarded span covers the
+  host's last breakpoint, or empty when none does. Check 5 allows both.
+- **Relation to the next request.** The entry this request wrote up to L_f is read by the next request. That
+  benefit is real, and the `rescue`, `break` and operation pricing of the next request already counts it,
+  because the client body has no entry there: it is not counted a second time here. `markPremium` is the cost
+  leg only, as `ttlPremium` is. A `ChangeID` that keeps only this leg shows a negative total until a later
+  request reads the entry.
+- **A removed client breakpoint is not priced.** The inverse (the client body writes the tokens, the forwarded
+  body bills them as input) would be a saving for the host, not a cost. Leaving it out can only lower a saving,
+  which is the safe direction (R45). It is a separate effect and out of scope here.
 
 ### 4.5 Changes that end
 
@@ -1213,7 +1307,7 @@ type TierTokens struct {
     Input, CacheWrite5m, CacheWrite1h, CacheRead int
 }
 
-type CacheEffectKind string // break | rescue | split | ttlPremium | ttlRescue
+type CacheEffectKind string // break | rescue | split | ttlPremium | ttlRescue | markPremium
 
 // CacheEffect is a change in how the provider bills content that is already there (§4.4). It is
 // output only. ID is unique inside the Result: "ce:" + a number.
@@ -1284,11 +1378,11 @@ check, the operator, the detail, and the request, session and thread IDs). `Prev
 2. **Order:** the context operations are in pipeline order, so a context operator's output positions are mapped through the `MessageSplice` of the context operations before it. An active context operation keeps its client-space position and its pipeline position, and is mapped through this request's splices (§4.3).
 3. **Unique `ChangeID`:** no two `rewrite` or `setting` context operations of one request, reported or active, have the same `ChangeID`. A `spend` or a cache effect may share the `ChangeID` of the change it belongs to.
 4. **Spans:** for a context operation with `Spans`, its `SizeBefore` and `SizeAfter` equal the sums over its spans.
-5. **Attribution:** a `break` effect's `ChangeID` is the `ChangeID` of a context operation of the same request, or empty. A `rescue`, `ttlPremium` and `ttlRescue` are exempt: their `ChangeID` is a keep-alive window or a head entry, which names no operation of this request.
+5. **Attribution:** a `break` effect's `ChangeID` is the `ChangeID` of a context operation of the same request, or empty. A `markPremium` has the `ChangeID` of the operation whose span covers the host's breakpoint, or none. A `rescue`, `ttlPremium` and `ttlRescue` are exempt: their `ChangeID` is a keep-alive window or a head entry, which names no operation of this request.
 6. **Conservation:** the request total of the applied context operations and the cache effects equals the bill difference (§6.3). The ranges of operations unpriced for `media_tokens` are taken out of the bill difference (as `DryRun` operations are left out), because the operation prices none of it; every other operation stays in the check.
    Each size is compared at the request ratio, so a correct `Size.Tokens` passes (the gap between the host's tokens
    and the ratio's figure for the same bytes is taken out of the total). `DryRun` context operations are left out,
-   because their content went upstream unchanged.
+   because their content went upstream unchanged. A `markPremium` moves tokens between tiers and nets zero tokens, like every cache effect, so the check does not change: the bill difference is the client tokens less the billed tokens, and a premium changes neither.
 7. **Shared warm:** `EntryFacts.SharedWarm`, when set, is a position in the forwarded body. If it is not, the check fails
    with the section and index, and the keep-alive rescue of that request is not credited ([R54](spec.md#r54)).
    A doubtful figure may only lower a saving.

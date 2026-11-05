@@ -2545,6 +2545,211 @@ def i44():
                  "A model call states a cost of -$0.008. The spend goes to Unpriced (bad_usage) and the check "
                  "bad_usage fails. A valid call (case spend/without-rewrite/refused) is unchanged.")
 
+# Issue 49: a breakpoint the host adds after the client's last one. The provider writes the tokens between the two at
+# the write tier. The client body bills them as input. The mark costs 0.25 x n (5m) or 1.0 x n (1h) in input units.
+MP = "cg:tailbreakpoint:a49"
+
+
+def c49():
+    m0 = [("m0", 5000)]
+    m3 = m0 + [("m1", 3000), ("m2", 3000)]
+    cb0, cb3 = BP(("messages", 0)), BP(("messages", 0))
+    fb3 = BP(("messages", 0), ("messages", 2))
+    note = "the client body bills these tokens as input; the host's mark makes the provider write them"
+
+    # hot, 5m
+    s0 = sim(0, "r0", ([], [], m0), ([], [], m0), [], "unknown", cbp=cb0, fbp=cb0, usage=U(write=5000))
+    s1 = sim(10, "r1", ([], [], m3), ([], [], m3), [], "hot", prev=(5000, 5000), cbp=cb3, fbp=fb3,
+             usage=U(read=5000, write=6000), base=U(read=5000, inp=6000),
+             effects=[effect("markPremium", "", saved=TT(input=6000), caused=TT(cacheWrite5m=6000), frm=P("messages", 0), to=P("messages", 2),
+                             ttl="5m", note=note)])
+    write_issue("markpremium/added-tail/hot/5m", 49,
+                "The client has one breakpoint, at messages[0]. The host adds one at the last message. The provider reads "
+                "the 5,000 tokens of messages[0] and writes the 6,000 tokens after it at the 5m rate. The client body "
+                "would bill them as input. The mark costs 6,000 x ($3.75 - $3.00) = -$0.00450 (markPremium). The host "
+                "reports no operation for the mark itself, so the effect has no ChangeID. The next request reads what "
+                "this one wrote: that gain is priced on that request, not here.",
+                DIMS("setting-breakpoint", "messages", "mark-premium"), [s0, s1])
+
+    # cold: the first request. The client body writes m0 and bills the rest as input.
+    s0 = sim(0, "r0", ([], [], m3), ([], [], m3), [], "unknown", cbp=cb3, fbp=fb3, usage=U(write=11000),
+             base=U(write=5000, inp=6000),
+             effects=[effect("markPremium", "", saved=TT(input=6000), caused=TT(cacheWrite5m=6000), frm=P("messages", 0), to=P("messages", 2),
+                             ttl="5m", note=note)])
+    write_issue("markpremium/added-tail/first-request/5m", 49,
+                "The same marks on a first request (phase unknown, nothing cached). The client body would write messages[0] (5,000 tokens) under its "
+                "own mark and bill the other 6,000 as input. The forwarded body writes all 11,000. The difference is "
+                "the same: 6,000 x ($3.75 - $3.00) = -$0.00450. A cold request does not remove the premium, because "
+                "the client body also leaves the tail as input.",
+                DIMS("setting-breakpoint", "messages", "mark-premium"), [s0])
+
+    # hot, 1h
+    cb1h = BP(("messages", 0), ttl="1h")
+    fb1h = BP(("messages", 0), ("messages", 2), ttl="1h")
+    f1h = {"ttl": "1h", "lifetime": "exact"}
+    s0 = sim(0, "r0", ([], [], m0), ([], [], m0), [], "unknown", cbp=cb1h, fbp=cb1h, usage=U(write=5000, w1h=5000), facts=f1h,
+             base=U(write=5000, w1h=5000))
+    s1 = sim(10, "r1", ([], [], m3), ([], [], m3), [], "hot", prev=(5000, 5000), cbp=cb1h, fbp=fb1h, facts=f1h,
+             usage=U(read=5000, write=6000, w1h=6000), base=U(read=5000, inp=6000),
+             effects=[effect("markPremium", "", saved=TT(input=6000), caused=TT(cacheWrite1h=6000), frm=P("messages", 0), to=P("messages", 2),
+                             ttl="1h", note=note)])
+    write_issue("markpremium/added-tail/hot/1h", 49,
+                "The same host mark with 1h breakpoints. The provider writes the 6,000 tail tokens at the 1h rate. The "
+                "client body bills them as input: 6,000 x ($6.00 - $3.00) = -$0.01800.",
+                DIMS("setting-breakpoint", "messages", "mark-premium", ttl="1h"), [s0, s1])
+
+    # no write: the same body again, the provider reads both marks
+    s0 = sim(0, "r0", ([], [], m3), ([], [], m3), [], "unknown", cbp=cb3, fbp=fb3, usage=U(write=11000),
+             base=U(write=5000, inp=6000),
+             effects=[effect("markPremium", "", saved=TT(input=6000), caused=TT(cacheWrite5m=6000), frm=P("messages", 0), to=P("messages", 2),
+                             ttl="5m", note=note)])
+    s1 = sim(10, "r1", ([], [], m3), ([], [], m3), [], "hot", prev=(11000, 11000), cbp=cb3, fbp=fb3,
+             usage=U(read=11000), base=U(read=11000))
+    write_issue("markpremium/inside-previous-read/hot/5m", 49,
+                "The request repeats a body whose host mark the previous request wrote. The provider reads all 11,000 "
+                "tokens and writes none. The client body would read them too (its entry reaches the previous end). No "
+                "write, so no markPremium. Request 0 pays the premium once.",
+                DIMS("setting-breakpoint", "messages", "mark-premium-none"), [s0, s1])
+
+    # the client mark is already at the end: nothing to add
+    s0 = sim(0, "r0", ([], [], m3), ([], [], m3), [], "unknown", cbp=BP(("messages", 2)), fbp=BP(("messages", 2)),
+             usage=U(write=11000))
+    write_issue("markpremium/host-mark-is-client-mark/cold/5m", 49,
+                "The host adds no breakpoint: the forwarded marks equal the client's. No markPremium.",
+                DIMS("setting-breakpoint", "messages", "mark-premium-none"), [s0])
+
+    # a host operation in the same request: a +4 token rewrite at the new tail
+    m3b = m0 + [("m1", 3000), ("m2b", 3004)]
+    op = rewrite("o1", "context-guru.tailbreakpoint", "messages", 2, 3000, 3004, MP)
+    s0 = sim(0, "r0", ([], [], m0), ([], [], m0), [], "unknown", cbp=cb0, fbp=cb0, usage=U(write=5000))
+    s1 = sim(10, "r1", ([], [], m3), ([], [], m3b), [], "hot", prev=(5000, 5000), add=[op], cbp=cb3, fbp=fb3,
+             usage=U(read=5000, write=6004), base=U(read=5000, inp=6000),
+             effects=[effect("markPremium", MP, saved=TT(input=6000), caused=TT(cacheWrite5m=6000), frm=P("messages", 0), to=P("messages", 2),
+                             ttl="5m", note=note)])
+    s1["expected"]["ops"] = [eop(MP, caused=TT(cacheWrite5m=4), note="the 4 bytes-tokens the mark's text adds, at the write rate")]
+    write_issue("markpremium/with-mark-text/hot/5m", 49,
+                "The host reports a rewrite for the mark's own text (+4 tokens) and adds the breakpoint. The operation "
+                "prices its 4 tokens at the write rate (-$0.00001500). The markPremium effect prices the 6,000 tokens "
+                "that both bodies hold, and carries the host's ChangeID: 6,000 x $0.75 = -$0.00450. The two do not "
+                "count the same token twice.",
+                DIMS("setting-breakpoint", "messages", "mark-premium"), [s0, s1])
+
+    # headttl plus a host 1h tail mark: each token is booked once
+    sysb, ms = [("sys", 1000)], [("m0", 1000), ("m1", 1000), ("m2", 1000)]
+    HT = "headttl:main:sysa49"
+    hop = rewrite("o1", "context-guru.headttl", "system", 0, 1000, 1000, HT)
+    cbp = [{"pos": P("system", 0), "ttl": "5m"}, {"pos": P("messages", 0), "ttl": "5m"}]
+    fbp = [{"pos": P("system", 0), "ttl": "1h"}, {"pos": P("messages", 0), "ttl": "5m"}, {"pos": P("messages", 2), "ttl": "1h"}]
+    s0 = sim(0, "r0", ([], sysb, ms), ([], sysb, ms), [], "unknown", add=[hop], cbp=cbp, fbp=fbp,
+             usage=U(write=4000, w1h=3000), base=U(write=2000, inp=2000),
+             effects=[effect("ttlPremium", HT, saved=TT(cacheWrite5m=1000), caused=TT(cacheWrite1h=1000), ttl="1h",
+                             note="the head only"),
+                      effect("markPremium", "", saved=TT(input=2000), caused=TT(cacheWrite1h=2000), frm=P("messages", 0),
+                             to=P("messages", 2), ttl="1h", note=note)],
+             facts={"ttl": "1h", "lifetime": "exact"})
+    write_issue("markpremium/with-headttl/first-request/1h", 49,
+                "headttl holds the 1,000-token system head at 1h and the host adds a 1h mark at the last message. The "
+                "client body writes sys and m0 (2,000, 5m) and bills m1 and m2 as input. ttlPremium books the head "
+                "only: 1,000 x ($6.00 - $3.75) = -$0.00225. markPremium books the 2,000 tail tokens: "
+                "2,000 x ($6.00 - $3.00) = -$0.00600. No token is booked twice. Total -$0.00825 equals the bill "
+                "difference.",
+                DIMS("setting-breakpoint", "messages", "mark-premium-headttl", ttl="1h"), [s0])
+
+    # mixed TTLs inside the range, both orders. The client marks tools[0].
+    tools1, sys1, ms1 = [("t", 1000)], [("sys", 1000)], [("m0", 1000), ("m1", 1000)]
+    ctb = [{"pos": P("tools", 0), "ttl": "5m"}]
+    for name, fb, u, caused, cost in (
+            ("1h-inside-5m-last", [("tools", 0, "5m"), ("system", 0, "1h"), ("messages", 1, "5m")], U(write=4000, w1h=1000),
+             TT(cacheWrite5m=2000, cacheWrite1h=1000), "1,000 x ($6.00 - $3.00) + 2,000 x ($3.75 - $3.00) = -$0.00450"),
+            ("5m-inside-1h-last", [("tools", 0, "5m"), ("system", 0, "5m"), ("messages", 1, "1h")], U(write=4000, w1h=2000),
+             TT(cacheWrite5m=1000, cacheWrite1h=2000), "1,000 x ($3.75 - $3.00) + 2,000 x ($6.00 - $3.00) = -$0.00675")):
+        fbp2 = [{"pos": P(sec, i), "ttl": t} for sec, i, t in fb]
+        s0 = sim(0, "r0", (tools1, sys1, ms1), (tools1, sys1, ms1), [], "unknown", cbp=ctb, fbp=fbp2, usage=u,
+                 base=U(write=1000, inp=3000),
+                 effects=[effect("markPremium", "", saved=TT(input=3000), caused=caused, frm=P("tools", 0),
+                                 to=P("messages", 1), ttl="1h", note=note)])
+        write_issue(f"markpremium/mixed-ttl/{name}/5m", 49,
+                    "The client marks tools[0]. The host adds a mark at system[0] and one at the last message, with "
+                    "different TTLs. The provider writes each part at the TTL of the first mark at or after it (design "
+                    f"6.2). The 3,000 tokens after the client's mark move from input to those tiers: {cost}.",
+                    DIMS("setting-breakpoint", "messages", "mark-premium-mixed"), [s0])
+
+    # headttl + host 1h mark + an operation that adds 500 tokens inside the range
+    HT2 = "headttl:main:sysb49"
+    ms_f = [("m0", 1000), ("m1", 1500), ("m2", 1000)]
+    aop = rewrite("o2", "context-guru.expand", "messages", 1, 1000, 1500, "cg:expand:b49")
+    s0 = sim(0, "r0", ([], sysb, ms), ([], sysb, ms_f), [], "unknown", add=[rewrite("o1", "context-guru.headttl", "system", 0, 1000, 1000, HT2), aop],
+             cbp=cbp, fbp=fbp, usage=U(write=4500, w1h=3500), base=U(write=2000, inp=2000),
+             effects=[effect("ttlPremium", HT2, saved=TT(cacheWrite5m=1000), caused=TT(cacheWrite1h=1000), ttl="1h",
+                             note="the head only: the added tokens are not a 5m write moved to 1h"),
+                      effect("markPremium", "", saved=TT(input=2000), caused=TT(cacheWrite1h=2000), frm=P("messages", 0),
+                             to=P("messages", 2), ttl="1h", note=note)],
+             facts={"ttl": "1h", "lifetime": "exact"})
+    s0["expected"]["ops"] = [eop("cg:expand:b49", caused=TT(cacheWrite1h=500),
+                                 note="the added 500 tokens are written at 1h; the client body has none of them")]
+    write_issue("markpremium/with-headttl-and-adding-op/first-request/1h", 49,
+                "headttl, a host 1h mark and an operation that adds 500 tokens inside the marked range. ttlPremium books "
+                "the head only: 1,000 x $2.25/M = -$0.00225. markPremium books the 2,000 client tokens: -$0.00600. The "
+                "operation books its 500 tokens at 1h: -$0.00300. The total -$0.01125 equals the bill difference "
+                "(4,500 to 8,250 units). No token is booked twice.",
+                DIMS("setting-breakpoint", "messages", "mark-premium-headttl", ttl="1h"), [s0])
+
+    # the client's last breakpoint is before the headttl head
+    HT3 = "headttl:main:sysc49"
+    tl, sl, ml = [("t", 1000)], [("sys", 1000)], [("m0", 1000), ("m1", 1000)]
+    s0 = sim(0, "r0", (tl, sl, ml), (tl, sl, ml), [], "unknown",
+             add=[rewrite("o1", "context-guru.headttl", "system", 0, 1000, 1000, HT3)],
+             cbp=[{"pos": P("tools", 0), "ttl": "5m"}],
+             fbp=[{"pos": P("tools", 0), "ttl": "5m"}, {"pos": P("system", 0), "ttl": "1h"}, {"pos": P("messages", 1), "ttl": "1h"}],
+             usage=U(write=4000, w1h=3000), base=U(write=1000, inp=3000),
+             effects=[effect("markPremium", "", saved=TT(input=3000), caused=TT(cacheWrite1h=3000), frm=P("tools", 0),
+                             to=P("messages", 1), ttl="1h", note="the head is input in the client body: no ttlPremium")],
+             facts={"ttl": "1h", "lifetime": "exact"})
+    write_issue("markpremium/headttl-after-client-mark/first-request/1h", 49,
+                "The client's last breakpoint (tools[0]) is before the headttl head. The client body bills the head "
+                "as input, so the head's 1h write is input to 1h, and markPremium books it with the rest: 3,000 x "
+                "($6.00 - $3.00)/M = -$0.00900. ttlPremium adds nothing, so the head is booked once.",
+                DIMS("setting-breakpoint", "system", "mark-premium-headttl", ttl="1h"), [s0])
+
+    # round 3, trace 1: a host 1h mark before the client's last breakpoint. The head is 1,000 and m0 is 2,000.
+    HT4 = "headttl:main:sysd49"
+    sd, md = [("sys", 1000)], [("m0", 2000), ("m1", 1000), ("m2", 1000)]
+    s0 = sim(0, "r0", ([], sd, md), ([], sd, md), [], "unknown",
+             add=[rewrite("o1", "context-guru.headttl", "system", 0, 1000, 1000, HT4)],
+             cbp=BP(("system", 0), ("messages", 2)),
+             fbp=[{"pos": P("system", 0), "ttl": "1h"}, {"pos": P("messages", 0), "ttl": "1h"}, {"pos": P("messages", 2), "ttl": "5m"}],
+             usage=U(write=5000, w1h=3000), base=U(write=5000),
+             effects=[effect("ttlPremium", HT4, saved=TT(cacheWrite5m=3000), caused=TT(cacheWrite1h=3000), frm=None,
+                             to=P("messages", 0), ttl="1h", note="the client body writes sys and m0 at 5m; the 1h marks write them at 1h")],
+             facts={"ttl": "1h", "lifetime": "exact"})
+    write_issue("markpremium/host-1h-mark-before-client-last/first-request/1h", 49,
+                "headttl, a host 1h mark at messages[0], and the client's last mark at messages[2] (5m). The provider "
+                "writes sys (1,000) and m0 (2,000) at 1h. The client body writes all 5,000 at 5m. Every token in sys and m0 "
+                "moves from 5m to 1h: 3,000 x ($6.00 - $3.75)/M = -$0.00675. The head alone is 1,000, so a premium "
+                "bounded to the head would book only -$0.00225.",
+                DIMS("setting-breakpoint", "messages", "mark-premium-headttl", ttl="1h"), [s0])
+
+    # round 3, trace 2: an operation adds 500 tokens before the head
+    HT5 = "headttl:main:syse49"
+    se, me = [("sys", 1000)], [("m0", 1000)]
+    te = [("t", 500)]
+    s0 = sim(0, "r0", ([], se, me), (te, se, me), [], "unknown",
+             add=[rewrite("o1", "context-guru.headttl", "system", 0, 1000, 1000, HT5),
+                  rewrite("o2", "context-guru.addtool", "tools", 0, 0, 500, "cg:addtool:e49")],
+             cbp=BP(("system", 0), ("messages", 0)),
+             fbp=[{"pos": P("system", 0), "ttl": "1h"}, {"pos": P("messages", 0), "ttl": "5m"}],
+             usage=U(write=2500, w1h=1500), base=U(write=2000),
+             effects=[effect("ttlPremium", HT5, saved=TT(cacheWrite5m=1000), caused=TT(cacheWrite1h=1000), frm=None,
+                             to=P("system", 0), ttl="1h", note="the head only: the added tool is the operation's")])
+    s0["expected"]["ops"] = [eop("cg:addtool:e49", caused=TT(cacheWrite1h=500),
+                                 note="the added 500 tokens are written at 1h; the client body has none of them")]
+    write_issue("markpremium/adding-op-before-head/first-request/1h", 49,
+                "headttl and an operation that adds a 500-token tool before the head. The provider writes tools and sys "
+                "at 1h (1,500). The client body writes sys and m0 at 5m (2,000). The operation books its 500 tokens at "
+                "1h: -$0.00300. ttlPremium books the 1,000-token head only: -$0.00225. The total -$0.00525 equals the "
+                "bill difference (2,500 to 4,250 units).",
+                DIMS("setting-breakpoint", "system", "mark-premium-headttl", ttl="1h"), [s0])
+
 
 if __name__ == "__main__":
     os.makedirs(OUT, exist_ok=True)
@@ -2553,5 +2758,5 @@ if __name__ == "__main__":
             os.remove(os.path.join(OUT, old))
     for f in (ex12, ex3, ex4, ex5, ex67, ex8, shared_prefix_cases, ex9, c01, c02, c03_04, c05, c06, c07, c08, c09, c10, c11, c12, c_threads, c_clock, c_ttl, c_mix,
               c14, s909, r909_system_hash, c15, c16, c17, c18, a1, a2, a3, a4_b3, b1_b2, b4, b5, c1_, c2_, c2b, c3_, c5, d2, d3, d4,
-              d5, d6, e2, e345, f245, h2, h5, r9, r14, r21, r20, r20b, c42, c42b, c42c, c42d, c43, i44):
+              d5, d6, e2, e345, f245, h2, h5, r9, r14, r21, r20, r20b, c42, c42b, c42c, c42d, c43, i44, c49):
         f()

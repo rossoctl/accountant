@@ -1,0 +1,164 @@
+{
+ "id": "markpremium/mixed-ttl/5m-inside-1h-last/5m",
+ "description": "The client marks tools[0]. The host adds a mark at system[0] and one at the last message, with different TTLs. The provider writes each part at the TTL of the first mark at or after it (design 6.2). The 3,000 tokens after the client's mark move from input to those tiers: 1,000 x ($3.75 - $3.00) + 2,000 x ($6.00 - $3.00) = -$0.00675.",
+ "source": "issue_cases.md#49",
+ "dims": {
+  "kind": "setting-breakpoint",
+  "position": "messages",
+  "cache": "mark-premium-mixed",
+  "ttl": "5m",
+  "lifetime": "exact"
+ },
+ "rates": "fixture-v1",
+ "steps": [
+  {
+   "begin": {
+    "meta": {
+     "requestId": "r0",
+     "session": "s1",
+     "model": "agent-model",
+     "at": "2026-03-02T09:00:00Z",
+     "billing": {
+      "mode": "api"
+     }
+    },
+    "client": {
+     "start": [
+      0,
+      1,
+      2
+     ],
+     "pos": [
+      {
+       "hash": 632773372940024569,
+       "bytes": 4000
+      },
+      {
+       "hash": 6645332947218154758,
+       "bytes": 4000
+      },
+      {
+       "hash": 11870035676972628745,
+       "bytes": 4000
+      },
+      {
+       "hash": 11306110233053041765,
+       "bytes": 4000
+      }
+     ]
+    },
+    "clientBreakpoints": [
+     {
+      "pos": {
+       "section": "tools",
+       "index": 0
+      },
+      "ttl": "5m"
+     }
+    ]
+   },
+   "add": [],
+   "end": {
+    "thread": {
+     "id": "main"
+    },
+    "forwarded": {
+     "start": [
+      0,
+      1,
+      2
+     ],
+     "pos": [
+      {
+       "hash": 632773372940024569,
+       "bytes": 4000
+      },
+      {
+       "hash": 6645332947218154758,
+       "bytes": 4000
+      },
+      {
+       "hash": 11870035676972628745,
+       "bytes": 4000
+      },
+      {
+       "hash": 11306110233053041765,
+       "bytes": 4000
+      }
+     ]
+    },
+    "breakpoints": [
+     {
+      "pos": {
+       "section": "tools",
+       "index": 0
+      },
+      "ttl": "5m"
+     },
+     {
+      "pos": {
+       "section": "system",
+       "index": 0
+      },
+      "ttl": "5m"
+     },
+     {
+      "pos": {
+       "section": "messages",
+       "index": 1
+      },
+      "ttl": "1h"
+     }
+    ],
+    "facts": {
+     "ttl": "5m",
+     "lifetime": "exact"
+    }
+   },
+   "usage": {
+    "input": 0,
+    "cacheRead": 0,
+    "cacheWrite": 4000,
+    "cacheWrite1h": 2000
+   },
+   "expected": {
+    "phase": "unknown",
+    "baselineUsage": {
+     "input": 3000,
+     "cacheRead": 0,
+     "cacheWrite": 1000,
+     "cacheWrite1h": 0
+    },
+    "ops": [],
+    "effects": [
+     {
+      "kind": "markPremium",
+      "changeId": "",
+      "saved": {
+       "input": 3000
+      },
+      "caused": {
+       "cacheWrite5m": 1000,
+       "cacheWrite1h": 2000
+      },
+      "from": {
+       "section": "tools",
+       "index": 0
+      },
+      "to": {
+       "section": "messages",
+       "index": 1
+      },
+      "ttl": "1h",
+      "note": "the client body bills these tokens as input; the host's mark makes the provider write them"
+     }
+    ],
+    "unpriced": [
+     {
+      "reason": "penalty_unknown"
+     }
+    ]
+   }
+  }
+ ]
+}
