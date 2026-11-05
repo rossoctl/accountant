@@ -128,11 +128,39 @@ func callDetail(op Operation) string {
 //     stands in for the forwarded one.
 //
 // A report that fails a bound adds to neither sum: one bogus report must not raise the bound for itself
-// or for the others. So the bounds are found by repetition: start with every reported rewrite, drop the
-// ones that fail, and repeat until none drops (at most one drop for each operation). A DryRun operation
-// changed no byte, so it adds to neither sum, and only its SizeBefore is bounded. An active operation
-// leaves the sums only while a well-formed report replaces it. Sums saturate.
+// or for the others. So the bounds are found by repetition from the loose side: start with every active
+// operation and every non-negative report, drop the reports that fail, and repeat until none drops (at
+// most one drop for each operation). Every pass counts a set that holds all the honest operations, so its
+// bound is never below the true one and a drop is always a wrong report. For that reason an active
+// operation is never taken out of the sums, even when a report with its ChangeID replaces it: whether
+// that report is honest is what the pass is deciding. The cost is a bound that is looser by the size of
+// a replaced operation, and a loose bound only lets a wrong report through, never unprices an honest one.
+// A DryRun operation changed no byte, so it adds to neither sum, and only its SizeBefore is bounded.
+// Sums saturate.
 type limits struct{ before, after int }
+
+// storedCopy says whether the active operation is the copy EndRequest stored of a report of this request:
+// a report with its ChangeID and the same sizes. The report counts in the sums, so the copy must not
+// count twice. An active operation that a report with other sizes replaces still counts (see above).
+func storedCopy(act Operation, reported []Operation) bool {
+	same := func(a, b Operation) bool {
+		if a.SizeBefore.Bytes != b.SizeBefore.Bytes || a.SizeAfter.Bytes != b.SizeAfter.Bytes || len(a.Spans) != len(b.Spans) {
+			return false
+		}
+		for i := range a.Spans {
+			if a.Spans[i].SizeBefore.Bytes != b.Spans[i].SizeBefore.Bytes || a.Spans[i].SizeAfter.Bytes != b.Spans[i].SizeAfter.Bytes {
+				return false
+			}
+		}
+		return true
+	}
+	for _, op := range reported {
+		if op.ChangeID != "" && op.ChangeID == act.ChangeID && same(op, act) && !negative(op) {
+			return true
+		}
+	}
+	return false
+}
 
 func (r *Request) limits(s ThreadState) limits {
 	client := r.Client.cumBytes(len(r.Client.Pos) - 1)
@@ -147,21 +175,12 @@ func (r *Request) limits(s ThreadState) limits {
 	}
 	var es []*entry // the rewrites: the active ones, then the reported ones
 	for _, op := range s.Active {
-		es = append(es, &entry{op: op, active: true})
+		if !storedCopy(op, r.Ops) {
+			es = append(es, &entry{op: op, active: true})
+		}
 	}
 	for _, op := range r.Ops {
 		es = append(es, &entry{op: op})
-	}
-	// An active operation leaves the sums only while a well-formed report replaces it: the same rule as
-	// isChange. A report that fails a bound is dropped below, and then the active one counts again.
-	replaced := func(act *entry) bool {
-		for _, e := range es {
-			if !e.active && !e.out && e.op.ChangeID == act.op.ChangeID && e.op.ChangeID != "" &&
-				(e.op.Kind == KindRewrite || e.op.Kind == KindSetting) && !negative(e.op) {
-				return true
-			}
-		}
-		return false
 	}
 	sat := func(a, d int) int {
 		if a > math.MaxInt-d {
@@ -173,7 +192,7 @@ func (r *Request) limits(s ThreadState) limits {
 	for {
 		l = limits{before: client, after: fwd}
 		for _, e := range es {
-			if e.out || e.op.Kind != KindRewrite || e.op.DryRun || negative(e.op) || (e.active && replaced(e)) {
+			if e.out || e.op.Kind != KindRewrite || e.op.DryRun || negative(e.op) {
 				continue
 			}
 			add := func(b, a Size) {

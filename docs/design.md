@@ -1311,8 +1311,12 @@ check, the operator, the detail, and the request, session and thread IDs). `Prev
       over the rewrites (a later operator may have removed part of its output).
     - A `DryRun` operation (observe mode) read a real body, so only its `SizeBefore` is bounded. Its `SizeAfter` is a
       guess that never reaches the totals (R12), so only check 12 looks at it.
-    - An active operation leaves the sums only while a well-formed report replaces it. A malformed re-report
-      replaces nothing, so the active operation still counts.
+    - Every active operation counts in the sums, even when a report with its `ChangeID` replaces it. Whether that
+      report is honest is what the check decides, so the bound must not depend on it. The bound is found from
+      the loose side: all operations and all non-negative reports count first, a failing report is dropped, and
+      the sums are made again until none drops. So an honest report is never unpriced by the failure of another.
+      The price is a bound that is loose by the size of a replaced operation. (The copy `EndRequest` stored of a
+      report of this request has the same sizes as the report, and counts once.)
     - A report that fails a bound adds to neither sum, so one bogus report cannot raise the bound for itself. A
       `DryRun` operation adds to neither sum.
 

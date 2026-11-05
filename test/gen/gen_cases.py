@@ -2437,6 +2437,34 @@ def i44_malformed_rereport():
                DIMS("rewrite", "mixed", "miss", check="size_range", splice="true"), [s0, s1], open_=[BSTAR_SNAP])
 
 
+def i44_honest_chain():
+    sysb = [("sys", 500)]
+    m = [("m0", 4000), ("m1", 4000)]  # 8,500 tokens with the system block
+    ci_c = "cg:retrieve:i44g"
+    ci = rewrite("o1", "context-guru.retrieve", "messages", 1, 0, 25000, ci_c,
+                 splice={"at": 1, "removed": 0, "inserted": 1})
+    cf = m[:1] + [("ins", 25000)] + m[1:]
+    s0 = sim(0, "r0", ([], sysb, m), ([], sysb, cf), [eop(ci_c, caused=TT(cacheWrite5m=25000))], "unknown",
+             add=[ci], unpriced=[{"reason": "penalty_unknown"}])
+    bad = rewrite("bad", "context-guru.retrieve", "messages", 1, 2_000_000_000_000, 25000, ci_c,
+                  splice={"at": 1, "removed": 0, "inserted": 1})
+    v = rewrite("v", "context-guru.more", "messages", 1, 0, 22500, "cg:more:i44g",
+                splice={"at": 1, "removed": 0, "inserted": 1})
+    d = rewrite("d", "context-guru.cmdfilter", "messages", 1, 55500, 18000, "cg:cmdfilter:i44g")
+    cf2 = [("x", 18000)]
+    s1 = sim(1500, "r1", ([], sysb, m), ([], sysb, cf2), [eop("cg:more:i44g", caused=TT(cacheWrite5m=22500)),
+                                                         eop("cg:cmdfilter:i44g", saved=TT(cacheWrite5m=37500)),
+                                                         eop(ci_c, caused=TT(cacheWrite5m=25000))], "cold",
+             add=[bad, v, d], unpriced=[{"opId": "bad", "reason": "size_range"}], checks=["size_range"])
+    write_more("check/honest-chain-beside-malformed-rereport/priced", "I44",
+               "Client body 34,000 bytes (8,500 tokens). An active insertion of 25,000 tokens (100,000 bytes). On "
+               "request 1 a bug re-reports its ChangeID with an impossible SizeBefore, and two honest operations ride "
+               "beside it: v inserts 22,500 tokens, d cuts 55,500 tokens to 18,000. The forwarded body is 18,000 tokens. "
+               "Only the bad re-report is size_range. v and d stay priced: v causes 22,500 write tokens, d saves 37,500, "
+               "the active insertion causes 25,000: net -10,000 x $3.75/M = -$0.0375.",
+               DIMS("rewrite", "mixed", "miss", check="size_range", splice="true"), [s0, s1], open_=[BSTAR_SNAP])
+
+
 def i44_bad_call(name, field, value, text):
     ses = f"s-i44-{name}"
     call = spend_call(6000, 400, 0.008)
@@ -2453,6 +2481,7 @@ def i44():
     i44_keeps_active()
     i44_after_insert()
     i44_malformed_rereport()
+    i44_honest_chain()
     i44_bad_call("negative-output", "output", -5,
                  "A model call states -5 output tokens. No response can bill that. The spend goes to Unpriced "
                  "(bad_usage) and the check bad_usage fails. The host must not add a negative cost to its totals.")

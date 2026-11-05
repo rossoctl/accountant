@@ -261,3 +261,40 @@ func TestSizeRangeWinsOverMediaTokens(t *testing.T) {
 		t.Fatalf("Unpriced = %+v, cut is honest", res.Unpriced)
 	}
 }
+
+// A chain of honest reports must stay priced when a malformed re-report of an active insertion sits
+// beside them. Client 32,000 bytes; active ci inserts 100,000. Request 1: bad (re-report of ci, wrong
+// size), v inserts 90,000, d cuts 222,000 to 72,000. Forwarded = 32,000+100,000+90,000-150,000 = 72,000.
+func TestHonestChainBesideMalformedReReport(t *testing.T) {
+	if strconv.IntSize < 64 {
+		t.Skip("sizes above 2^32 need a 64-bit int")
+	}
+	client := mk(nil, nil, []blk{b("a", 16000), b("b", 16000)})
+	fwd0 := mk(nil, nil, []blk{b("a", 16000), b("ins", 100000), b("b", 16000)})
+	ts := NewTrackers()
+	ci := rewrite("i", "retrieve", "ci", msg(1), 0, 100000)
+	ci.MessageSplice = &MessageSplice{At: 1, Removed: 0, Inserted: 1}
+	req{at: t0, client: client, fwd: fwd0, clientBPs: bps5(msg(1)), facts: exact5m, ops: []Operation{ci},
+		usage: Usage{CacheWrite: 33000}}.run(ts)
+	hugeBytes := int64(8_000_000_000_000)
+	bad := rewrite("bad", "retrieve", "ci", msg(1), int(hugeBytes), 100000)
+	v := rewrite("v", "more", "cv", msg(1), 0, 90000)
+	v.MessageSplice = &MessageSplice{At: 1, Removed: 0, Inserted: 1}
+	d := rewrite("d", "trim", "cd", msg(1), 222000, 72000)
+	fwd1 := mk(nil, nil, []blk{b("x", 72000)})
+	res := req{at: t0.Add(10), client: client, fwd: fwd1, clientBPs: bps5(msg(1)), facts: exact5m,
+		ops: []Operation{bad, v, d}, usage: Usage{CacheRead: 1000, CacheWrite: 17000}}.run(ts)
+	if !hasUnpricedOp(res, "bad", ReasonSizeRange) {
+		t.Fatalf("Unpriced = %+v, want bad size_range", res.Unpriced)
+	}
+	for _, id := range []string{"v", "d"} {
+		if hasUnpricedOp(res, id, ReasonSizeRange) {
+			t.Fatalf("%s is size_range: an honest report was dropped (Unpriced %+v)", id, res.Unpriced)
+		}
+	}
+	for _, c := range res.Checks {
+		if c.Check == "sum" {
+			t.Fatalf("sum check failed: %+v", res.Checks)
+		}
+	}
+}
