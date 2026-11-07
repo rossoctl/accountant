@@ -1,0 +1,180 @@
+{
+ "id": "markpremium/headttl-after-client-mark/first-request/1h",
+ "description": "The client's last breakpoint (tools[0]) is before the headttl head. The client body bills the head as input, so the head's 1h write is input to 1h, and markPremium books it with the rest: 3,000 x ($6.00 - $3.00)/M = -$0.00900. ttlPremium adds nothing, so the head is booked once.",
+ "source": "issue_cases.md#49",
+ "dims": {
+  "kind": "setting-breakpoint",
+  "position": "system",
+  "cache": "mark-premium-headttl",
+  "ttl": "1h",
+  "lifetime": "exact"
+ },
+ "rates": "fixture-v1",
+ "steps": [
+  {
+   "begin": {
+    "meta": {
+     "requestId": "r0",
+     "session": "s1",
+     "model": "agent-model",
+     "at": "2026-03-02T09:00:00Z",
+     "billing": {
+      "mode": "api"
+     }
+    },
+    "client": {
+     "start": [
+      0,
+      1,
+      2
+     ],
+     "pos": [
+      {
+       "hash": 632773372940024569,
+       "bytes": 4000
+      },
+      {
+       "hash": 6645332947218154758,
+       "bytes": 4000
+      },
+      {
+       "hash": 11870035676972628745,
+       "bytes": 4000
+      },
+      {
+       "hash": 11306110233053041765,
+       "bytes": 4000
+      }
+     ]
+    },
+    "clientBreakpoints": [
+     {
+      "pos": {
+       "section": "tools",
+       "index": 0
+      },
+      "ttl": "5m"
+     }
+    ]
+   },
+   "add": [
+    {
+     "id": "o1",
+     "kind": "rewrite",
+     "operator": "context-guru.headttl",
+     "at": {
+      "section": "system",
+      "index": 0
+     },
+     "sizeBefore": {
+      "bytes": 4000
+     },
+     "sizeAfter": {
+      "bytes": 4000
+     },
+     "changeId": "headttl:main:sysc49"
+    }
+   ],
+   "end": {
+    "thread": {
+     "id": "main"
+    },
+    "forwarded": {
+     "start": [
+      0,
+      1,
+      2
+     ],
+     "pos": [
+      {
+       "hash": 632773372940024569,
+       "bytes": 4000
+      },
+      {
+       "hash": 6645332947218154758,
+       "bytes": 4000
+      },
+      {
+       "hash": 11870035676972628745,
+       "bytes": 4000
+      },
+      {
+       "hash": 11306110233053041765,
+       "bytes": 4000
+      }
+     ]
+    },
+    "breakpoints": [
+     {
+      "pos": {
+       "section": "tools",
+       "index": 0
+      },
+      "ttl": "5m"
+     },
+     {
+      "pos": {
+       "section": "system",
+       "index": 0
+      },
+      "ttl": "1h"
+     },
+     {
+      "pos": {
+       "section": "messages",
+       "index": 1
+      },
+      "ttl": "1h"
+     }
+    ],
+    "facts": {
+     "ttl": "1h",
+     "lifetime": "exact"
+    }
+   },
+   "usage": {
+    "input": 0,
+    "cacheRead": 0,
+    "cacheWrite": 4000,
+    "cacheWrite1h": 3000
+   },
+   "expected": {
+    "phase": "unknown",
+    "baselineUsage": {
+     "input": 3000,
+     "cacheRead": 0,
+     "cacheWrite": 1000,
+     "cacheWrite1h": 0
+    },
+    "ops": [],
+    "effects": [
+     {
+      "kind": "markPremium",
+      "changeId": "",
+      "saved": {
+       "input": 3000
+      },
+      "caused": {
+       "cacheWrite1h": 3000
+      },
+      "from": {
+       "section": "tools",
+       "index": 0
+      },
+      "to": {
+       "section": "messages",
+       "index": 1
+      },
+      "ttl": "1h",
+      "note": "the head is input in the client body: no ttlPremium"
+     }
+    ],
+    "unpriced": [
+     {
+      "reason": "penalty_unknown"
+     }
+    ]
+   }
+  }
+ ]
+}

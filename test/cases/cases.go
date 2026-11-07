@@ -120,15 +120,17 @@ type ExpectedOp struct {
 
 // ExpectedEffect is one cache effect. Its range is asserted only when present.
 type ExpectedEffect struct {
-	Note     string                      `json:"note,omitempty"` // for the reader; never asserted
-	Kind     accountant.CacheEffectKind  `json:"kind"`
-	ChangeID string                      `json:"changeId"`
-	From     *accountant.Position        `json:"from,omitempty"`
-	To       *accountant.Position        `json:"to,omitempty"`
-	TTL      string                      `json:"ttl,omitempty"`
-	Saved    accountant.TierTokens       `json:"saved"`
-	Caused   accountant.TierTokens       `json:"caused"`
-	Cause    accountant.CacheEffectCause `json:"cause,omitempty"`
+	Note     string                     `json:"note,omitempty"` // for the reader; never asserted
+	Kind     accountant.CacheEffectKind `json:"kind"`
+	ChangeID string                     `json:"changeId"`
+	From     *accountant.Position       `json:"from,omitempty"`
+	// FromNil asserts that From is nil, the start of the prompt. A missing "from" asserts nothing.
+	FromNil bool                        `json:"fromNil,omitempty"`
+	To      *accountant.Position        `json:"to,omitempty"`
+	TTL     string                      `json:"ttl,omitempty"`
+	Saved   accountant.TierTokens       `json:"saved"`
+	Caused  accountant.TierTokens       `json:"caused"`
+	Cause   accountant.CacheEffectCause `json:"cause,omitempty"`
 	// InBaseline marks a break that the client body would have had too (an entry lost early, a client
 	// edit): it is on the record but cancels out of conservation. A break that an operator left behind
 	// (its change ended) is not in the baseline, so it counts.

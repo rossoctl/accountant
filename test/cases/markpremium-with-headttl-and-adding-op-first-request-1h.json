@@ -1,0 +1,225 @@
+{
+ "id": "markpremium/with-headttl-and-adding-op/first-request/1h",
+ "description": "headttl, a host 1h mark and an operation that adds 500 tokens inside the marked range. ttlPremium books the head only: 1,000 x $2.25/M = -$0.00225. markPremium books the 2,000 client tokens: -$0.00600. The operation books its 500 tokens at 1h: -$0.00300. The total -$0.01125 equals the bill difference (4,500 to 8,250 units). No token is booked twice.",
+ "source": "issue_cases.md#49",
+ "dims": {
+  "kind": "setting-breakpoint",
+  "position": "messages",
+  "cache": "mark-premium-headttl",
+  "ttl": "1h",
+  "lifetime": "exact"
+ },
+ "rates": "fixture-v1",
+ "steps": [
+  {
+   "begin": {
+    "meta": {
+     "requestId": "r0",
+     "session": "s1",
+     "model": "agent-model",
+     "at": "2026-03-02T09:00:00Z",
+     "billing": {
+      "mode": "api"
+     }
+    },
+    "client": {
+     "start": [
+      0,
+      0,
+      1
+     ],
+     "pos": [
+      {
+       "hash": 15745513492897880738,
+       "bytes": 4000
+      },
+      {
+       "hash": 5508475225053360789,
+       "bytes": 4000
+      },
+      {
+       "hash": 11608045664679988289,
+       "bytes": 4000
+      },
+      {
+       "hash": 17195989329813874534,
+       "bytes": 4000
+      }
+     ]
+    },
+    "clientBreakpoints": [
+     {
+      "pos": {
+       "section": "system",
+       "index": 0
+      },
+      "ttl": "5m"
+     },
+     {
+      "pos": {
+       "section": "messages",
+       "index": 0
+      },
+      "ttl": "5m"
+     }
+    ]
+   },
+   "add": [
+    {
+     "id": "o1",
+     "kind": "rewrite",
+     "operator": "context-guru.headttl",
+     "at": {
+      "section": "system",
+      "index": 0
+     },
+     "sizeBefore": {
+      "bytes": 4000
+     },
+     "sizeAfter": {
+      "bytes": 4000
+     },
+     "changeId": "headttl:main:sysb49"
+    },
+    {
+     "id": "o2",
+     "kind": "rewrite",
+     "operator": "context-guru.expand",
+     "at": {
+      "section": "messages",
+      "index": 1
+     },
+     "sizeBefore": {
+      "bytes": 4000
+     },
+     "sizeAfter": {
+      "bytes": 6000
+     },
+     "changeId": "cg:expand:b49"
+    }
+   ],
+   "end": {
+    "thread": {
+     "id": "main"
+    },
+    "forwarded": {
+     "start": [
+      0,
+      0,
+      1
+     ],
+     "pos": [
+      {
+       "hash": 15745513492897880738,
+       "bytes": 4000
+      },
+      {
+       "hash": 5508475225053360789,
+       "bytes": 4000
+      },
+      {
+       "hash": 11608045664679988289,
+       "bytes": 6000
+      },
+      {
+       "hash": 17195989329813874534,
+       "bytes": 4000
+      }
+     ]
+    },
+    "breakpoints": [
+     {
+      "pos": {
+       "section": "system",
+       "index": 0
+      },
+      "ttl": "1h"
+     },
+     {
+      "pos": {
+       "section": "messages",
+       "index": 0
+      },
+      "ttl": "5m"
+     },
+     {
+      "pos": {
+       "section": "messages",
+       "index": 2
+      },
+      "ttl": "1h"
+     }
+    ],
+    "facts": {
+     "ttl": "1h",
+     "lifetime": "exact"
+    }
+   },
+   "usage": {
+    "input": 0,
+    "cacheRead": 0,
+    "cacheWrite": 4500,
+    "cacheWrite1h": 3500
+   },
+   "expected": {
+    "phase": "unknown",
+    "baselineUsage": {
+     "input": 2000,
+     "cacheRead": 0,
+     "cacheWrite": 2000,
+     "cacheWrite1h": 0
+    },
+    "ops": [
+     {
+      "changeId": "cg:expand:b49",
+      "saved": {},
+      "caused": {
+       "cacheWrite1h": 500
+      },
+      "estimated": true,
+      "note": "the added 500 tokens are written at 1h; the client body has none of them"
+     }
+    ],
+    "effects": [
+     {
+      "kind": "ttlPremium",
+      "changeId": "headttl:main:sysb49",
+      "saved": {
+       "cacheWrite5m": 1000
+      },
+      "caused": {
+       "cacheWrite1h": 1000
+      },
+      "ttl": "1h",
+      "note": "the head only: the added tokens are not a 5m write moved to 1h"
+     },
+     {
+      "kind": "markPremium",
+      "changeId": "",
+      "saved": {
+       "input": 2000
+      },
+      "caused": {
+       "cacheWrite1h": 2000
+      },
+      "from": {
+       "section": "messages",
+       "index": 0
+      },
+      "to": {
+       "section": "messages",
+       "index": 2
+      },
+      "ttl": "1h",
+      "note": "the client body bills these tokens as input; the host's mark makes the provider write them"
+     }
+    ],
+    "unpriced": [
+     {
+      "reason": "penalty_unknown"
+     }
+    ]
+   }
+  }
+ ]
+}
