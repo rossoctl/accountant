@@ -209,6 +209,9 @@ func compare(t *testing.T, i int, want Expected, got accountant.Result) {
 			t.Errorf("step %d effect %d: got %s %s saved=%+v caused=%+v inBaseline=%v, want %s %s saved=%+v caused=%+v inBaseline=%v",
 				i, j, g.Kind, g.ChangeID, g.Saved, g.Caused, g.InBaseline, w.Kind, w.ChangeID, w.Saved, w.Caused, w.InBaseline)
 		}
+		if w.FromNil && g.From != nil {
+			t.Errorf("step %d effect %d: from %v, want nil (the start of the prompt)", i, j, *g.From)
+		}
 		if w.From != nil && (g.From == nil || *g.From != *w.From) {
 			t.Errorf("step %d effect %d: from %v, want %v", i, j, g.From, *w.From)
 		}

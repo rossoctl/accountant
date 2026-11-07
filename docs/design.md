@@ -330,6 +330,26 @@ holds the full lists with their sources (read 2026-10-25). This is what the mode
 | OpenAI | `model` | The guide lists it: a different model can use different weights and caching behaviour. It names no level, so the design starts the break at the start of the prompt | `tools[0]` |
 | OpenAI | `reasoning.effort`, `text.verbosity`, `parallel_tool_calls`, `text.format` | The guide says the rendered prefix may change, and gives no level | nil |
 
+*What the table covers, and what it does not.* The table is the conservation check with the tier rates for
+the shapes it generates. It is not a proof for every request. It generates: four client breakpoint sets;
+headttl or none; a host mark of either TTL at any of five blocks, or none; an adding, a removing or no
+operation (at the tools block or at one message); a cold request; a warm request whose previous entry ends at
+any block; that entry intact, lost, or cut back to an earlier mark; and a request sent twice (state carried
+through one request). It uses a model cache that reads the longest marked prefix. It does not generate:
+two or more host marks beyond one (the mixed-TTL cases cover that by hand); a gap past the TTL, or a 1h
+entry read after 5m; a read that ends inside a block; the 20-block lookback of the provider; media blocks
+or the minimum cacheable length; a keep-alive ping or `SharedWarm`; a splice (a summary that replaces
+messages); a second thread or a fork; a model or settings change; a client edit inside the cached prefix;
+and a request whose usage was cut by `Usage` validation. A shape outside this list has the unit tests and
+cases only.
+
+*Where the table finds the library lower than the truth* (never higher, which the test enforces): (1) the
+forwarded body can read an entry the client body could not, because the host's mark or a repeated request
+left a mark the client lacks; (2) an operation adds content in the first block of a warm request; (3) an
+entry is lost for both bodies and an operation changes the prefix, and the usage looks like a break the
+operation caused. The library books less saving in all three (R45). The test names them in `knownLow`; any
+other combination must be exact.
+
 Rules that follow from the table:
 
 1. **A level that stops matching breaks every later level.** On Anthropic the cache has three levels in
@@ -481,15 +501,14 @@ operation prices the rest, the content it added or removed. Then:
 | write 5m or 1h | same tier | nobody | 0 |
 | write 1h | write 5m | nobody (a saving, left out) | R45 |
 | read (a counted `break` covers it) | write | the `break` for read to write 5m; then `ttlPremium` for 5m to 1h | 0.75 (from 5m) |
+| read, but the entry was lost early (a `break` in the baseline covers it) | write | the client body lost the entry too, so its tier is the write of its first breakpoint at or after the position; the row for that tier applies | as that row |
 
 Every token is in exactly one row, and no token an operation prices is in any row, so a written token is
 booked once: by the operation, by `markPremium`, by `ttlPremium`, or by none. The sum of `Saved - Caused`
 over the operations and the counted effects, with the rates applied, equals the bill difference. Check 6 sums
 tiers in tokens, so it cannot see a move between tiers. `TestEveryTierMoveIsBookedOnce` is the check with the
 rates: a hand-written oracle bills the forwarded body and the client body on a model cache, and the library
-must return the same difference for every combination of the table (960 of them: four client breakpoint
-sets, headttl or not, a host mark at any block with 5m or 1h or none, no operation or an adding or a removing
-one, cold or warm).
+must return the same difference for every combination of the table (4,080 of them, and four more sets of block sizes).
 
 Rules that follow from the table:
 
@@ -540,7 +559,12 @@ Rules that follow from the table:
   price that content at different tiers; the base commit books the same figures. In the table these are the
   118 combinations marked lower than the truth, and the library is never higher.
 - **The ChangeID** of `markPremium` is the `ChangeID` of the applied operation whose forwarded span covers the
-  host's last breakpoint, or empty when none does. Check 5 allows both.
+  last forwarded breakpoint, or empty when none does. The library cannot tell a host's breakpoint from the
+  client's, so it names the last one: the provider writes up to it. This is attribution only; it moves no
+  priced figure. Check 5 allows both.
+- **The ChangeID** of a `ttlPremium` with no active `headttl:` change is the change of the last 1h breakpoint
+  that a reported operation covers (the scan goes on past a 1h breakpoint no operation covers), or empty.
+  Attribution only.
 - **Relation to the next request.** The entry this request wrote up to L_f is read by the next request. That
   benefit is real, and the `rescue`, `break` and operation pricing of the next request already counts it,
   because the client body has no entry there: it is not counted a second time here. `markPremium` is the cost

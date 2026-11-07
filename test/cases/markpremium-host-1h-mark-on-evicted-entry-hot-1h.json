@@ -1,0 +1,306 @@
+{
+ "id": "markpremium/host-1h-mark-on-evicted-entry/hot/1h",
+ "description": "The previous request cached 5,000 tokens, and the provider evicted the entry: it reads nothing and writes all 5,000. The break is in the baseline: the client body lost the entry too and writes all 5,000 at 5m. The host's 1h mark at messages[0] writes m0 at 1h. ttlPremium books 1,000 x ($6.00 - $3.75)/M = -$0.00225. A premium that skipped the positions of an in-baseline break would book nothing and overstate the saving.",
+ "source": "issue_cases.md#49",
+ "dims": {
+  "kind": "setting-breakpoint",
+  "position": "messages",
+  "cache": "mark-premium-evicted",
+  "ttl": "1h",
+  "lifetime": "exact"
+ },
+ "rates": "fixture-v1",
+ "steps": [
+  {
+   "begin": {
+    "meta": {
+     "requestId": "r0",
+     "session": "s1",
+     "model": "agent-model",
+     "at": "2026-03-02T09:00:00Z",
+     "billing": {
+      "mode": "api"
+     }
+    },
+    "client": {
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "pos": [
+      {
+       "hash": 625792648282977192,
+       "bytes": 4000
+      },
+      {
+       "hash": 14262701665749340094,
+       "bytes": 4000
+      },
+      {
+       "hash": 4853614007946103283,
+       "bytes": 4000
+      },
+      {
+       "hash": 6833820594810254769,
+       "bytes": 4000
+      },
+      {
+       "hash": 5419334633661540320,
+       "bytes": 4000
+      }
+     ]
+    },
+    "clientBreakpoints": [
+     {
+      "pos": {
+       "section": "messages",
+       "index": 4
+      },
+      "ttl": "5m"
+     }
+    ]
+   },
+   "add": [],
+   "end": {
+    "thread": {
+     "id": "main"
+    },
+    "forwarded": {
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "pos": [
+      {
+       "hash": 625792648282977192,
+       "bytes": 4000
+      },
+      {
+       "hash": 14262701665749340094,
+       "bytes": 4000
+      },
+      {
+       "hash": 4853614007946103283,
+       "bytes": 4000
+      },
+      {
+       "hash": 6833820594810254769,
+       "bytes": 4000
+      },
+      {
+       "hash": 5419334633661540320,
+       "bytes": 4000
+      }
+     ]
+    },
+    "breakpoints": [
+     {
+      "pos": {
+       "section": "messages",
+       "index": 4
+      },
+      "ttl": "5m"
+     }
+    ],
+    "facts": {
+     "ttl": "5m",
+     "lifetime": "exact"
+    }
+   },
+   "usage": {
+    "input": 0,
+    "cacheRead": 0,
+    "cacheWrite": 5000,
+    "cacheWrite1h": 0
+   },
+   "expected": {
+    "phase": "unknown",
+    "baselineUsage": {
+     "input": 0,
+     "cacheRead": 0,
+     "cacheWrite": 5000,
+     "cacheWrite1h": 0
+    },
+    "ops": [],
+    "unpriced": [
+     {
+      "reason": "penalty_unknown"
+     }
+    ]
+   }
+  },
+  {
+   "begin": {
+    "meta": {
+     "requestId": "r1",
+     "session": "s1",
+     "model": "agent-model",
+     "at": "2026-03-02T09:00:10Z",
+     "billing": {
+      "mode": "api"
+     }
+    },
+    "client": {
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "pos": [
+      {
+       "hash": 625792648282977192,
+       "bytes": 4000
+      },
+      {
+       "hash": 14262701665749340094,
+       "bytes": 4000
+      },
+      {
+       "hash": 4853614007946103283,
+       "bytes": 4000
+      },
+      {
+       "hash": 6833820594810254769,
+       "bytes": 4000
+      },
+      {
+       "hash": 5419334633661540320,
+       "bytes": 4000
+      }
+     ]
+    },
+    "clientBreakpoints": [
+     {
+      "pos": {
+       "section": "messages",
+       "index": 1
+      },
+      "ttl": "5m"
+     },
+     {
+      "pos": {
+       "section": "messages",
+       "index": 4
+      },
+      "ttl": "5m"
+     }
+    ]
+   },
+   "add": [],
+   "end": {
+    "thread": {
+     "id": "main"
+    },
+    "forwarded": {
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "pos": [
+      {
+       "hash": 625792648282977192,
+       "bytes": 4000
+      },
+      {
+       "hash": 14262701665749340094,
+       "bytes": 4000
+      },
+      {
+       "hash": 4853614007946103283,
+       "bytes": 4000
+      },
+      {
+       "hash": 6833820594810254769,
+       "bytes": 4000
+      },
+      {
+       "hash": 5419334633661540320,
+       "bytes": 4000
+      }
+     ]
+    },
+    "breakpoints": [
+     {
+      "pos": {
+       "section": "messages",
+       "index": 0
+      },
+      "ttl": "1h"
+     },
+     {
+      "pos": {
+       "section": "messages",
+       "index": 1
+      },
+      "ttl": "5m"
+     },
+     {
+      "pos": {
+       "section": "messages",
+       "index": 4
+      },
+      "ttl": "5m"
+     }
+    ],
+    "facts": {
+     "ttl": "1h",
+     "lifetime": "exact"
+    }
+   },
+   "usage": {
+    "input": 0,
+    "cacheRead": 0,
+    "cacheWrite": 5000,
+    "cacheWrite1h": 1000
+   },
+   "expected": {
+    "phase": "hot",
+    "baselineUsage": {
+     "input": 0,
+     "cacheRead": 0,
+     "cacheWrite": 5000,
+     "cacheWrite1h": 0
+    },
+    "ops": [],
+    "effects": [
+     {
+      "kind": "ttlPremium",
+      "changeId": "",
+      "saved": {
+       "cacheWrite5m": 1000
+      },
+      "caused": {
+       "cacheWrite1h": 1000
+      },
+      "fromNil": true,
+      "to": {
+       "section": "messages",
+       "index": 0
+      },
+      "ttl": "1h",
+      "note": "the client body wrote m0 at 5m; the host's 1h mark writes it at 1h"
+     },
+     {
+      "kind": "break",
+      "changeId": "",
+      "saved": {
+       "cacheRead": 5000
+      },
+      "caused": {
+       "cacheWrite5m": 5000
+      },
+      "inBaseline": true,
+      "to": {
+       "section": "messages",
+       "index": 4
+      },
+      "note": "the entry was lost early: the client body lost it too (in the baseline)"
+     }
+    ]
+   }
+  }
+ ]
+}

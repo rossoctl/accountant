@@ -105,7 +105,9 @@ def effect(kind, change, saved=None, caused=None, frm=None, to=None, ttl=None, n
         baseline = kind == "break" and change == ""
     if baseline:
         e["inBaseline"] = True
-    if frm:
+    if frm == "nil":  # asserts that From is nil: the range starts at the prompt
+        e["fromNil"] = True
+    elif frm:
         e["from"] = frm
     if to:
         e["to"] = to
@@ -2719,7 +2721,7 @@ def c49():
              cbp=BP(("system", 0), ("messages", 2)),
              fbp=[{"pos": P("system", 0), "ttl": "1h"}, {"pos": P("messages", 0), "ttl": "1h"}, {"pos": P("messages", 2), "ttl": "5m"}],
              usage=U(write=5000, w1h=3000), base=U(write=5000),
-             effects=[effect("ttlPremium", HT4, saved=TT(cacheWrite5m=3000), caused=TT(cacheWrite1h=3000), frm=None,
+             effects=[effect("ttlPremium", HT4, saved=TT(cacheWrite5m=3000), caused=TT(cacheWrite1h=3000), frm="nil",
                              to=P("messages", 0), ttl="1h", note="the client body writes sys and m0 at 5m; the 1h marks write them at 1h")],
              facts={"ttl": "1h", "lifetime": "exact"})
     write_issue("markpremium/host-1h-mark-before-client-last/first-request/1h", 49,
@@ -2739,7 +2741,7 @@ def c49():
              cbp=BP(("system", 0), ("messages", 0)),
              fbp=[{"pos": P("system", 0), "ttl": "1h"}, {"pos": P("messages", 0), "ttl": "5m"}],
              usage=U(write=2500, w1h=1500), base=U(write=2000),
-             effects=[effect("ttlPremium", HT5, saved=TT(cacheWrite5m=1000), caused=TT(cacheWrite1h=1000), frm=None,
+             effects=[effect("ttlPremium", HT5, saved=TT(cacheWrite5m=1000), caused=TT(cacheWrite1h=1000), frm=P("tools", 0),
                              to=P("system", 0), ttl="1h", note="the head only: the added tool is the operation's")])
     s0["expected"]["ops"] = [eop("cg:addtool:e49", caused=TT(cacheWrite1h=500),
                                  note="the added 500 tokens are written at 1h; the client body has none of them")]
@@ -2749,6 +2751,28 @@ def c49():
                 "1h: -$0.00300. ttlPremium books the 1,000-token head only: -$0.00225. The total -$0.00525 equals the "
                 "bill difference (2,500 to 4,250 units).",
                 DIMS("setting-breakpoint", "system", "mark-premium-headttl", ttl="1h"), [s0])
+
+    # round 4: the entry was evicted. The break is in the baseline, and the host's 1h mark still upgrades m0.
+    me4 = [("m0", 1000), ("m1", 1000), ("m2", 1000), ("m3", 1000), ("m4", 1000)]
+    s0 = sim(0, "r0", ([], [], me4), ([], [], me4), [], "unknown", cbp=BP(("messages", 4)), fbp=BP(("messages", 4)),
+             usage=U(write=5000))
+    s1 = sim(10, "r1", ([], [], me4), ([], [], me4), [], "hot", prev=(5000, 5000),
+             cbp=BP(("messages", 1), ("messages", 4)),
+             fbp=[{"pos": P("messages", 0), "ttl": "1h"}, {"pos": P("messages", 1), "ttl": "5m"}, {"pos": P("messages", 4), "ttl": "5m"}],
+             usage=U(write=5000, w1h=1000), base=U(write=5000), facts={"ttl": "1h", "lifetime": "exact"},
+             effects=[effect("break", "", saved=TT(cacheRead=5000), caused=TT(cacheWrite5m=5000), to=P("messages", 4),
+                             note="the entry was lost early: the client body lost it too (in the baseline)"),
+                      effect("ttlPremium", "", saved=TT(cacheWrite5m=1000), caused=TT(cacheWrite1h=1000), frm="nil",
+                             to=P("messages", 0), ttl="1h",
+                             note="the client body wrote m0 at 5m; the host's 1h mark writes it at 1h")])
+    s1["expected"]["effects"] = [s1["expected"]["effects"][1], s1["expected"]["effects"][0]]
+    write_issue("markpremium/host-1h-mark-on-evicted-entry/hot/1h", 49,
+                "The previous request cached 5,000 tokens, and the provider evicted the entry: it reads nothing and "
+                "writes all 5,000. The break is in the baseline: the client body lost the entry too and writes all 5,000 "
+                "at 5m. The host's 1h mark at messages[0] writes m0 at 1h. ttlPremium books 1,000 x ($6.00 - $3.75)/M = "
+                "-$0.00225. A premium that skipped the positions of an in-baseline break would book nothing and "
+                "overstate the saving.",
+                DIMS("setting-breakpoint", "messages", "mark-premium-evicted", ttl="1h"), [s0, s1])
 
 
 if __name__ == "__main__":

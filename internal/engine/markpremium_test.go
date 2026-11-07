@@ -257,6 +257,9 @@ func TestAHostMarkBeforeTheClientsLastBreakpointPaysTheUpgradeOnEveryToken(t *te
 	if p := effect(t, res, EffectTTLPremium); p.Saved != (TierTokens{CacheWrite5m: 3000}) || p.Caused != (TierTokens{CacheWrite1h: 3000}) {
 		t.Fatalf("ttlPremium = %+v, want 3000 w5m -> 3000 w1h", p)
 	}
+	if p := effect(t, res, EffectTTLPremium); p.From != nil || p.To == nil || *p.To != msg(0) {
+		t.Fatalf("range = (%v, %v], want (start of the prompt, messages[0]]", p.From, p.To)
+	}
 	if got := net(res); got != -2250 {
 		t.Fatalf("net = %v, want -2250", got)
 	}
@@ -281,8 +284,37 @@ func TestAnAddingOperationBeforeTheHeadIsNotBookedByTTLPremium(t *testing.T) {
 	if p := effect(t, res, EffectTTLPremium); p.Caused != (TierTokens{CacheWrite1h: 1000}) {
 		t.Fatalf("ttlPremium = %+v, want 1000 (the sys head only)", p)
 	}
+	if p := effect(t, res, EffectTTLPremium); p.From == nil || *p.From != tool(0) || p.To == nil || *p.To != sys(0) {
+		t.Fatalf("range = (%v, %v], want (tools[0], system[0]]", p.From, p.To)
+	}
 	if got := net(res); got != -1750 {
 		t.Fatalf("net = %v, want -1750", got)
+	}
+	noChecks(t, res)
+}
+
+// Round 4 trace: the entry was evicted. Request 0 caches m0..m4 (1000 each). Request 1 sends the same client
+// body with client marks at msg(1) and msg(4), and the host adds a 1h mark at msg(0). The provider read
+// nothing (CacheRead 0, CacheWrite 5000, CacheWrite1h 1000). The break is in the baseline: the client body
+// lost the entry too, and wrote all 5000 at 5m (6250 units). The bill writes m0 at 1h and the rest at 5m
+// (7000 units). The difference is -750: the 1h mark moves m0 from a 5m write to a 1h write.
+func TestAHostMarkOnAnEvictedEntryPaysTheUpgrade(t *testing.T) {
+	m := msgs(5, 1000)
+	ts := NewTrackers()
+	req{at: t0, client: mk(nil, nil, m), clientBPs: bps5(msg(4)), facts: exact5m, usage: Usage{CacheWrite: 5000}}.run(ts)
+	res := req{at: t0.Add(10 * time.Second), client: mk(nil, nil, m), clientBPs: bps5(msg(1), msg(4)),
+		fwdBPs: []Breakpoint{bp1h(msg(0)), bp5(msg(1)), bp5(msg(4))},
+		facts:  EntryFacts{TTL: time.Hour, Lifetime: LifetimeExact},
+		usage:  Usage{CacheWrite: 5000, CacheWrite1h: 1000}}.run(ts)
+	p := effect(t, res, EffectTTLPremium)
+	if p.Saved != (TierTokens{CacheWrite5m: 1000}) || p.Caused != (TierTokens{CacheWrite1h: 1000}) {
+		t.Fatalf("ttlPremium = %+v, want 1000 w5m -> 1000 w1h", p)
+	}
+	if p.From != nil || p.To == nil || *p.To != msg(0) {
+		t.Fatalf("range = (%v, %v], want (start of the prompt, messages[0]]", p.From, p.To)
+	}
+	if got := net(res); got != -750 {
+		t.Fatalf("net = %v, want -750", got)
 	}
 	noChecks(t, res)
 }

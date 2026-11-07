@@ -164,6 +164,7 @@
       "caused": {
        "cacheWrite1h": 3000
       },
+      "fromNil": true,
       "to": {
        "section": "messages",
        "index": 0

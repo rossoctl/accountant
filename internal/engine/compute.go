@@ -500,8 +500,9 @@ type calcState struct {
 	clientFD   int
 	prevExtCli int // prevExt in client space, flat in the previous client body; -1 = none
 
-	pass         int          // 0 before cacheEffects, 1 on the scratch pass, 2 on the real one
-	countedBreak *CacheEffect // the break that is part of the bill difference, found on the scratch pass
+	pass          int          // 0 before cacheEffects, 1 on the scratch pass, 2 on the real one
+	countedBreak  *CacheEffect // the break that is part of the bill difference, found on the scratch pass
+	baselineBreak bool         // a break in the baseline covers the positions after the read: the client body lost them too
 
 	derivedPingRead *Position // pingRead's cache; derivedPingOK is false when the ping read nothing
 	derivedPingOK   bool
@@ -964,10 +965,14 @@ func (c *calcState) cacheEffects(res *Result) {
 		c.pass = 1
 		var scratch Result
 		c.cacheEffects(&scratch)
-		c.countedBreak = nil
+		c.countedBreak, c.baselineBreak = nil, false
 		for i := range scratch.CacheEffects {
-			if e := scratch.CacheEffects[i]; e.Kind == EffectBreak && !e.InBaseline && e.To != nil {
-				c.countedBreak = &e
+			if e := scratch.CacheEffects[i]; e.Kind == EffectBreak && e.To != nil {
+				if e.InBaseline {
+					c.baselineBreak = true
+				} else {
+					c.countedBreak = &e
+				}
 			}
 		}
 		c.pass = 2
@@ -1245,19 +1250,20 @@ func (c *calcState) premiums() (ttl, mark *CacheEffect) {
 		if j < 0 || mustFlat(c.fwd, c.clientToFwd(c.client.position(j))) != i {
 			continue
 		}
-		covered := i <= c.bstarFwd // the client body reads it
-		if covered && c.countedBreak == nil {
-			continue // nothing broke: the provider read it too, or the break is in the baseline
+		covered := i <= c.bstarFwd // the client body reads it, and a break moved it to a write
+		if covered && c.countedBreak == nil && !c.baselineBreak {
+			continue // no break covers it: the provider read it too
 		}
+		counted := covered && c.countedBreak != nil
 		fb, cb := c.fwd.cumBytes(i)-c.fwd.cumBytes(i-1), c.client.cumBytes(j)-c.client.cumBytes(j-1)
 		fm, cm := c.fwd.cumMedia(i)-c.fwd.cumMedia(i-1), c.client.cumMedia(j)-c.client.cumMedia(j-1)
 		b, m := min(fb, cb), min(fm, cm)
-		if covered { // the break priced every forwarded token here as a write, the added ones too
+		if counted { // the break priced every forwarded token here as a write, the added ones too
 			b, m = fb, fm
 		}
 		var ct string
 		var cok bool
-		if covered {
+		if counted {
 			// the counted break moved it from read to a write; it priced that write at one TTL (addBreak)
 			cok = c.countedBreak.Caused.Input == 0
 			ct = "5m"
@@ -1319,10 +1325,12 @@ func (c *calcState) premiums() (ttl, mark *CacheEffect) {
 		ttl = &CacheEffect{Kind: EffectTTLPremium, TTL: "1h", Estimated: true}
 		ttl.From, ttl.To = span(up)
 		ttl.Saved.CacheWrite5m, ttl.Caused.CacheWrite1h = t, t
-		for k := len(c.fwdBPs) - 1; k >= 0; k-- { // the change of the last 1h breakpoint, if one reported it
+		for k := len(c.fwdBPs) - 1; k >= 0; k-- { // the last 1h breakpoint that a reported operation covers
 			if b := c.fwdBPs[k]; b.ttl == "1h" && b.at <= up.last {
-				ttl.ChangeID = c.changeAt(b.at)
-				break
+				if id := c.changeAt(b.at); id != "" {
+					ttl.ChangeID = id
+					break
+				}
 			}
 		}
 	}
