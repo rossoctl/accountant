@@ -247,7 +247,6 @@ func oracleScenarios() []oracleScenario {
 func runOracle(s oracleScenario) (res Result, got, want int) {
 	ts := NewTrackers()
 	var prevF, prevC *cacheEntry
-	var libPrev bool
 	if s.warmUpTo >= 0 {
 		tok := s.clientTok[:s.warmUpTo+1]
 		var bps []oracleBP
@@ -272,7 +271,7 @@ func runOracle(s oracleScenario) (res Result, got, want int) {
 				entry = nil
 			}
 		}
-		prevF, prevC, libPrev = entry, entry, true
+		prevF, prevC = entry, entry
 	}
 	var ops []Operation
 	if s.headTTL {
@@ -301,7 +300,6 @@ func runOracle(s oracleScenario) (res Result, got, want int) {
 			usage: Usage{Input: use.in, CacheWrite: use.w5 + use.w1, CacheWrite1h: use.w1, CacheRead: use.rd}}.run(ts)
 		return r, use, base
 	}
-	_ = libPrev
 	if s.again {
 		step(nil, nil, ops, at) // the first send: it reports the operations, and the cache keeps its marks
 		prevF = &cacheEntry{ident: oracleIdent(s.fwdTok)}
@@ -330,6 +328,21 @@ func runOracle(s oracleScenario) (res Result, got, want int) {
 	return res, got, want
 }
 
+// forwardedHasExtraMark says whether the forwarded body carries a breakpoint at a position the client body
+// does not mark.
+func (s oracleScenario) forwardedHasExtraMark() bool {
+	client := map[int]bool{}
+	for _, b := range s.client {
+		client[b.at] = true
+	}
+	for _, b := range s.fwdBPs {
+		if !client[b.at] {
+			return true
+		}
+	}
+	return false
+}
+
 // knownLow says whether a combination is one where the library books less saving than the truth, by
 // design or by an earlier limit that this change does not touch. In all of them the error is on the safe
 // side (R45). Everything outside these classes must be exact, and no combination may be higher than the
@@ -347,7 +360,9 @@ func runOracle(s oracleScenario) (res Result, got, want int) {
 //     the same break.
 func knownLow(s oracleScenario) bool {
 	if s.again {
-		return true
+		// A repeat leaves the client body unable to read the entry only when the forwarded body has a
+		// breakpoint the client lacks: the host's mark, or the head mark of a headttl change.
+		return s.forwardedHasExtraMark()
 	}
 	if s.warmUpTo < 0 {
 		return false
