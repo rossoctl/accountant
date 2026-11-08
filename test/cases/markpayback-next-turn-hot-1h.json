@@ -1,0 +1,276 @@
+{
+ "id": "markpayback/next-turn/hot/1h",
+ "description": "The same two turns with every mark at 1h. The premium on turn 0 is 6,000 x ($6.00 - $3.00) = -$0.01800. The payback on turn 1 is the same +$0.01620 (the read rate does not depend on the TTL). Net over two turns: -$0.00180. Each later turn pays back +$0.01620 again, so the mark breaks even at turn 3.",
+ "source": "issue_cases.md#52",
+ "dims": {
+  "kind": "setting-breakpoint",
+  "position": "messages",
+  "cache": "mark-payback",
+  "ttl": "1h",
+  "lifetime": "exact"
+ },
+ "rates": "fixture-v1",
+ "steps": [
+  {
+   "begin": {
+    "meta": {
+     "requestId": "r0",
+     "session": "s1",
+     "model": "agent-model",
+     "at": "2026-03-02T09:00:00Z",
+     "billing": {
+      "mode": "api"
+     }
+    },
+    "client": {
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "pos": [
+      {
+       "hash": 625792648282977192,
+       "bytes": 20000
+      },
+      {
+       "hash": 14262701665749340094,
+       "bytes": 12000
+      },
+      {
+       "hash": 4853614007946103283,
+       "bytes": 12000
+      }
+     ]
+    },
+    "clientBreakpoints": [
+     {
+      "pos": {
+       "section": "messages",
+       "index": 0
+      },
+      "ttl": "1h"
+     }
+    ]
+   },
+   "add": [],
+   "end": {
+    "thread": {
+     "id": "main"
+    },
+    "forwarded": {
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "pos": [
+      {
+       "hash": 625792648282977192,
+       "bytes": 20000
+      },
+      {
+       "hash": 14262701665749340094,
+       "bytes": 12000
+      },
+      {
+       "hash": 4853614007946103283,
+       "bytes": 12000
+      }
+     ]
+    },
+    "breakpoints": [
+     {
+      "pos": {
+       "section": "messages",
+       "index": 0
+      },
+      "ttl": "1h"
+     },
+     {
+      "pos": {
+       "section": "messages",
+       "index": 2
+      },
+      "ttl": "1h"
+     }
+    ],
+    "facts": {
+     "ttl": "1h",
+     "lifetime": "exact"
+    }
+   },
+   "usage": {
+    "input": 0,
+    "cacheRead": 0,
+    "cacheWrite": 11000,
+    "cacheWrite1h": 11000
+   },
+   "expected": {
+    "phase": "unknown",
+    "baselineUsage": {
+     "input": 6000,
+     "cacheRead": 0,
+     "cacheWrite": 5000,
+     "cacheWrite1h": 5000
+    },
+    "ops": [],
+    "effects": [
+     {
+      "kind": "markPremium",
+      "changeId": "",
+      "saved": {
+       "input": 6000
+      },
+      "caused": {
+       "cacheWrite1h": 6000
+      },
+      "from": {
+       "section": "messages",
+       "index": 0
+      },
+      "to": {
+       "section": "messages",
+       "index": 2
+      },
+      "ttl": "1h",
+      "note": "the client body bills these tokens as input; the host's mark makes the provider write them"
+     }
+    ],
+    "unpriced": [
+     {
+      "reason": "penalty_unknown"
+     }
+    ]
+   }
+  },
+  {
+   "begin": {
+    "meta": {
+     "requestId": "r1",
+     "session": "s1",
+     "model": "agent-model",
+     "at": "2026-03-02T09:00:40Z",
+     "billing": {
+      "mode": "api"
+     }
+    },
+    "client": {
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "pos": [
+      {
+       "hash": 625792648282977192,
+       "bytes": 20000
+      },
+      {
+       "hash": 14262701665749340094,
+       "bytes": 12000
+      },
+      {
+       "hash": 4853614007946103283,
+       "bytes": 12000
+      },
+      {
+       "hash": 6833820594810254769,
+       "bytes": 2000
+      }
+     ]
+    },
+    "clientBreakpoints": [
+     {
+      "pos": {
+       "section": "messages",
+       "index": 0
+      },
+      "ttl": "1h"
+     }
+    ]
+   },
+   "add": [],
+   "end": {
+    "thread": {
+     "id": "main"
+    },
+    "forwarded": {
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "pos": [
+      {
+       "hash": 625792648282977192,
+       "bytes": 20000
+      },
+      {
+       "hash": 14262701665749340094,
+       "bytes": 12000
+      },
+      {
+       "hash": 4853614007946103283,
+       "bytes": 12000
+      },
+      {
+       "hash": 6833820594810254769,
+       "bytes": 2000
+      }
+     ]
+    },
+    "breakpoints": [
+     {
+      "pos": {
+       "section": "messages",
+       "index": 0
+      },
+      "ttl": "1h"
+     }
+    ],
+    "facts": {
+     "ttl": "1h",
+     "lifetime": "exact"
+    }
+   },
+   "usage": {
+    "input": 0,
+    "cacheRead": 11000,
+    "cacheWrite": 500,
+    "cacheWrite1h": 500
+   },
+   "expected": {
+    "phase": "hot",
+    "baselineUsage": {
+     "input": 6000,
+     "cacheRead": 5000,
+     "cacheWrite": 500,
+     "cacheWrite1h": 500
+    },
+    "ops": [],
+    "effects": [
+     {
+      "kind": "markPayback",
+      "changeId": "",
+      "saved": {
+       "input": 6000
+      },
+      "caused": {
+       "cacheRead": 6000
+      },
+      "from": {
+       "section": "messages",
+       "index": 0
+      },
+      "to": {
+       "section": "messages",
+       "index": 2
+      },
+      "note": "the client body bills these tokens as input; the provider reads them"
+     }
+    ]
+   }
+  }
+ ]
+}

@@ -2144,6 +2144,252 @@ def r9():
                      [s0, ping_step(240, ses, KAW, call), s1])
 
 
+# accountant#53: the rescue is the smaller of what the ping read and what the request read (design §4.4
+# condition 4), with a big write on the request. Turn 0 caches 6,000 tokens: system 2,000, m0 2,000, m1 2,000.
+def issue53(cid, ping_read_tokens, ping_pos, req_read, written, ttl, ping_at, req_at, rescued, text, edit=False,
+            base_read=None, open_=None):
+    ses = "s-" + cid.replace("/", "-")
+    KAW = "ka:main:w-i53-" + cid.split("/")[-1]
+    sysb = [("sys", 2000)]
+    m0 = [("m0", 2000), ("m1", 2000)]
+    one_h = ttl == "1h"
+    tier = (lambda n: dict(cacheWrite1h=n)) if one_h else (lambda n: dict(cacheWrite5m=n))
+    bp = lambda msgs: bps(msgs, ttl)
+    w = lambda r, n: U(read=r, write=n, w1h=n) if one_h else U(read=r, write=n)
+    facts0 = {"ttl": ttl, "lifetime": "exact"}
+    s0 = sim(0, "r0", ([], sysb, m0), ([], sysb, m0), [], "unknown", session=ses, cbp=bp(m0), fbp=bp(m0),
+             usage=w(0, 6000), base=w(0, 6000), facts=facts0)
+    # An edit changes message 0: the provider then finds only the system block. Otherwise the request appends.
+    m1 = ([("m0e", 2000), ("m1", 2000)] if edit else m0) + [("m2", written - 2000 * edit * 2)]
+    facts = dict(facts0)
+    if ping_at is not None:
+        facts.update({"pingWindow": KAW, "lastPing": ts(ping_at), "pingRead": ping_pos})
+    total = tokens(sysb, m1)
+    use = w(req_read, total - req_read)
+    base_read = req_read - rescued if base_read is None else base_read
+    base = w(base_read, total - base_read)
+    effects = None
+    boundary = ping_pos if rescued < req_read else P("system", 0) if req_read == 2000 else P("messages", 1)
+    if rescued:
+        effects = [effect("rescue", KAW, saved=TT(**tier(rescued)), caused=TT(cacheRead=rescued), to=ping_pos)]
+        if edit:
+            effects.append(effect("break", "", frm=P("system", 0), to=P("system", 0)))
+    s1 = sim(req_at, "r1", ([], sysb, m1), ([], sysb, m1), [], "hot", session=ses, cbp=bp(m1), fbp=bp(m1), prev=(6000, 6000),
+             usage=use, base=base, facts=facts, effects=effects,
+             boundary=P("system", 0) if edit else boundary)
+    steps = [s0]
+    if ping_at is not None:
+        steps.append(ping_step(ping_at, ses, KAW, ping_call(cacheRead=ping_read_tokens, input=5)))
+    steps.append(s1)
+    write_review(cid, 53, text, DIMS("rescue", "beforeBStar", "rescue" if rescued else "no-rescue", ttl=ttl,
+                                     keepalive="true" if ping_at is not None else "false"), steps, open_=open_)
+
+
+def i53():
+    issue53("keepalive/ping-rescue-request-reads-less/5m", 6000, P("messages", 1), 2000, 20000, "5m", 240, 480, 2000,
+            "Turn 0 caches 6,000 tokens. A ping at minute 4 reads all 6,000. At minute 8 a client edit changes message 0, "
+            "so the request reads only the 2,000-token system block and writes 20,000. The rescue is the smaller of the "
+            "two reads: 2,000 x ($3.75 - $0.30) = +$0.00690. The large write does not remove it (design §4.4 condition 4).",
+            edit=True)
+    issue53("keepalive/ping-rescue-request-reads-more/5m", 4000, P("messages", 0), 6000, 20000, "5m", 240, 480, 4000,
+            "Turn 0 caches 6,000 tokens. A ping at minute 4 reads 4,000 of them. The request at minute 8 reads 6,000 "
+            "and writes 20,000. The rescue is the smaller of the two reads: 4,000 x ($3.75 - $0.30) = +$0.01380.")
+    issue53("keepalive/ping-rescue-large-turn/1h", 6000, P("messages", 1), 6000, 20000, "1h", 58 * 60, 70 * 60, 6000,
+            "Turn 0 caches 6,000 tokens at 1h. A ping at minute 58 reads all 6,000. The request at minute 70 is past the "
+            "hour from turn 0, reads 6,000 and writes 20,000 at 1h. The entry would have expired, so the rescue avoids "
+            "a 1h write: 6,000 x ($6.00 - $0.30) = +$0.03420.")
+    issue53("keepalive/no-ping-large-turn/no-rescue/5m", 0, None, 6000, 20000, "5m", None, 480, 0,
+            "Turn 0 caches 6,000 tokens. No ping is sent. The request at minute 8 reads 6,000 and writes 20,000. "
+            "The provider read the entry, so the clock is wrong and the phase is hot (design §5.2). A large write "
+            "alone never earns a rescue: no effect.")
+
+
+# accountant#56: a 1h entry that changes, expires or is downgraded, and keep-alive across the hour.
+def i56():
+    CH = "cg:ttl:i56"
+    cm = [("a", 2000), ("b", 3000), ("c", 2000)]
+    fm = [("a", 2000), ("b2", 1000), ("c", 2000)]  # the mask cuts message 1 from 3,000 to 1,000: 2,000 saved
+    c1m, f1m = cm + [("d", 500)], fm + [("d", 500)]
+    op = rewrite("o1", "mask", "messages", 1, 3000, 1000, CH)
+    ses = "s-i56"
+
+    def marks(ttl, i):
+        return [{"pos": P("messages", i), "ttl": ttl}]
+
+    def r0(ttl, w1h, saved, billed1h=None):
+        b = marks(ttl, 2)
+        w = 5000 if billed1h is None else 5000
+        return step(0, "r0", body([], [], cm), body([], [], fm), b, b, [op], U(write=5000, w1h=w1h),
+                    expect("unknown", U(write=7000, w1h=7000 if ttl == "1h" else 0),
+                           [eop(CH, saved=saved, note="first request: nothing is cached")],
+                           unpriced=[{"reason": "penalty_unknown"}]), facts={"ttl": ttl, "lifetime": "exact"})
+
+    h1 = lambda n: TT(cacheWrite1h=n)
+    DIM = lambda cache, **kw: DIMS("rewrite", "afterBStarToL", cache, ttl="1h", **kw)
+
+    # Row 1: the prefix changes while the 1h entry is alive. No operation: the client edit alone is the break.
+    ce = [("a2", 2000), ("b", 3000), ("c", 2000), ("d", 500)]
+    mk = marks("1h", 3)
+    s0 = step(0, "r0", body([], [], cm), body([], [], cm), marks("1h", 2), marks("1h", 2), [], U(write=7000, w1h=7000),
+              expect("unknown", U(write=7000, w1h=7000), [], unpriced=[{"reason": "penalty_unknown"}]),
+              facts={"ttl": "1h", "lifetime": "exact"})
+    s1 = step(1200, "r1", body([], [], ce), body([], [], ce), mk, mk, [], U(write=7500, w1h=7500),
+              expect("hot", U(write=7500, w1h=7500), [],
+                     effects=[effect("break", "", note="the client edited message 0; the break moves no tokens")]),
+              facts={"ttl": "1h", "lifetime": "exact"})
+    write_more("ttl/1h-entry-prefix-changes/hot/1h", "I56a",
+               "r0 writes 7,000 tokens at 1h. r1 comes 20 minutes later and the client has edited message 0, so the "
+               "provider reads nothing and writes all 7,500 at 1h. The 1h entry is alive, so the phase is hot (not cold "
+               "from a 5m expiry), and the lost read is a break nobody caused, in the client body's bill too.",
+               DIM("break"), [s0, s1])
+
+    # Row 2: the same entry, the prefix unchanged. The replay is a read.
+    s0 = r0("1h", 5000, h1(2000))
+    s1 = step(1200, "r1", body([], [], c1m), body([], [], f1m), mk, mk, [], U(read=5000, write=500, w1h=500),
+              expect("hot", U(read=7000, write=500, w1h=500), [eop(CH, saved=TT(cacheRead=2000))],
+                     boundary=P("messages", 2)), facts={"ttl": "1h", "lifetime": "exact"})
+    write_more("ttl/1h-entry-replay/read-after-20-minutes/1h", "I56b",
+               "r0 writes 5,000 tokens at 1h; the mask removes 2,000. r1 comes 20 minutes later and reads 5,000. "
+               "The entry is alive, so the replayed 2,000 tokens are a read: 2,000 x $0.30/M = $0.00060 (600 micro-dollars), "
+               "not a 5m write ($0.00750).", DIM("hit"), [s0, s1])
+
+    # Row 3: the entry really expires.
+    s0 = r0("1h", 5000, h1(2000))
+    s1 = step(4200, "r1", body([], [], c1m), body([], [], f1m), mk, mk, [], U(write=5500, w1h=5500),
+              expect("cold", U(write=7500, w1h=7500), [eop(CH, saved=h1(2000))]), facts={"ttl": "1h", "lifetime": "exact"})
+    write_more("ttl/1h-entry-expired/cold-after-70-minutes/1h", "I56c",
+               "r0 writes 5,000 tokens at 1h. r1 comes 70 minutes later, past the hour. The entry expired, so the phase is "
+               "cold and the 2,000 replayed tokens are written at 1h: 2,000 x $6.00/M = $0.01200 (12,000 micro-dollars).",
+               DIM("miss"), [s0, s1])
+
+    # Row 4: r0 asks 1h, the provider bills 5m (CacheWrite1h = 0), and the host says so in Facts.TTL.
+    s0 = step(0, "r0", body([], [], cm), body([], [], fm), marks("1h", 2), marks("1h", 2), [op], U(write=5000),
+              expect("unknown", U(write=7000), [eop(CH, saved=TT(cacheWrite5m=2000), note="the provider billed the write at 5m")],
+                     unpriced=[{"reason": "penalty_unknown"}]), facts={"ttl": "5m", "lifetime": "exact"})
+    s1 = step(600, "r1", body([], [], c1m), body([], [], f1m), marks("1h", 3), marks("1h", 3), [], U(write=5500),
+              expect("cold", U(write=7500), [eop(CH, saved=TT(cacheWrite5m=2000))]), facts={"ttl": "5m", "lifetime": "exact"})
+    write_more("ttl/1h-ask-billed-5m/cold-after-10-minutes/5m", "I56d",
+               "r0 asks for a 1h entry and the provider bills it as 5m (CacheWrite1h is 0); the host reports Facts.TTL 5m. "
+               "The usage split alone is not enough: the library needs EntryFacts.TTL to agree. r1 comes 10 minutes later: "
+               "the 5m entry expired, so the phase is cold and the 2,000 replayed tokens are written at 5m: "
+               "2,000 x $3.75/M = $0.00750 (7,500 micro-dollars).", DIMS("rewrite", "afterBStarToL", "miss"), [s0, s1])
+
+    # Row 5: a 1h head and a 2,000-token 5m tail, a ping at minute 4, the return at minute 8.
+    KAW = "ka:main:w-i56e"
+    m = [("a", 2000), ("b", 2000), ("c", 2000)]
+    mk0 = [{"pos": P("messages", 1), "ttl": "1h"}, {"pos": P("messages", 2), "ttl": "5m"}]
+    m1 = m + [("d", 500)]
+    mk1 = [{"pos": P("messages", 1), "ttl": "1h"}, {"pos": P("messages", 3), "ttl": "5m"}]
+    s0 = step(0, "r0", body([], [], m), body([], [], m), mk0, mk0, [], U(write=6000, w1h=4000),
+              expect("unknown", U(write=6000, w1h=4000), [], unpriced=[{"reason": "penalty_unknown"}]), session=ses + "e",
+              facts={"ttl": "5m", "lifetime": "exact"})
+    facts = {"ttl": "5m", "lifetime": "exact", "lastPing": ts(240), "pingRead": P("messages", 2), "pingWindow": KAW}
+    s1 = step(480, "r1", body([], [], m1), body([], [], m1), mk1, mk1, [], U(read=6000, write=500),
+              expect("hot", U(read=4000, write=2500), [], boundary=P("messages", 2),
+                     effects=[effect("rescue", KAW, saved=TT(cacheWrite5m=2000), caused=TT(cacheRead=2000), to=P("messages", 2))]),
+              session=ses + "e", facts=facts)
+    write_more("keepalive/ping-rescue-1h-head-5m-tail/tail-only/5m", "I56e",
+               "A 1h head (4,000 tokens) and a 5m tail (2,000). A ping at minute 4 reads all 6,000. The request at minute 8 "
+               "reads 6,000. Without the ping the 1h head was alive and the tail expired, so the rescue is the tail only: "
+               "2,000 x ($3.75 - $0.30) = +$0.00690.",
+               DIMS("rescue", "beforeBStar", "rescue", keepalive="true", ttl="mixed"),
+               [s0, ping_step(240, ses + "e", KAW, ping_call(cacheRead=6000, input=5)), s1])
+
+    m = [("a", 2000), ("b", 2000), ("c", 2000)]
+    m1 = m + [("d", 500)]
+    # Row 6: a 1h thread of 6,000, a ping at minute 59, the return at minute 62.
+    KAW = "ka:main:w-i56f"
+    mk0 = [{"pos": P("messages", 2), "ttl": "1h"}]
+    mk1 = [{"pos": P("messages", 3), "ttl": "1h"}]
+    s0 = step(0, "r0", body([], [], m), body([], [], m), mk0, mk0, [], U(write=6000, w1h=6000),
+              expect("unknown", U(write=6000, w1h=6000), [], unpriced=[{"reason": "penalty_unknown"}]), session=ses + "f",
+              facts={"ttl": "1h", "lifetime": "exact"})
+    facts = {"ttl": "1h", "lifetime": "exact", "lastPing": ts(59 * 60), "pingRead": P("messages", 2), "pingWindow": KAW}
+    s1 = step(62 * 60, "r1", body([], [], m1), body([], [], m1), mk1, mk1, [], U(read=6000, write=500, w1h=500),
+              expect("hot", U(write=6500, w1h=6500), [], boundary=P("messages", 2),
+                     effects=[effect("rescue", KAW, saved=TT(cacheWrite1h=6000), caused=TT(cacheRead=6000), to=P("messages", 2))]),
+              session=ses + "f", facts=facts)
+    write_more("keepalive/ping-rescue-1h-thread/across-the-hour/1h", "I56f",
+               "A 1h thread of 6,000 tokens. A ping at minute 59 reads all 6,000 and renews the entry. The request at "
+               "minute 62 is past the hour from r0 and 3 minutes after the ping. The rescue avoids a 1h write: "
+               "6,000 x ($6.00 - $0.30) = +$0.03420.",
+               DIMS("rescue", "beforeBStar", "rescue", keepalive="true", ttl="1h"),
+               [s0, ping_step(59 * 60, ses + "f", KAW, ping_call(cacheRead=6000, input=5)), s1])
+
+
+# accountant#55 rows 4 and 5: the split with both halves changed, and a mark that moves after a first-request miss.
+def i55_split():
+    SPL = "cg:cachesplit:i55a"
+    msgs = [("m0", 2000), ("m1", 2000)]
+    op = rewrite("o1", "context-guru.cachesplit", "system", 0, 3000, 3000, SPL)
+    bp = lambda last: BP(("system", 0), ("messages", last))
+    # Row 4: the stable half and the volatile tail both change. The provider reads nothing of the system block.
+    fsys0 = [("sysstable", 2500), ("sysvol", 500)]
+    fsys1 = [("sysstable2", 2500), ("sysvol2", 500)]
+    s0 = sim(0, "r0", ([], [("sysblk", 3000)], msgs), ([], fsys0, msgs), [], "unknown", add=[op],
+             cbp=bp(1), fbp=bp(1))
+    s1 = sim(30, "r1", ([], [("sysblk2", 3000)], msgs), ([], fsys1, msgs), [], "hot", add=[op], prev=(7000, 7000),
+             usage=U(write=7000), base=U(write=7000), cbp=bp(1), fbp=bp(1),
+             effects=[effect("break", "", note="the client changed its own system block; the break moves no tokens")])
+    write_issue("split/both-halves-change/no-effect", 55,
+                "cachesplit splits the system block into a stable half (2,500 tokens) and a volatile half (500). On the "
+                "next request the stable half changes too, so the provider reads nothing and writes all 7,000. The client "
+                "body would have done the same: the split saved nothing. No split effect. The break is the client's own "
+                "and moves no tokens.",
+                DIMS("setting-breakpoint", "system", "no-effect", hash="both-change"), [s0, s1])
+
+    # Row 5: only a mark moves; the tail text is the same; the previous request was a first-request miss.
+    m1 = [("m0", 2000), ("m1", 2000), ("m2", 500)]
+    s0 = sim(0, "r0", ([], [("sysblk", 3000)], msgs), ([], fsys0, msgs), [], "unknown", add=[op],
+             cbp=bp(1), fbp=bp(1))
+    s1 = sim(30, "r1", ([], [("sysblk", 3000)], m1), ([], fsys0, m1), [], "hot", add=[op], prev=(7000, 7000),
+             cbp=bp(2), fbp=bp(2), boundary=P("messages", 1))
+    write_issue("split/mark-moves-after-first-request/no-effect", 55,
+                "The first request (phase unknown) writes 7,000 tokens. On the second the client appends a message and "
+                "moves its last mark from messages[1] to messages[2]. The system block and its tail are the same. The "
+                "provider reads the 7,000 tokens of the first body. The client body would have read them too: no split "
+                "effect.",
+                DIMS("setting-breakpoint", "system", "no-effect", hash="same", mark="moved"), [s0, s1])
+
+
+# accountant#55 row 3: a rewrite over media where the host gives Size.Tokens on one side only. The bill is below the
+# media price (capped), so the range is not exact and the operation is unpriced (media_tokens, design §6.5 check 11).
+def i55_media_one_side():
+    SF = "cg:strip:i55m"
+    C = [("m0", 500), ("img", 0, 2000000), ("m2", 2000)]
+    F = [("m0", 500), ("img", 0, 1000000), ("m2", 2000)]
+    op = rewrite("o1", "context-guru.strip", "messages", 1, 0, 0, SF)
+    op["sizeBefore"] = {"bytes": 2000000, "mediaBytes": 2000000, "tokens": 1600}
+    op["sizeAfter"] = {"bytes": 1000000, "mediaBytes": 1000000}
+    s0 = media_step(0, "r0", C, F, op, billed=2350, exp_ops=[], checks=["media_tokens"],
+                    unpriced=[{"opId": "o1", "reason": "media_tokens"}, {"reason": "penalty_unknown"}], baseline=2350)
+    write_review("media/over-rewrite-tokens-one-side/unpriced", 55,
+                 "The bill (2,350 tokens) is below the library price of the image (4,000), so the media is cut to the bill. "
+                 "A rewrite over the image carries the host's count on the SizeBefore side only (1,600 tokens). The range "
+                 "is exact only with both counts, so the operation is not priced (media_tokens). Only media_tokens fails.",
+                 DIMS("rewrite", "media", "unknown", media="host-tokens-one-side"), [s0])
+
+
+# accountant#55 row 6: Anthropic caches only at explicit marks. A body with none caches nothing: usage reads 0, all
+# input. An operator cut at a new message saves input tokens at the input rate. No break is found.
+def i55_no_cache():
+    CF = "cg:cmdfilter:i55f"
+    F = {"ttl": "5m", "lifetime": "exact", "minCacheable": 1000000}  # no mark: nothing reaches the minimum
+    M = [(f"m{i}", 3000) for i in range(3)]
+    s0 = sim(0, "r0", ([], SYS10, M), ([], SYS10, M), [], "unknown", cbp=[], fbp=[], usage=U(inp=11000), base=U(inp=11000),
+             facts=F)
+    c1, f1 = M + [("m3", 3000)], M + [("m3f", 600)]
+    s1 = sim(40, "r1", ([], SYS10, c1), ([], SYS10, f1), [eop(CF, saved=TT(input=2400))], "hot", prev=(11000, 11000),
+             cbp=[], fbp=[], add=[rewrite("o1", "context-guru.cmdfilter", "messages", 3, 3000, 600, CF)],
+             usage=U(inp=11600), base=U(inp=14000), facts=F)
+    write_issue("rewrite/no-cache-control/input/5m", 55,
+                "The body has no cache_control and the provider needs explicit marks (Anthropic), so nothing is cached: "
+                "usage reads 0 and bills everything as input, on both requests. An operator cuts message 3 from 3,000 to "
+                "600 tokens. The saving is at the input rate: 2,400 x $3.00 = +$0.00720 (7,200 micro-dollars). No break "
+                "is found, because there is no cached prefix to break.",
+                DIMS("rewrite", "afterL", "none", breakpoints="none", provider="explicit-marks"), [s0, s1])
+
+
 # accountant#14: the ping's extent is what it READ from the previous body. Fresh input in the ping (a
 # sweep question, a summary request) is billed as Input but is not in that body, so it must not
 # change the extent the ping covered.
@@ -2534,6 +2780,54 @@ def i44_bad_call(name, field, value, text):
     write_more(f"check/bad-call-{name}/unpriced", "I44", text, DIMS("spend", "none", "none", check="bad_usage"), [s])
 
 
+def issue54(before, after, reason):
+    """accountant#54: the SizeBefore bound of check 13, at the limit and below zero. reason "" means priced."""
+    sysb = [("sys", 2000)]
+    m = [(f"m{i}", 3000) for i in range(4)]
+    mc, mf = m + [("m4", 6000)], m + [("m4f", 1000)]  # client body 20,000 tokens = 80,000 bytes; forwarded 60,000
+    s0 = sim(0, "r0", ([], sysb, m), ([], sysb, m), [], "unknown")
+    if not reason:  # the one operation reports the whole client body in and the whole forwarded body out
+        ch = "cg:cmdfilter:i54"
+        op = rewrite("o1", "context-guru.cmdfilter", "messages", 4, 0, 0, ch)
+        op["sizeBefore"], op["sizeAfter"] = {"bytes": before}, {"bytes": after}
+        s1 = sim(40, "r1", ([], sysb, mc), ([], sysb, mf), [eop(ch, saved=TT(cacheWrite5m=5000))], "hot",
+                 add=[op], prev=(14000, 14000), boundary=P("messages", 3))
+        return [s0, s1]
+    bad = rewrite("o1", "context-guru.cmdfilter", "messages", 2, 0, 0, "cg:cmdfilter:i54bad")
+    bad["sizeBefore"], bad["sizeAfter"] = {"bytes": before}, {"bytes": after}
+    ok = "cg:cmdfilter:i54ok"
+    good = rewrite("o2", "context-guru.cmdfilter", "messages", 4, 6000, 1000, ok)
+    s1 = sim(40, "r1", ([], sysb, mc), ([], sysb, mf), [eop(ok, saved=TT(cacheWrite5m=5000))], "hot",
+             add=[bad, good], prev=(14000, 14000), boundary=P("messages", 3),
+             unpriced=[{"opId": "o1", "reason": reason}], checks=[reason] if reason == "size_range" else None)
+    return [s0, s1]
+
+
+I54_BODY = ("The client body holds 20,000 tokens = 80,000 bytes and the forwarded body 15,000 tokens = 60,000 bytes. ")
+
+
+def i54():
+    write_more("check/size-before-at-client-body/priced", "I54",
+               I54_BODY + "One operator reports SizeBefore of exactly 80,000 bytes (the whole client body) and SizeAfter "
+               "of 60,000 (the whole forwarded body). The bound is inclusive: the operation is priced and no check "
+               "fails. It saves 5,000 write tokens (5,000 x $3.75/M = $0.01875), estimated because the sizes are bytes.",
+               DIMS("rewrite", "afterBStar", "hit", check="size_range"), issue54(80000, 60000, ""))
+    write_more("check/size-before-one-byte-above-client-body/unpriced", "I54",
+               I54_BODY + "An operator reports SizeBefore of 80,001 bytes, one byte above the client body. It is not "
+               "priced (size_range) and the check is reported. A second, honest operation on the same request is "
+               "priced as usual: 5,000 x $3.75/M = $0.01875.",
+               DIMS("rewrite", "afterBStar", "hit", check="size_range"), issue54(80001, 0, "size_range"))
+    write_more("check/size-before-negative/unpriced", "I54",
+               I54_BODY + "An operator reports SizeBefore of -4 bytes. A negative size is its own failure: the "
+               "operation is not priced (negative_size) and it never reaches the range bound of check 13. No check is reported: the reason is on Unpriced (design §6.5). "
+               "The honest operation beside it is priced as usual.",
+               DIMS("rewrite", "afterBStar", "hit", check="negative_size"), issue54(-4, 0, "negative_size"))
+    write_more("check/size-after-negative/unpriced", "I54",
+               I54_BODY + "An operator reports SizeAfter of -4 bytes. The operation is not priced (negative_size) and no check is reported. "
+               "The honest operation beside it is priced as usual.",
+               DIMS("rewrite", "afterBStar", "hit", check="negative_size"), issue54(4000, -4, "negative_size"))
+
+
 def i44():
     i44_size_range()
     i44_keeps_active()
@@ -2550,6 +2844,75 @@ def i44():
 # Issue 49: a breakpoint the host adds after the client's last one. The provider writes the tokens between the two at
 # the write tier. The client body bills them as input. The mark costs 0.25 x n (5m) or 1.0 x n (1h) in input units.
 MP = "cg:tailbreakpoint:a49"
+
+
+# accountant#52: the turn after a host-added cache mark. Turn 0: the client marks messages[0] (5,000 tokens), the
+# host adds a mark at messages[2], and the provider writes 11,000 (11,000 tokens: 5,000 + 3,000 + 3,000). The client
+# body would write 5,000 and bill 6,000 as input (the markPremium of turn 0). Turn 1 keeps the client mark and the
+# host adds none; the markPayback is what the provider reads of the host's tail.
+I52_NOTE = "the client body bills these tokens as input; the host's mark makes the provider write them"
+
+
+def i52_r0(ttl, ses=None):
+    one_h = ttl == "1h"
+    m0 = [("m0", 5000), ("m1", 3000), ("m2", 3000)]
+    cb, fb = BP(("messages", 0), ttl=ttl), BP(("messages", 0), ("messages", 2), ttl=ttl)
+    wr = dict(write=11000, w1h=11000) if one_h else dict(write=11000)
+    base = dict(write=5000, inp=6000, w1h=5000) if one_h else dict(write=5000, inp=6000)
+    tier = TT(cacheWrite1h=6000) if one_h else TT(cacheWrite5m=6000)
+    kw = {"session": ses} if ses else {}
+    return sim(0, "r0", ([], [], m0), ([], [], m0), [], "unknown", cbp=cb, fbp=fb, usage=U(**wr), base=U(**base),
+               facts={"ttl": ttl, "lifetime": "exact"},
+               effects=[effect("markPremium", "", saved=TT(input=6000), caused=tier, frm=P("messages", 0),
+                               to=P("messages", 2), ttl=ttl, note=I52_NOTE)], **kw), m0, cb
+
+
+def i52_all():
+    # Row 1: 5m, the next turn at 40 s. Payback +$0.01620.
+    s0, m0, cb = i52_r0("5m")
+    m1 = m0 + [("m3", 500)]
+    s1 = sim(40, "r1", ([], [], m1), ([], [], m1), [], "hot", prev=(11000, 11000), cbp=cb, fbp=cb,
+             usage=U(read=11000, write=500), base=U(read=5000, write=500, inp=6000),
+             effects=[effect("markPayback", "", saved=TT(input=6000), caused=TT(cacheRead=6000), frm=P("messages", 0),
+                             to=P("messages", 2), note="the client body bills these tokens as input; the provider reads them")])
+    write_issue("markpayback/next-turn/hot/5m", 52,
+                "Turn 0 has a client mark at messages[0] (5,000 tokens) and a host mark at messages[2]. The provider "
+                "writes 11,000, and the host mark costs 6,000 x ($3.75 - $3.00) = -$0.00450. Turn 1, 40 seconds later, "
+                "keeps the client mark and adds no host mark. The provider reads 11,000. The client body would read 5,000 "
+                "and bill the other 6,000 as input, so the host mark pays back 6,000 x ($3.00 - $0.30) = +$0.01620.",
+                DIMS("setting-breakpoint", "messages", "mark-payback"), [s0, s1])
+
+    # Row 2: all 1h. Premium -$0.01800, payback +$0.01620: net -$0.00180 over two turns, positive from turn 3.
+    s0, m0, cb = i52_r0("1h")
+    s1 = sim(40, "r1", ([], [], m1), ([], [], m1), [], "hot", prev=(11000, 11000), cbp=cb, fbp=cb,
+             usage=U(read=11000, write=500, w1h=500), base=U(read=5000, write=500, inp=6000, w1h=500),
+             facts={"ttl": "1h", "lifetime": "exact"},
+             effects=[effect("markPayback", "", saved=TT(input=6000), caused=TT(cacheRead=6000), frm=P("messages", 0),
+                             to=P("messages", 2), note="the client body bills these tokens as input; the provider reads them")])
+    write_issue("markpayback/next-turn/hot/1h", 52,
+                "The same two turns with every mark at 1h. The premium on turn 0 is 6,000 x ($6.00 - $3.00) = -$0.01800. "
+                "The payback on turn 1 is the same +$0.01620 (the read rate does not depend on the TTL). Net over two "
+                "turns: -$0.00180. Each later turn pays back +$0.01620 again, so the mark breaks even at turn 3.",
+                DIMS("setting-breakpoint", "messages", "mark-payback", ttl="1h"), [s0, s1])
+
+    # Row 3: past the 5m TTL: the entry expired. No credit.
+    s0, m0, cb = i52_r0("5m")
+    s1 = sim(360, "r1", ([], [], m1), ([], [], m1), [], "cold", cbp=cb, fbp=cb, usage=U(write=11500))
+    write_issue("markpayback/next-turn-after-expiry/cold/5m", 52,
+                "Turn 1 comes 6 minutes after turn 0, past the 5m TTL, with the client mark only. The entry expired, so the "
+                "provider writes all 11,500 and the client body would have done the same. There is no payback, and "
+                "the premium of turn 0 (-$0.00450) stays as a cost.",
+                DIMS("setting-breakpoint", "messages", "mark-payback-expired"), [s0, s1])
+
+    # Row 4: the provider cannot find the host entry (lookback). It reads the client mark's 5,000 only.
+    s0, m0, cb = i52_r0("5m")
+    s1 = sim(40, "r1", ([], [], m1), ([], [], m1), [], "hot", prev=(11000, 11000), cbp=cb, fbp=cb,
+             usage=U(read=5000, write=6500), base=U(read=5000, write=6500))
+    write_issue("markpayback/host-entry-not-found/hot/5m", 52,
+                "Turn 1 adds more blocks than the provider looks back from its mark (20), so it cannot find the host's "
+                "entry. It reads the client mark's 5,000 and writes the other 6,500 again. The client body would do "
+                "the same. No payback: only the read the client body also had.",
+                DIMS("setting-breakpoint", "messages", "mark-payback-missed"), [s0, s1])
 
 
 def c49():
@@ -2606,12 +2969,16 @@ def c49():
              effects=[effect("markPremium", "", saved=TT(input=6000), caused=TT(cacheWrite5m=6000), frm=P("messages", 0), to=P("messages", 2),
                              ttl="5m", note=note)])
     s1 = sim(10, "r1", ([], [], m3), ([], [], m3), [], "hot", prev=(11000, 11000), cbp=cb3, fbp=fb3,
-             usage=U(read=11000), base=U(read=11000))
-    write_issue("markpremium/inside-previous-read/hot/5m", 49,
+             usage=U(read=11000), base=U(read=5000, inp=6000),
+             effects=[effect("markPayback", "", saved=TT(input=6000), caused=TT(cacheRead=6000), frm=P("messages", 0),
+                             to=P("messages", 2), note="the client body bills these 6,000 tokens as input; the host's mark "
+                                                       "made the provider write them on request 0, and it reads them now")])
+    write_issue("markpayback/inside-previous-read/hot/5m", 49,
                 "The request repeats a body whose host mark the previous request wrote. The provider reads all 11,000 "
-                "tokens and writes none. The client body would read them too (its entry reaches the previous end). No "
-                "write, so no markPremium. Request 0 pays the premium once.",
-                DIMS("setting-breakpoint", "messages", "mark-premium-none"), [s0, s1])
+                "tokens and writes none. The client body has one mark, at messages[0]: it would read 5,000 and bill the "
+                "other 6,000 as input. No write, so no markPremium. The mark pays back what request 0 paid: "
+                "6,000 x ($3.00 - $0.30) = +$0.01620 (accountant#52).",
+                DIMS("setting-breakpoint", "messages", "mark-payback"), [s0, s1])
 
     # the client mark is already at the end: nothing to add
     s0 = sim(0, "r0", ([], [], m3), ([], [], m3), [], "unknown", cbp=BP(("messages", 2)), fbp=BP(("messages", 2)),
@@ -2782,5 +3149,5 @@ if __name__ == "__main__":
             os.remove(os.path.join(OUT, old))
     for f in (ex12, ex3, ex4, ex5, ex67, ex8, shared_prefix_cases, ex9, c01, c02, c03_04, c05, c06, c07, c08, c09, c10, c11, c12, c_threads, c_clock, c_ttl, c_mix,
               c14, s909, r909_system_hash, c15, c16, c17, c18, a1, a2, a3, a4_b3, b1_b2, b4, b5, c1_, c2_, c2b, c3_, c5, d2, d3, d4,
-              d5, d6, e2, e345, f245, h2, h5, r9, r14, r21, r20, r20b, c42, c42b, c42c, c42d, c43, i44, c49):
+              d5, d6, e2, e345, f245, h2, h5, r9, i53, i54, i56, i55_split, i55_no_cache, i55_media_one_side, r14, r21, r20, r20b, c42, c42b, c42c, c42d, c43, i44, c49, i52_all):
         f()
