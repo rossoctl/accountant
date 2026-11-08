@@ -84,8 +84,10 @@ def eop(change, saved=None, caused=None, note=None, call=None):
 
 
 def step(sec, rid, client, fwd, cbp, fbp, add, usage, exp, session="s1", model="agent-model",
-         params=None, facts=None, thread=None):
+         params=None, facts=None, thread=None, compaction=None):
     meta = {"requestId": rid, "session": session, "model": model, "at": ts(sec), "billing": {"mode": "api"}}
+    if compaction:  # the host's verdict of a client compaction manual | auto | unknown
+        meta["compaction"] = compaction
     if params:
         meta["params"] = params
     return {
@@ -120,8 +122,10 @@ def effect(kind, change, saved=None, caused=None, frm=None, to=None, ttl=None, n
     return e
 
 
-def expect(phase, baseline, ops, boundary=None, unpriced=None, effects=None, checks=None):
+def expect(phase, baseline, ops, boundary=None, unpriced=None, effects=None, checks=None, ended=None, compaction=None):
     e = {"phase": phase, "baselineUsage": baseline, "ops": ops}
+    if compaction:  # the record the library returns for the verdict, with the changes that ended
+        e["compaction"] = {"trigger": compaction, "ended": ended or []}
     if phase == "cold" and not effects:  # §5.2 row 5: the expiry is on the record, and it moves no tokens
         effects = [effect("break", "", note="the entry expired; B* is 0, so the read extent to B* is empty")]
     if effects:
@@ -606,7 +610,7 @@ ISSUES = "issue_cases.md"
 
 
 def sim(sec, rid, C, F, ops, phase, add=(), prev=(0, 0), effects=None, usage=None, base=None,
-        boundary=None, cbp=None, fbp=None, unpriced=None, checks=None, **kw):
+        boundary=None, cbp=None, fbp=None, unpriced=None, checks=None, compaction=None, ended=None, **kw):
     """One request step. C and F are (tools, system, msgs) of the client and forwarded bodies.
     hot: the provider reads the previous body's tokens and writes the rest; unknown/cold: writes all."""
     ct, ft = tokens(*C), tokens(*F)
@@ -616,9 +620,10 @@ def sim(sec, rid, C, F, ops, phase, add=(), prev=(0, 0), effects=None, usage=Non
         u, b = U(write=ft), U(write=ct)
     if phase == "unknown" and unpriced is None:  # §5.2 row 6 and §6.4: a first request has no known boundary
         unpriced = [{"reason": "penalty_unknown"}]  # request-level: the boundary is unknown, no operation owns it
-    e = expect(phase, base or b, ops, boundary=boundary, unpriced=unpriced, effects=effects, checks=checks)
+    e = expect(phase, base or b, ops, boundary=boundary, unpriced=unpriced, effects=effects, checks=checks,
+               compaction=compaction, ended=ended)
     return step(sec, rid, body(*C), body(*F), bps(C[2]) if cbp is None else cbp, bps(F[2]) if fbp is None else fbp, list(add),
-                usage or u, e, **kw)
+                usage or u, e, compaction=compaction, **kw)
 
 
 def BP(*pairs, ttl="5m"):
@@ -1057,7 +1062,7 @@ def c_client_compaction():
             boundary=P("messages", 9)),
         # r3: the client compacted. Message 0 is new, so the provider reads only the system block (2,000 tokens)
         # and writes the other 3,500. The old change has ended: it has no operation and no saving.
-        sim(130, "r3", ([], SYS1, S), ([], SYS1, S), [], "hot", usage=U(read=2000, write=3500),
+        sim(130, "r3", ([], SYS1, S), ([], SYS1, S), [], "hot", compaction="manual", ended=[CF], usage=U(read=2000, write=3500),
             base=U(read=2000, write=3500), cbp=bp(2), fbp=bp(2), boundary=P("system", 0),
             effects=[effect("break", "", to=P("system", 0),
                             note="the client compacted: its body differs from message 0 on, and the break moves no tokens")]),
@@ -1099,7 +1104,7 @@ def c_client_trim_keeps_head():
             boundary=P("messages", 9)),
         # r3: the client trimmed m1 to m3. It now sends 29,500 tokens. The provider reads the system block and m0
         # (2,000 + 4,000 tokens) and writes the other 23,500. The old change sits after the first difference, so it ended.
-        sim(130, "r3", ([], SYS1, T2), ([], SYS1, T2), [], "hot", usage=U(read=6000, write=sum(t for _, t in T2) + 2000 - 6000),
+        sim(130, "r3", ([], SYS1, T2), ([], SYS1, T2), [], "hot", compaction="auto", ended=[CF], usage=U(read=6000, write=sum(t for _, t in T2) + 2000 - 6000),
             base=U(read=6000, write=sum(t for _, t in T2) + 2000 - 6000), cbp=bp(len(T2) - 1), fbp=bp(len(T2) - 1),
             boundary=P("messages", 0),
             effects=[effect("break", "", to=P("messages", 0),
@@ -1203,7 +1208,7 @@ def c_client_tail_compaction_ends_replay():
     steps.append(
         # r3: the cache holds entries at the system block and at m10 only, so the provider reads the system block
         # (2,000 tokens) and writes the other 29,500.
-        sim(130, "r3", ([], SYS1, T), ([], SYS1, T), [], "hot", usage=U(read=2000, write=29500),
+        sim(130, "r3", ([], SYS1, T), ([], SYS1, T), [], "hot", compaction="unknown", ended=[CF], usage=U(read=2000, write=29500),
             base=U(read=2000, write=29500), cbp=bp(9), fbp=bp(9), boundary=P("system", 0),
             effects=[effect("break", "", to=P("system", 0),
                             note="the client compacted its tail: the cache has no entry before it, and the break moves no tokens")]))
@@ -1234,7 +1239,7 @@ def c_client_two_compactions():
     op3 = rewrite("o3", "context-guru.cmdfilter", "messages", 5, 8000, 1000, CF3)
     steps += [
         # r3: first compaction (head). The old change ended.
-        sim(130, "r3", ([], SYS1, S), ([], SYS1, S), [], "hot", usage=U(read=2000, write=3500),
+        sim(130, "r3", ([], SYS1, S), ([], SYS1, S), [], "hot", compaction="manual", ended=[CF], usage=U(read=2000, write=3500),
             base=U(read=2000, write=3500), cbp=bp(2), fbp=bp(2), boundary=P("system", 0),
             effects=[effect("break", "", to=P("system", 0),
                             note="the first compaction: its body differs from message 0 on, and the break moves no tokens")]),
@@ -1249,7 +1254,7 @@ def c_client_two_compactions():
             note="applied again; the client's prefix would be cached")], "hot", prev=(14000, 7000),
             cbp=bp(5), fbp=bp(5), boundary=P("messages", 4)),
         # r7: second compaction (middle): m9k is dropped. The provider reads the system block and the summary.
-        sim(370, "r7", ([], SYS1, T), ([], SYS1, T), [], "hot", usage=U(read=2000, write=11000),
+        sim(370, "r7", ([], SYS1, T), ([], SYS1, T), [], "hot", compaction="auto", ended=[CF2], usage=U(read=2000, write=11000),
             base=U(read=2000, write=11000), cbp=bp(4), fbp=bp(4), boundary=P("system", 0),
             effects=[effect("break", "", to=P("system", 0),
                             note="the second compaction: the cache has no entry before it, and the break moves no tokens")]),

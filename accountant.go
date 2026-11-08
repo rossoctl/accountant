@@ -58,27 +58,29 @@ type (
 
 // Parts of an operation.
 type (
-	Position         = engine.Position
-	Span             = engine.Span
-	Size             = engine.Size
-	MessageSplice    = engine.MessageSplice
-	SettingChange    = engine.SettingChange
-	Kind             = engine.Kind
-	Section          = engine.Section
-	BillingMode      = engine.BillingMode
-	LifetimeKind     = engine.LifetimeKind
-	CachePhase       = engine.CachePhase
-	CacheEffectKind  = engine.CacheEffectKind
-	CacheEffectCause = engine.CacheEffectCause
+	Position          = engine.Position
+	Span              = engine.Span
+	Size              = engine.Size
+	MessageSplice     = engine.MessageSplice
+	SettingChange     = engine.SettingChange
+	Kind              = engine.Kind
+	Section           = engine.Section
+	BillingMode       = engine.BillingMode
+	LifetimeKind      = engine.LifetimeKind
+	CachePhase        = engine.CachePhase
+	CacheEffectKind   = engine.CacheEffectKind
+	CacheEffectCause  = engine.CacheEffectCause
+	CompactionTrigger = engine.CompactionTrigger
 )
 
 // What the library returns.
 type (
-	PricedOp     = engine.PricedOp
-	TierTokens   = engine.TierTokens
-	CacheEffect  = engine.CacheEffect
-	Unpriced     = engine.Unpriced
-	CheckFailure = engine.CheckFailure
+	PricedOp         = engine.PricedOp
+	TierTokens       = engine.TierTokens
+	CacheEffect      = engine.CacheEffect
+	Unpriced         = engine.Unpriced
+	CheckFailure     = engine.CheckFailure
+	CompactionRecord = engine.CompactionRecord
 )
 
 const (
@@ -110,6 +112,10 @@ const (
 	EffectMarkPremium = engine.EffectMarkPremium
 
 	CauseModelChanged = engine.CauseModelChanged
+
+	CompactionManual  = engine.CompactionManual
+	CompactionAuto    = engine.CompactionAuto
+	CompactionUnknown = engine.CompactionUnknown
 )
 
 // Machine-stable reasons in [Result].Unpriced.
