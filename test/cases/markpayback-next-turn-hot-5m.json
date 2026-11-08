@@ -1,11 +1,11 @@
 {
- "id": "markpremium/inside-previous-read/hot/5m",
- "description": "The request repeats a body whose host mark the previous request wrote. The provider reads all 11,000 tokens and writes none. The client body would read them too (its entry reaches the previous end). No write, so no markPremium. Request 0 pays the premium once.",
- "source": "issue_cases.md#49",
+ "id": "markpayback/next-turn/hot/5m",
+ "description": "Turn 0 has a client mark at messages[0] (5,000 tokens) and a host mark at messages[2]. The provider writes 11,000, and the host mark costs 6,000 x ($3.75 - $3.00) = -$0.00450. Turn 1, 40 seconds later, keeps the client mark and adds no host mark. The provider reads 11,000. The client body would read 5,000 and bill the other 6,000 as input, so the host mark pays back 6,000 x ($3.00 - $0.30) = +$0.01620.",
+ "source": "issue_cases.md#52",
  "dims": {
   "kind": "setting-breakpoint",
   "position": "messages",
-  "cache": "mark-premium-none",
+  "cache": "mark-payback",
   "ttl": "5m",
   "lifetime": "exact"
  },
@@ -150,7 +150,7 @@
      "requestId": "r1",
      "session": "s1",
      "model": "agent-model",
-     "at": "2026-03-02T09:00:10Z",
+     "at": "2026-03-02T09:00:40Z",
      "billing": {
       "mode": "api"
      }
@@ -173,6 +173,10 @@
       {
        "hash": 4853614007946103283,
        "bytes": 12000
+      },
+      {
+       "hash": 6833820594810254769,
+       "bytes": 2000
       }
      ]
     },
@@ -209,6 +213,10 @@
       {
        "hash": 4853614007946103283,
        "bytes": 12000
+      },
+      {
+       "hash": 6833820594810254769,
+       "bytes": 2000
       }
      ]
     },
@@ -217,13 +225,6 @@
       "pos": {
        "section": "messages",
        "index": 0
-      },
-      "ttl": "5m"
-     },
-     {
-      "pos": {
-       "section": "messages",
-       "index": 2
       },
       "ttl": "5m"
      }
@@ -236,18 +237,39 @@
    "usage": {
     "input": 0,
     "cacheRead": 11000,
-    "cacheWrite": 0,
+    "cacheWrite": 500,
     "cacheWrite1h": 0
    },
    "expected": {
     "phase": "hot",
     "baselineUsage": {
-     "input": 0,
-     "cacheRead": 11000,
-     "cacheWrite": 0,
+     "input": 6000,
+     "cacheRead": 5000,
+     "cacheWrite": 500,
      "cacheWrite1h": 0
     },
-    "ops": []
+    "ops": [],
+    "effects": [
+     {
+      "kind": "markPayback",
+      "changeId": "",
+      "saved": {
+       "input": 6000
+      },
+      "caused": {
+       "cacheRead": 6000
+      },
+      "from": {
+       "section": "messages",
+       "index": 0
+      },
+      "to": {
+       "section": "messages",
+       "index": 2
+      },
+      "note": "the client body bills these tokens as input; the provider reads them"
+     }
+    ]
    }
   }
  ]

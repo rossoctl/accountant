@@ -1,11 +1,11 @@
 {
- "id": "markpremium/next-turn-after-expiry/cold/5m",
- "description": "Turn 0 has a client mark at messages[0] and a host mark at messages[2]. The provider writes 11,000 tokens, and the mark costs 6,000 x ($3.75 - $3.00) = -$0.00450. Turn 1 comes 6 minutes later, past the 5m TTL, with the client mark only. The entry has expired, so the provider writes all 11,500 and the client body would have done the same. There is no credit for the host mark, and the premium of turn 0 stays as a cost. (Rows 1, 2 and 4 of accountant#52 need a payback effect that the library does not have: design \u00a74.4 counts the benefit in the next request's pricing, and it is not there.)",
- "source": "issue_cases.md#52",
+ "id": "ttl/1h-ask-billed-5m/cold-after-10-minutes/5m",
+ "description": "r0 asks for a 1h entry and the provider bills it as 5m (CacheWrite1h is 0); the host reports Facts.TTL 5m. The usage split alone is not enough: the library needs EntryFacts.TTL to agree. r1 comes 10 minutes later: the 5m entry expired, so the phase is cold and the 2,000 replayed tokens are written at 5m: 2,000 x $3.75/M = $0.00750 (7,500 micro-dollars).",
+ "source": "more_examples.md#I56d",
  "dims": {
-  "kind": "setting-breakpoint",
-  "position": "messages",
-  "cache": "mark-premium-expired",
+  "kind": "rewrite",
+  "position": "afterBStarToL",
+  "cache": "miss",
   "ttl": "5m",
   "lifetime": "exact"
  },
@@ -30,16 +30,16 @@
      ],
      "pos": [
       {
-       "hash": 625792648282977192,
-       "bytes": 20000
+       "hash": 620337896427418084,
+       "bytes": 8000
       },
       {
-       "hash": 14262701665749340094,
+       "hash": 12340099932563210358,
        "bytes": 12000
       },
       {
-       "hash": 4853614007946103283,
-       "bytes": 12000
+       "hash": 14899682270663221853,
+       "bytes": 8000
       }
      ]
     },
@@ -47,13 +47,30 @@
      {
       "pos": {
        "section": "messages",
-       "index": 0
+       "index": 2
       },
-      "ttl": "5m"
+      "ttl": "1h"
      }
     ]
    },
-   "add": [],
+   "add": [
+    {
+     "id": "o1",
+     "kind": "rewrite",
+     "operator": "mask",
+     "at": {
+      "section": "messages",
+      "index": 1
+     },
+     "sizeBefore": {
+      "bytes": 12000
+     },
+     "sizeAfter": {
+      "bytes": 4000
+     },
+     "changeId": "cg:ttl:i56"
+    }
+   ],
    "end": {
     "thread": {
      "id": "main"
@@ -66,16 +83,16 @@
      ],
      "pos": [
       {
-       "hash": 625792648282977192,
-       "bytes": 20000
+       "hash": 620337896427418084,
+       "bytes": 8000
       },
       {
-       "hash": 14262701665749340094,
-       "bytes": 12000
+       "hash": 4540961017517697664,
+       "bytes": 4000
       },
       {
-       "hash": 4853614007946103283,
-       "bytes": 12000
+       "hash": 8551067516420745051,
+       "bytes": 8000
       }
      ]
     },
@@ -83,16 +100,9 @@
      {
       "pos": {
        "section": "messages",
-       "index": 0
-      },
-      "ttl": "5m"
-     },
-     {
-      "pos": {
-       "section": "messages",
        "index": 2
       },
-      "ttl": "5m"
+      "ttl": "1h"
      }
     ],
     "facts": {
@@ -103,38 +113,26 @@
    "usage": {
     "input": 0,
     "cacheRead": 0,
-    "cacheWrite": 11000,
+    "cacheWrite": 5000,
     "cacheWrite1h": 0
    },
    "expected": {
     "phase": "unknown",
     "baselineUsage": {
-     "input": 6000,
+     "input": 0,
      "cacheRead": 0,
-     "cacheWrite": 5000,
+     "cacheWrite": 7000,
      "cacheWrite1h": 0
     },
-    "ops": [],
-    "effects": [
+    "ops": [
      {
-      "kind": "markPremium",
-      "changeId": "",
+      "changeId": "cg:ttl:i56",
       "saved": {
-       "input": 6000
+       "cacheWrite5m": 2000
       },
-      "caused": {
-       "cacheWrite5m": 6000
-      },
-      "from": {
-       "section": "messages",
-       "index": 0
-      },
-      "to": {
-       "section": "messages",
-       "index": 2
-      },
-      "ttl": "5m",
-      "note": "the client body bills these tokens as input; the host's mark makes the provider write them"
+      "caused": {},
+      "estimated": true,
+      "note": "the provider billed the write at 5m"
      }
     ],
     "unpriced": [
@@ -150,7 +148,7 @@
      "requestId": "r1",
      "session": "s1",
      "model": "agent-model",
-     "at": "2026-03-02T09:06:00Z",
+     "at": "2026-03-02T09:10:00Z",
      "billing": {
       "mode": "api"
      }
@@ -163,19 +161,19 @@
      ],
      "pos": [
       {
-       "hash": 625792648282977192,
-       "bytes": 20000
+       "hash": 620337896427418084,
+       "bytes": 8000
       },
       {
-       "hash": 14262701665749340094,
+       "hash": 12340099932563210358,
        "bytes": 12000
       },
       {
-       "hash": 4853614007946103283,
-       "bytes": 12000
+       "hash": 14899682270663221853,
+       "bytes": 8000
       },
       {
-       "hash": 6833820594810254769,
+       "hash": 14661398692511680033,
        "bytes": 2000
       }
      ]
@@ -184,9 +182,9 @@
      {
       "pos": {
        "section": "messages",
-       "index": 0
+       "index": 3
       },
-      "ttl": "5m"
+      "ttl": "1h"
      }
     ]
    },
@@ -203,19 +201,19 @@
      ],
      "pos": [
       {
-       "hash": 625792648282977192,
-       "bytes": 20000
+       "hash": 620337896427418084,
+       "bytes": 8000
       },
       {
-       "hash": 14262701665749340094,
-       "bytes": 12000
+       "hash": 4540961017517697664,
+       "bytes": 4000
       },
       {
-       "hash": 4853614007946103283,
-       "bytes": 12000
+       "hash": 8551067516420745051,
+       "bytes": 8000
       },
       {
-       "hash": 6833820594810254769,
+       "hash": 1426876972646721047,
        "bytes": 2000
       }
      ]
@@ -224,9 +222,9 @@
      {
       "pos": {
        "section": "messages",
-       "index": 0
+       "index": 3
       },
-      "ttl": "5m"
+      "ttl": "1h"
      }
     ],
     "facts": {
@@ -237,7 +235,7 @@
    "usage": {
     "input": 0,
     "cacheRead": 0,
-    "cacheWrite": 11500,
+    "cacheWrite": 5500,
     "cacheWrite1h": 0
    },
    "expected": {
@@ -245,10 +243,19 @@
     "baselineUsage": {
      "input": 0,
      "cacheRead": 0,
-     "cacheWrite": 11500,
+     "cacheWrite": 7500,
      "cacheWrite1h": 0
     },
-    "ops": [],
+    "ops": [
+     {
+      "changeId": "cg:ttl:i56",
+      "saved": {
+       "cacheWrite5m": 2000
+      },
+      "caused": {},
+      "estimated": true
+     }
+    ],
     "effects": [
      {
       "kind": "break",

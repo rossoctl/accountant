@@ -2262,7 +2262,38 @@ def i56():
                "cold and the 2,000 replayed tokens are written at 1h: 2,000 x $6.00/M = $0.01200 (12,000 micro-dollars).",
                DIM("miss"), [s0, s1])
 
-    # Rows 4 and 5 of accountant#56 find gaps in the library; they have no case until it is fixed.
+    # Row 4: r0 asks 1h, the provider bills 5m (CacheWrite1h = 0), and the host says so in Facts.TTL.
+    s0 = step(0, "r0", body([], [], cm), body([], [], fm), marks("1h", 2), marks("1h", 2), [op], U(write=5000),
+              expect("unknown", U(write=7000), [eop(CH, saved=TT(cacheWrite5m=2000), note="the provider billed the write at 5m")],
+                     unpriced=[{"reason": "penalty_unknown"}]), facts={"ttl": "5m", "lifetime": "exact"})
+    s1 = step(600, "r1", body([], [], c1m), body([], [], f1m), marks("1h", 3), marks("1h", 3), [], U(write=5500),
+              expect("cold", U(write=7500), [eop(CH, saved=TT(cacheWrite5m=2000))]), facts={"ttl": "5m", "lifetime": "exact"})
+    write_more("ttl/1h-ask-billed-5m/cold-after-10-minutes/5m", "I56d",
+               "r0 asks for a 1h entry and the provider bills it as 5m (CacheWrite1h is 0); the host reports Facts.TTL 5m. "
+               "The usage split alone is not enough: the library needs EntryFacts.TTL to agree. r1 comes 10 minutes later: "
+               "the 5m entry expired, so the phase is cold and the 2,000 replayed tokens are written at 5m: "
+               "2,000 x $3.75/M = $0.00750 (7,500 micro-dollars).", DIMS("rewrite", "afterBStarToL", "miss"), [s0, s1])
+
+    # Row 5: a 1h head and a 2,000-token 5m tail, a ping at minute 4, the return at minute 8.
+    KAW = "ka:main:w-i56e"
+    m = [("a", 2000), ("b", 2000), ("c", 2000)]
+    mk0 = [{"pos": P("messages", 1), "ttl": "1h"}, {"pos": P("messages", 2), "ttl": "5m"}]
+    m1 = m + [("d", 500)]
+    mk1 = [{"pos": P("messages", 1), "ttl": "1h"}, {"pos": P("messages", 3), "ttl": "5m"}]
+    s0 = step(0, "r0", body([], [], m), body([], [], m), mk0, mk0, [], U(write=6000, w1h=4000),
+              expect("unknown", U(write=6000, w1h=4000), [], unpriced=[{"reason": "penalty_unknown"}]), session=ses + "e",
+              facts={"ttl": "5m", "lifetime": "exact"})
+    facts = {"ttl": "5m", "lifetime": "exact", "lastPing": ts(240), "pingRead": P("messages", 2), "pingWindow": KAW}
+    s1 = step(480, "r1", body([], [], m1), body([], [], m1), mk1, mk1, [], U(read=6000, write=500),
+              expect("hot", U(read=4000, write=2500), [], boundary=P("messages", 2),
+                     effects=[effect("rescue", KAW, saved=TT(cacheWrite5m=2000), caused=TT(cacheRead=2000), to=P("messages", 2))]),
+              session=ses + "e", facts=facts)
+    write_more("keepalive/ping-rescue-1h-head-5m-tail/tail-only/5m", "I56e",
+               "A 1h head (4,000 tokens) and a 5m tail (2,000). A ping at minute 4 reads all 6,000. The request at minute 8 "
+               "reads 6,000. Without the ping the 1h head was alive and the tail expired, so the rescue is the tail only: "
+               "2,000 x ($3.75 - $0.30) = +$0.00690.",
+               DIMS("rescue", "beforeBStar", "rescue", keepalive="true", ttl="mixed"),
+               [s0, ping_step(240, ses + "e", KAW, ping_call(cacheRead=6000, input=5)), s1])
 
     m = [("a", 2000), ("b", 2000), ("c", 2000)]
     m1 = m + [("d", 500)]
@@ -2337,6 +2368,26 @@ def i55_media_one_side():
                  "A rewrite over the image carries the host's count on the SizeBefore side only (1,600 tokens). The range "
                  "is exact only with both counts, so the operation is not priced (media_tokens). Only media_tokens fails.",
                  DIMS("rewrite", "media", "unknown", media="host-tokens-one-side"), [s0])
+
+
+# accountant#55 row 6: Anthropic caches only at explicit marks. A body with none caches nothing: usage reads 0, all
+# input. An operator cut at a new message saves input tokens at the input rate. No break is found.
+def i55_no_cache():
+    CF = "cg:cmdfilter:i55f"
+    F = {"ttl": "5m", "lifetime": "exact", "minCacheable": 1000000}  # no mark: nothing reaches the minimum
+    M = [(f"m{i}", 3000) for i in range(3)]
+    s0 = sim(0, "r0", ([], SYS10, M), ([], SYS10, M), [], "unknown", cbp=[], fbp=[], usage=U(inp=11000), base=U(inp=11000),
+             facts=F)
+    c1, f1 = M + [("m3", 3000)], M + [("m3f", 600)]
+    s1 = sim(40, "r1", ([], SYS10, c1), ([], SYS10, f1), [eop(CF, saved=TT(input=2400))], "hot", prev=(11000, 11000),
+             cbp=[], fbp=[], add=[rewrite("o1", "context-guru.cmdfilter", "messages", 3, 3000, 600, CF)],
+             usage=U(inp=11600), base=U(inp=14000), facts=F)
+    write_issue("rewrite/no-cache-control/input/5m", 55,
+                "The body has no cache_control and the provider needs explicit marks (Anthropic), so nothing is cached: "
+                "usage reads 0 and bills everything as input, on both requests. An operator cuts message 3 from 3,000 to "
+                "600 tokens. The saving is at the input rate: 2,400 x $3.00 = +$0.00720 (7,200 micro-dollars). No break "
+                "is found, because there is no cached prefix to break.",
+                DIMS("rewrite", "afterL", "none", breakpoints="none", provider="explicit-marks"), [s0, s1])
 
 
 # accountant#14: the ping's extent is what it READ from the previous body. Fresh input in the ping (a
@@ -2795,29 +2846,73 @@ def i44():
 MP = "cg:tailbreakpoint:a49"
 
 
-# accountant#52 row 3: the turn after a host-added cache mark, but past the 5m TTL. Turn 0 writes 11,000 with a host
-# mark at messages[2] (markPremium -$0.0045). Turn 1 comes 6 minutes later: the entry expired, so the provider writes
-# everything and the client body would have too. There is no credit, and the premium of turn 0 stays.
-# Rows 1, 2 and 4 of the issue need a payback effect the library does not have (design §4.4 leaves the credit out).
+# accountant#52: the turn after a host-added cache mark. Turn 0: the client marks messages[0] (5,000 tokens), the
+# host adds a mark at messages[2], and the provider writes 11,000 (11,000 tokens: 5,000 + 3,000 + 3,000). The client
+# body would write 5,000 and bill 6,000 as input (the markPremium of turn 0). Turn 1 keeps the client mark and the
+# host adds none; the markPayback is what the provider reads of the host's tail.
+I52_NOTE = "the client body bills these tokens as input; the host's mark makes the provider write them"
+
+
+def i52_r0(ttl, ses=None):
+    one_h = ttl == "1h"
+    m0 = [("m0", 5000), ("m1", 3000), ("m2", 3000)]
+    cb, fb = BP(("messages", 0), ttl=ttl), BP(("messages", 0), ("messages", 2), ttl=ttl)
+    wr = dict(write=11000, w1h=11000) if one_h else dict(write=11000)
+    base = dict(write=5000, inp=6000, w1h=5000) if one_h else dict(write=5000, inp=6000)
+    tier = TT(cacheWrite1h=6000) if one_h else TT(cacheWrite5m=6000)
+    kw = {"session": ses} if ses else {}
+    return sim(0, "r0", ([], [], m0), ([], [], m0), [], "unknown", cbp=cb, fbp=fb, usage=U(**wr), base=U(**base),
+               facts={"ttl": ttl, "lifetime": "exact"},
+               effects=[effect("markPremium", "", saved=TT(input=6000), caused=tier, frm=P("messages", 0),
+                               to=P("messages", 2), ttl=ttl, note=I52_NOTE)], **kw), m0, cb
+
+
 def i52_all():
-    m0 = [("m0", 5000)]
-    m3 = m0 + [("m1", 3000), ("m2", 3000)]
-    c1 = m3 + [("m3", 500)]
-    cb0, fb0, cb1 = BP(("messages", 0)), BP(("messages", 0), ("messages", 2)), BP(("messages", 0))
-    note = "the client body bills these tokens as input; the host's mark makes the provider write them"
-    s0 = sim(0, "r0", ([], [], m3), ([], [], m3), [], "unknown", cbp=cb0, fbp=fb0, usage=U(write=11000),
-             base=U(write=5000, inp=6000),
-             effects=[effect("markPremium", "", saved=TT(input=6000), caused=TT(cacheWrite5m=6000), frm=P("messages", 0),
-                             to=P("messages", 2), ttl="5m", note=note)])
-    s1 = sim(360, "r1", ([], [], c1), ([], [], c1), [], "cold", cbp=cb1, fbp=cb1, usage=U(write=11500, inp=0))
-    write_issue("markpremium/next-turn-after-expiry/cold/5m", 52,
-                "Turn 0 has a client mark at messages[0] and a host mark at messages[2]. The provider writes 11,000 "
-                "tokens, and the mark costs 6,000 x ($3.75 - $3.00) = -$0.00450. Turn 1 comes 6 minutes later, past "
-                "the 5m TTL, with the client mark only. The entry has expired, so the provider writes all 11,500 and "
-                "the client body would have done the same. There is no credit for the host mark, and the premium of "
-                "turn 0 stays as a cost. (Rows 1, 2 and 4 of accountant#52 need a payback effect that the library "
-                "does not have: design §4.4 counts the benefit in the next request's pricing, and it is not there.)",
-                DIMS("setting-breakpoint", "messages", "mark-premium-expired"), [s0, s1])
+    # Row 1: 5m, the next turn at 40 s. Payback +$0.01620.
+    s0, m0, cb = i52_r0("5m")
+    m1 = m0 + [("m3", 500)]
+    s1 = sim(40, "r1", ([], [], m1), ([], [], m1), [], "hot", prev=(11000, 11000), cbp=cb, fbp=cb,
+             usage=U(read=11000, write=500), base=U(read=5000, write=500, inp=6000),
+             effects=[effect("markPayback", "", saved=TT(input=6000), caused=TT(cacheRead=6000), frm=P("messages", 0),
+                             to=P("messages", 2), note="the client body bills these tokens as input; the provider reads them")])
+    write_issue("markpayback/next-turn/hot/5m", 52,
+                "Turn 0 has a client mark at messages[0] (5,000 tokens) and a host mark at messages[2]. The provider "
+                "writes 11,000, and the host mark costs 6,000 x ($3.75 - $3.00) = -$0.00450. Turn 1, 40 seconds later, "
+                "keeps the client mark and adds no host mark. The provider reads 11,000. The client body would read 5,000 "
+                "and bill the other 6,000 as input, so the host mark pays back 6,000 x ($3.00 - $0.30) = +$0.01620.",
+                DIMS("setting-breakpoint", "messages", "mark-payback"), [s0, s1])
+
+    # Row 2: all 1h. Premium -$0.01800, payback +$0.01620: net -$0.00180 over two turns, positive from turn 3.
+    s0, m0, cb = i52_r0("1h")
+    s1 = sim(40, "r1", ([], [], m1), ([], [], m1), [], "hot", prev=(11000, 11000), cbp=cb, fbp=cb,
+             usage=U(read=11000, write=500, w1h=500), base=U(read=5000, write=500, inp=6000, w1h=500),
+             facts={"ttl": "1h", "lifetime": "exact"},
+             effects=[effect("markPayback", "", saved=TT(input=6000), caused=TT(cacheRead=6000), frm=P("messages", 0),
+                             to=P("messages", 2), note="the client body bills these tokens as input; the provider reads them")])
+    write_issue("markpayback/next-turn/hot/1h", 52,
+                "The same two turns with every mark at 1h. The premium on turn 0 is 6,000 x ($6.00 - $3.00) = -$0.01800. "
+                "The payback on turn 1 is the same +$0.01620 (the read rate does not depend on the TTL). Net over two "
+                "turns: -$0.00180. Each later turn pays back +$0.01620 again, so the mark breaks even at turn 3.",
+                DIMS("setting-breakpoint", "messages", "mark-payback", ttl="1h"), [s0, s1])
+
+    # Row 3: past the 5m TTL: the entry expired. No credit.
+    s0, m0, cb = i52_r0("5m")
+    s1 = sim(360, "r1", ([], [], m1), ([], [], m1), [], "cold", cbp=cb, fbp=cb, usage=U(write=11500))
+    write_issue("markpayback/next-turn-after-expiry/cold/5m", 52,
+                "Turn 1 comes 6 minutes after turn 0, past the 5m TTL, with the client mark only. The entry expired, so the "
+                "provider writes all 11,500 and the client body would have done the same. There is no payback, and "
+                "the premium of turn 0 (-$0.00450) stays as a cost.",
+                DIMS("setting-breakpoint", "messages", "mark-payback-expired"), [s0, s1])
+
+    # Row 4: the provider cannot find the host entry (lookback). It reads the client mark's 5,000 only.
+    s0, m0, cb = i52_r0("5m")
+    s1 = sim(40, "r1", ([], [], m1), ([], [], m1), [], "hot", prev=(11000, 11000), cbp=cb, fbp=cb,
+             usage=U(read=5000, write=6500), base=U(read=5000, write=6500))
+    write_issue("markpayback/host-entry-not-found/hot/5m", 52,
+                "Turn 1 adds more blocks than the provider looks back from its mark (20), so it cannot find the host's "
+                "entry. It reads the client mark's 5,000 and writes the other 6,500 again. The client body would do "
+                "the same. No payback: only the read the client body also had.",
+                DIMS("setting-breakpoint", "messages", "mark-payback-missed"), [s0, s1])
 
 
 def c49():
@@ -2874,12 +2969,16 @@ def c49():
              effects=[effect("markPremium", "", saved=TT(input=6000), caused=TT(cacheWrite5m=6000), frm=P("messages", 0), to=P("messages", 2),
                              ttl="5m", note=note)])
     s1 = sim(10, "r1", ([], [], m3), ([], [], m3), [], "hot", prev=(11000, 11000), cbp=cb3, fbp=fb3,
-             usage=U(read=11000), base=U(read=11000))
-    write_issue("markpremium/inside-previous-read/hot/5m", 49,
+             usage=U(read=11000), base=U(read=5000, inp=6000),
+             effects=[effect("markPayback", "", saved=TT(input=6000), caused=TT(cacheRead=6000), frm=P("messages", 0),
+                             to=P("messages", 2), note="the client body bills these 6,000 tokens as input; the host's mark "
+                                                       "made the provider write them on request 0, and it reads them now")])
+    write_issue("markpayback/inside-previous-read/hot/5m", 49,
                 "The request repeats a body whose host mark the previous request wrote. The provider reads all 11,000 "
-                "tokens and writes none. The client body would read them too (its entry reaches the previous end). No "
-                "write, so no markPremium. Request 0 pays the premium once.",
-                DIMS("setting-breakpoint", "messages", "mark-premium-none"), [s0, s1])
+                "tokens and writes none. The client body has one mark, at messages[0]: it would read 5,000 and bill the "
+                "other 6,000 as input. No write, so no markPremium. The mark pays back what request 0 paid: "
+                "6,000 x ($3.00 - $0.30) = +$0.01620 (accountant#52).",
+                DIMS("setting-breakpoint", "messages", "mark-payback"), [s0, s1])
 
     # the client mark is already at the end: nothing to add
     s0 = sim(0, "r0", ([], [], m3), ([], [], m3), [], "unknown", cbp=BP(("messages", 2)), fbp=BP(("messages", 2)),
@@ -3050,5 +3149,5 @@ if __name__ == "__main__":
             os.remove(os.path.join(OUT, old))
     for f in (ex12, ex3, ex4, ex5, ex67, ex8, shared_prefix_cases, ex9, c01, c02, c03_04, c05, c06, c07, c08, c09, c10, c11, c12, c_threads, c_clock, c_ttl, c_mix,
               c14, s909, r909_system_hash, c15, c16, c17, c18, a1, a2, a3, a4_b3, b1_b2, b4, b5, c1_, c2_, c2b, c3_, c5, d2, d3, d4,
-              d5, d6, e2, e345, f245, h2, h5, r9, i53, i54, i56, i55_split, i55_media_one_side, r14, r21, r20, r20b, c42, c42b, c42c, c42d, c43, i44, c49, i52_all):
+              d5, d6, e2, e345, f245, h2, h5, r9, i53, i54, i56, i55_split, i55_no_cache, i55_media_one_side, r14, r21, r20, r20b, c42, c42b, c42c, c42d, c43, i44, c49, i52_all):
         f()
