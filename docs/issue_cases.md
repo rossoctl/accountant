@@ -603,7 +603,6 @@ usage tiers above 2^40 and sums that would wrap an `int` (a case bills what its 
 | `markpremium/added-tail/hot/5m` | The client marks messages[0] (5,000 tokens). The host adds a mark at the last message. The provider reads 5,000 and writes 6,000. Client body: 6,000 input. `markPremium` moves 6,000 from input to write 5m: 6,000 x ($3.75 - $3.00)/M = -$0.00450. |
 | `markpremium/added-tail/first-request/5m` | The same on a first request (phase unknown). The client body writes 5,000 and bills 6,000 as input, so the premium is the same, -$0.00450. |
 | `markpremium/added-tail/hot/1h` | The same with 1h marks: 6,000 x ($6.00 - $3.00)/M = -$0.01800. |
-| `markpremium/inside-previous-read/hot/5m` | The next request repeats the body. The provider reads 11,000 and writes none. No `markPremium` (the first request pays it once). |
 | `markpremium/host-mark-is-client-mark/cold/5m` | The forwarded marks equal the client's. No `markPremium`. |
 | `markpremium/with-mark-text/hot/5m` | The host reports a +4-token rewrite for the mark and adds the breakpoint. The operation prices its 4 tokens (write, -$0.000015). `markPremium` prices the 6,000 shared tokens (-$0.00450) and has the rewrite's `ChangeID`. |
 | `markpremium/with-headttl/first-request/1h` | A `headttl` head (1,000, 1h) and a host 1h mark at the tail (2,000 after the client's 5m mark). `ttlPremium` books the head only, 1,000 x $2.25/M = -$0.00225. `markPremium` books 2,000 x $3.00/M = -$0.00600. No token is booked twice. |
@@ -621,7 +620,34 @@ Every `markPremium` case states `from` and `to`: the range is `(from, to]`.
 
 Not covered by a case: a removed client breakpoint (the inverse). It is out of scope; see the design, §4.4.
 
-## 9e. Cases for a client compaction (the end rule, §4.3)
+## 9e. Cases from accountant#52 to #56
+
+| Case ID | What the spec requires |
+|---|---|
+| `markpayback/inside-previous-read/hot/5m` | The next request repeats the body of a host-added mark. The provider reads 11,000 and writes none: no `markPremium`. The client body reads 5,000 and bills 6,000 as input, so `markPayback` moves 6,000 input -> read, +$0.01620 (#52). |
+| `markpayback/next-turn/hot/5m` | Turn 1, 40 s later, keeps the client mark and adds none. The provider reads 11,000. `markPayback` 6,000 x ($3.00 - $0.30)/M = +$0.01620 (#52). |
+| `markpayback/next-turn/hot/1h` | The same at 1h. Premium -$0.01800, payback +$0.01620: net -$0.00180 over two turns, positive from turn 3 (#52). |
+| `markpayback/next-turn-after-expiry/cold/5m` | Turn 1 is 6 minutes later. The entry expired: no payback, and the premium stays (#52). |
+| `markpayback/host-entry-not-found/hot/5m` | The provider cannot find the host's entry (lookback). It reads only the client mark's 5,000: no payback (#52). |
+| `keepalive/ping-rescue-request-reads-less/5m` | The ping read 6,000, the request reads 2,000 after a client edit and writes 20,000. Rescue 2,000 x ($3.75 - $0.30)/M = +$0.00690 (#53). |
+| `keepalive/ping-rescue-request-reads-more/5m` | The ping read 4,000, the request reads 6,000 and writes 20,000. Rescue 4,000 x $3.45/M = +$0.01380. Needs an explicit `PingRead` (#53). |
+| `keepalive/ping-rescue-large-turn/1h` | A 1h entry, a ping at minute 58, the return at minute 70, writes 20,000. Rescue 6,000 x ($6.00 - $0.30)/M = +$0.03420 (#53). |
+| `keepalive/no-ping-large-turn/no-rescue/5m` | The same request with no ping: no rescue. A big write alone never earns one (#53). |
+| `check/size-before-at-client-body/priced` | `SizeBefore` equals the client body: priced, no check fails (#54). |
+| `check/size-before-one-byte-above-client-body/unpriced` | One byte above: `size_range`. The honest operation beside it stays priced (#54). |
+| `check/size-before-negative/unpriced`, `check/size-after-negative/unpriced` | A negative size is `negative_size` on `Unpriced`, with no check (design §6.5) (#54). |
+| `split/both-halves-change/no-effect` | The stable half and the tail both change: no split effect (#55). |
+| `split/mark-moves-after-first-request/no-effect` | Only a mark moves after a first-request miss: no split effect (#55). |
+| `media/over-rewrite-tokens-one-side/unpriced` | A rewrite over media with `Size.Tokens` on one side: `media_tokens`, unpriced (#55). |
+| `rewrite/no-cache-control/input/5m` | An explicit-marks provider, no `cache_control`, `MinCacheable` above the body: nothing is cached, no break, the cut saves 2,400 x $3.00/M = +$0.00720 (#55). |
+| `ttl/1h-entry-prefix-changes/hot/1h` | A 1h entry alive at 20 minutes, the client edits message 0: hot, a break nobody caused (#56). |
+| `ttl/1h-entry-replay/read-after-20-minutes/1h` | The replayed 2,000 tokens are a read, $0.00060, not a write (#56). |
+| `ttl/1h-entry-expired/cold-after-70-minutes/1h` | Past the hour: cold, written at 1h, $0.01200 (#56). |
+| `ttl/1h-ask-billed-5m/cold-after-10-minutes/5m` | A 1h ask the provider bills at 5m, with `EntryFacts.TTL` 5m: cold at 10 minutes, written at 5m, $0.00750 (#56). |
+| `keepalive/ping-rescue-1h-head-5m-tail/tail-only/5m` | A 1h head, a 5m tail, a ping at minute 4, the return at minute 8: rescue on the tail only, +$0.00690 (#56). |
+| `keepalive/ping-rescue-1h-thread/across-the-hour/1h` | A ping at minute 59, the return at minute 62: rescue 6,000 x $5.70/M = +$0.03420 (#56). |
+
+## 9f. Cases for a client compaction (the end rule, §4.3)
 
 A change ends when the client edits its body at or before the change, or compacts it. Until now no case
 covered the end rule with a compaction. Each case reports one `cmdfilter` change on request 1 and applies

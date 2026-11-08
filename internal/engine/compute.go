@@ -504,17 +504,22 @@ type calcState struct {
 	prevClientBPs     []bp // the previous request's client breakpoints, flat in this client body
 	prevFwdBPs        []bp // the previous request's forwarded breakpoints, flat in this forwarded body
 
-	phase      CachePhase
-	unknown    bool // the phase was unknown before the usage was read: no break can be classified
-	prevExt    int  // the previous extent the phase uses, flat in the previous forwarded body; -1 = none
-	pingHot    bool // the entry is hot because a ping kept it (§5.2)
-	bstar      int  // B*, flat in the client body; -1 = none
-	bstarFwd   int  // B*, flat in the forwarded body; -1 = none
-	readEnd    int  // what Usage.CacheRead covers, flat in the forwarded body; -1 = nothing
-	cachedFwd  int  // what this request leaves cached, flat in the forwarded body; -1 = nothing
-	fwdFD      int
-	clientFD   int
-	prevExtCli int // prevExt in client space, flat in the previous client body; -1 = none
+	phase   CachePhase
+	unknown bool // the phase was unknown before the usage was read: no break can be classified
+	prevExt int  // the previous extent the phase uses, flat in the previous forwarded body; -1 = none
+	pingHot bool // the entry is hot because a ping kept it (§5.2)
+	// tailFrom and tailTo bound the part of a mixed-TTL entry that only a ping kept alive: the clock calls the
+	// 1h head alive, the 5m tail expired, and a ping inside the tail's TTL renewed it (flat, previous forwarded
+	// body). tailTo is -1 when there is none.
+	tailFrom, tailTo int
+	tailTTL          time.Duration
+	bstar            int // B*, flat in the client body; -1 = none
+	bstarFwd         int // B*, flat in the forwarded body; -1 = none
+	readEnd          int // what Usage.CacheRead covers, flat in the forwarded body; -1 = nothing
+	cachedFwd        int // what this request leaves cached, flat in the forwarded body; -1 = nothing
+	fwdFD            int
+	clientFD         int
+	prevExtCli       int // prevExt in client space, flat in the previous client body; -1 = none
 
 	pass          int          // 0 before cacheEffects, 1 on the scratch pass, 2 on the real one
 	countedBreak  *CacheEffect // the break that is part of the bill difference, found on the scratch pass
@@ -526,7 +531,7 @@ type calcState struct {
 
 func (r *Request) newCalc(s ThreadState, items []*item, usage Usage) *calcState {
 	c := &calcState{r: r, s: s, items: items, usage: usage, client: r.Client, fwd: r.Forwarded,
-		prevExt: -1, bstar: -1, bstarFwd: -1, readEnd: -1, cachedFwd: -1, prevExtCli: -1}
+		tailTo: -1, prevExt: -1, bstar: -1, bstarFwd: -1, readEnd: -1, cachedFwd: -1, prevExtCli: -1}
 	c.noUsage = usage == (Usage{})
 	for j, it := range items {
 		if it.op.MessageSplice != nil {
@@ -537,6 +542,13 @@ func (r *Request) newCalc(s ThreadState, items []*item, usage Usage) *calcState 
 	c.invalid = c.validate(usage)
 	c.clientBPs = c.client.breakpoints(r.ClientBreakpoints)
 	c.fwdBPs = c.fwd.breakpoints(r.Breakpoints)
+	if c.downgraded() {
+		for _, bps := range [][]bp{c.clientBPs, c.fwdBPs} {
+			for i := range bps {
+				bps[i].ttl = "5m"
+			}
+		}
+	}
 	if p := s.PrevPrint; p != nil {
 		// The previous breakpoints, as positions of this request's bodies: an entry the previous
 		// request wrote at one can be read here.
@@ -547,6 +559,23 @@ func (r *Request) newCalc(s ThreadState, items []*item, usage Usage) *calcState 
 	}
 	c.forwardPositions()
 	return c
+}
+
+// downgraded says whether the provider billed a 1h ask as 5m: the request wrote, read nothing, the bill has
+// no 1h write, and the host says the entry lives 5m (EntryFacts.TTL). Every breakpoint was written then, so
+// each 1h mark held its entry for 5m only (accountant#56). The usage alone does not decide it: a host that
+// leaves CacheWrite1h unset would look the same, so the host's own TTL must agree. With a read in the bill
+// some marks may be old 1h entries that were only read, so the usage proves nothing.
+func (c *calcState) downgraded() bool {
+	if c.noUsage || c.usage.CacheRead > 0 || c.usage.CacheWrite == 0 || c.usage.CacheWrite1h > 0 || c.r.Facts.TTL != 5*time.Minute {
+		return false
+	}
+	for _, b := range c.r.Breakpoints {
+		if b.TTL == "1h" {
+			return true
+		}
+	}
+	return false
 }
 
 // forwardPositions ends the active operations whose position a later splice removed (§4.3), or
@@ -781,6 +810,7 @@ func (c *calcState) phaseAndBoundary(res *Result) {
 		live, alive := liveExtent(segs, gap, nil)
 		switch {
 		case alive:
+			c.pingedTail(segs, gap, entryGap, live)
 			// A part the clock calls dead can still be proven alive by a billed read. That read lengthens the extent
 			// (it only lowers a saving, R45). `alive` itself stays clock-only, so a read does not preempt the ping rescue.
 			if c.usage.CacheRead > 0 {
@@ -865,6 +895,23 @@ func (c *calcState) phaseAndBoundary(res *Result) {
 		p := c.client.position(c.bstar)
 		res.Boundary = &p
 		c.bstarFwd = mustFlat(c.fwd, c.clientToFwd(p))
+	}
+}
+
+// pingedTail finds the part of a mixed-TTL entry that the clock calls expired and that a ping kept alive:
+// the parts past the live head whose own TTL is shorter than the request gap and not shorter than the gap
+// from the last ping, up to what the ping read (accountant#56). The head was alive without the ping, so the
+// rescue is the tail only.
+func (c *calcState) pingedTail(segs []entrySeg, gap, entryGap time.Duration, live int) {
+	f := c.r.Facts
+	if f.LastPing.IsZero() || f.Lifetime == LifetimeUnknown || c.pingRead() == nil {
+		return
+	}
+	limit := mustFlat(c.s.PrevPrint.Forwarded, *c.pingRead())
+	for _, sg := range segs {
+		if sg.at > live && sg.at <= limit && gap > sg.ttl && entryGap <= sg.ttl && sg.at > c.tailTo {
+			c.tailFrom, c.tailTo, c.tailTTL = live, sg.at, sg.ttl
+		}
 	}
 }
 
@@ -995,6 +1042,8 @@ func (c *calcState) cacheEffects(res *Result) {
 	}
 	if c.pingHot {
 		c.rescue(res)
+	} else if c.tailTo >= 0 {
+		c.rescueTail(res)
 	}
 	ttlp, mark := c.premiums()
 	c.headTTL(res, ttlp)
@@ -1002,6 +1051,7 @@ func (c *calcState) cacheEffects(res *Result) {
 	if mark != nil {
 		c.addEffect(res, *mark)
 	}
+	c.markPayback(res)
 	switch {
 	case c.unknown || c.s.PrevPrint == nil:
 		return // row 6
@@ -1149,6 +1199,25 @@ func (c *calcState) rescue(res *Result) {
 	}
 	e := CacheEffect{Kind: EffectRescue, ChangeID: c.r.Facts.PingWindow, To: c.pingRead(), Estimated: true}
 	addWrite(&e.Saved, ttlName(c.r.Facts.TTL), n)
+	e.Caused.CacheRead = n
+	c.addEffect(res, e)
+}
+
+// rescueTail adds the keep-alive rescue of a mixed-TTL entry (accountant#56): only the part past the head
+// that the ping kept alive. The tokens are that part, less what the request did not read beyond the head.
+func (c *calcState) rescueTail(res *Result) {
+	if c.usage.CacheRead <= 0 || c.r.Facts.SharedWarm != nil {
+		return
+	}
+	prev := c.s.PrevPrint.Forwarded
+	head := c.ratio.upTo(prev, c.tailFrom)
+	n := min(c.ratio.upTo(prev, c.tailTo)-head, c.usage.CacheRead-head)
+	if n <= 0 {
+		return
+	}
+	to := prev.position(c.tailTo)
+	e := CacheEffect{Kind: EffectRescue, ChangeID: c.r.Facts.PingWindow, To: &to, Estimated: true}
+	addWrite(&e.Saved, ttlName(c.tailTTL), n)
 	e.Caused.CacheRead = n
 	c.addEffect(res, e)
 }
@@ -1351,6 +1420,61 @@ func (c *calcState) premiums() (ttl, mark *CacheEffect) {
 		}
 	}
 	return ttl, mark
+}
+
+// markPayback adds the return on a breakpoint the host added on an earlier request (§4.4). The previous
+// request wrote the tail up to that breakpoint (a markPremium, a cost). This request reads it, and the
+// client body, whose last breakpoint is earlier, would have billed it as input. Each forwarded position
+// after B* that the provider read, that both bodies hold, and that the client body would not have cached,
+// moves from input to read. No operation prices these tokens, and the split and every rescue book their
+// own tokens (a ping rescue, a mixed-TTL tail rescue, a head's ttlRescue), so a request that already holds
+// a split or a rescue does not get a payback: a token is in one effect only.
+func (c *calcState) markPayback(res *Result) {
+	if c.phase != PhaseHot || c.unknown || c.pingHot || c.readEnd < 0 || len(c.clientBPs) == 0 || len(c.prevFwdBPs) == 0 ||
+		c.noCacheTokens() || c.splitItem() != "" || c.bstarFwd >= c.readEnd {
+		return
+	}
+	for _, e := range res.CacheEffects {
+		if e.Kind == EffectRescue || e.Kind == EffectTTLRescue || e.Kind == EffectSplit {
+			return
+		}
+	}
+	var bytes, media, first, last = 0, 0, -1, -1
+	for i := c.bstarFwd + 1; i <= min(c.readEnd, len(c.fwd.Pos)-1); i++ {
+		j := mustFlat(c.client, c.fwdToClient(c.fwd.position(i)))
+		if j < 0 || mustFlat(c.fwd, c.clientToFwd(c.client.position(j))) != i {
+			continue
+		}
+		if _, _, ok := c.writeBP(c.client, c.clientBPs, j); ok {
+			continue // the client body would have cached it: read or written, not input
+		}
+		fb, cb := c.fwd.cumBytes(i)-c.fwd.cumBytes(i-1), c.client.cumBytes(j)-c.client.cumBytes(j-1)
+		fm, cm := c.fwd.cumMedia(i)-c.fwd.cumMedia(i-1), c.client.cumMedia(j)-c.client.cumMedia(j-1)
+		bytes += min(fb, cb)
+		media += min(fm, cm)
+		if first < 0 {
+			first = i
+		}
+		last = i
+	}
+	n := min(c.ratio.tokensOf(bytes, media), c.usage.CacheRead)
+	if n <= 0 {
+		return
+	}
+	e := CacheEffect{Kind: EffectMarkPayback, Estimated: true}
+	for _, b := range c.prevFwdBPs { // the host's breakpoint that the read reaches
+		if b.at >= first && b.at <= last {
+			e.ChangeID = c.changeAt(b.at)
+		}
+	}
+	if first > 0 {
+		p := c.fwd.position(first - 1)
+		e.From = &p
+	}
+	to := c.fwd.position(last)
+	e.To = &to
+	e.Saved.Input, e.Caused.CacheRead = n, n
+	c.addEffect(res, e)
 }
 
 // headEnd is the last forwarded position that a 1h breakpoint of the previous request covers; -1
@@ -1763,6 +1887,12 @@ func (c *calcState) nextState() ThreadState {
 	next := ThreadState{Version: c.s.Version, Active: c.activeOps()}
 	fp := &Fingerprint{Thread: c.r.Thread.ID, Model: c.r.Meta.Model, At: c.r.Meta.At, Client: c.client, Forwarded: c.fwd,
 		ClientBreakpoints: c.r.ClientBreakpoints, ForwardedBreakpoints: c.r.Breakpoints}
+	if c.downgraded() { // the entry was written at 5m: the next request must not judge it by the 1h it asked for
+		fp.ForwardedBreakpoints = append([]Breakpoint(nil), c.r.Breakpoints...)
+		for i := range fp.ForwardedBreakpoints {
+			fp.ForwardedBreakpoints[i].TTL = "5m"
+		}
+	}
 	for _, it := range c.items {
 		if !it.ended && it.bad == "" && !it.op.DryRun && it.op.MessageSplice != nil {
 			fp.splices = append(fp.splices, *it.op.MessageSplice)

@@ -75,6 +75,7 @@ const (
 	EffectTTLPremium  CacheEffectKind = "ttlPremium"  // headttl, cost leg: on every request that writes the head at 1h
 	EffectTTLRescue   CacheEffectKind = "ttlRescue"   // headttl, read leg: a request reads the 1h entry after the 5m TTL
 	EffectMarkPremium CacheEffectKind = "markPremium" // a breakpoint the host added: the new tail is written, not billed as input
+	EffectMarkPayback CacheEffectKind = "markPayback" // the next request reads what a host-added breakpoint wrote: input becomes read
 )
 
 // CacheEffect is a change in how the provider bills content that is already there (§4.4). It

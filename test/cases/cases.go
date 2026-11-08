@@ -73,6 +73,8 @@ type Facts struct {
 	PingRead   *accountant.Position    `json:"pingRead,omitempty"`
 	PingWindow string                  `json:"pingWindow,omitempty"`
 	SharedWarm *accountant.Position    `json:"sharedWarm,omitempty"`
+	// MinCacheable is the model's minimum cacheable length in tokens; 0 = not set.
+	MinCacheable int `json:"minCacheable,omitempty"`
 }
 
 // EntryFacts converts the facts to the library's type. It panics on a malformed TTL, which is a
@@ -82,7 +84,8 @@ func (f Facts) EntryFacts() accountant.EntryFacts {
 	if err != nil {
 		panic(fmt.Sprintf("cases: facts ttl %q: %v", f.TTL, err))
 	}
-	return accountant.EntryFacts{TTL: ttl, Lifetime: f.Lifetime, LastPing: f.LastPing, PingRead: f.PingRead, PingWindow: f.PingWindow, SharedWarm: f.SharedWarm}
+	return accountant.EntryFacts{TTL: ttl, Lifetime: f.Lifetime, LastPing: f.LastPing, PingRead: f.PingRead, PingWindow: f.PingWindow, SharedWarm: f.SharedWarm,
+		MinCacheable: f.MinCacheable}
 }
 
 // Expected is what Compute must return for one step, in tokens for each tier.

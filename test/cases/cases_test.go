@@ -345,6 +345,8 @@ var pingReadNeedsTheHost = map[string]string{
 	// The case states a read shorter than the body its ping replays (its usage bills the whole
 	// body), to put a sibling's warm prefix past the ping's read. Only an explicit PingRead says that.
 	"keepalive/shared-past-ping-read/exact/5m": "read shorter than the replayed body",
+	// The ping read 4,000 of the 6,000 tokens it replays. Usage derivation would credit all 6,000.
+	"keepalive/ping-rescue-request-reads-more/5m": "read shorter than the replayed body",
 }
 
 // TestPingReadFromUsageMeetsEveryCase plays every case again as a host that knows no PingRead: each

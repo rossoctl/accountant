@@ -110,6 +110,7 @@ const (
 	EffectTTLPremium  = engine.EffectTTLPremium
 	EffectTTLRescue   = engine.EffectTTLRescue
 	EffectMarkPremium = engine.EffectMarkPremium
+	EffectMarkPayback = engine.EffectMarkPayback
 
 	CauseModelChanged = engine.CauseModelChanged
 
