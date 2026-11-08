@@ -28,3 +28,23 @@ jobs:
         run: |
           go generate ./test/cases
           git diff --exit-code -- test/cases
+
+  # metrics is a nested module: it may import OpenTelemetry. The root job above does not build it.
+  metrics:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: metrics
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: metrics/go.mod
+      - name: Format
+        run: test -z "$(gofmt -l .)"
+      - name: Vet
+        run: go vet ./...
+      - name: Test
+        run: go test ./...
+      - name: Tidy
+        run: go mod tidy -diff
