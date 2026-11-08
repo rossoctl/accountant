@@ -1354,6 +1354,7 @@ type CheckFailure struct {
 // applied again gets "active:" + its ChangeID, so it cannot collide with the IDs of this request (R6).
 type PricedOp struct {
     OpID      string
+    Kind      Kind // copied from the operation: rewrite, spend or setting
     Operator  string
     ChangeID  string
     DryRun    bool
@@ -1366,6 +1367,17 @@ type PricedOp struct {
 type TierTokens struct {
     Input, CacheWrite5m, CacheWrite1h, CacheRead int
 }
+
+// Sink is the hook for a host's metrics. The host calls Observe after Compute. The library never
+// calls it, so pricing stays pure (R24). A Sink must return fast, make no network call, and not keep
+// the slices of the Result. Multi calls several sinks in order and recovers a panic in one of them.
+type Observation struct {
+    Meta   RequestMeta
+    Usage  Usage
+    Result Result
+}
+type Sink interface{ Observe(Observation) }
+func Multi(sinks ...Sink) Sink
 
 type CacheEffectKind string // break | rescue | split | ttlPremium | ttlRescue | markPremium | markPayback
 

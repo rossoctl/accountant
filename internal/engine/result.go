@@ -47,6 +47,7 @@ type CheckFailure struct {
 // PricedOp is one operation in tokens for each tier.
 type PricedOp struct {
 	OpID      string
+	Kind      Kind // copied from the operation: rewrite, spend or setting
 	Operator  string
 	ChangeID  string
 	DryRun    bool
