@@ -1,0 +1,342 @@
+{
+ "id": "check/size-before-one-byte-above-client-body/unpriced",
+ "description": "The client body holds 20,000 tokens = 80,000 bytes and the forwarded body 15,000 tokens = 60,000 bytes. An operator reports SizeBefore of 80,001 bytes, one byte above the client body. It is not priced (size_range) and the check is reported. A second, honest operation on the same request is priced as usual: 5,000 x $3.75/M = $0.01875.",
+ "source": "more_examples.md#I54",
+ "dims": {
+  "kind": "rewrite",
+  "position": "afterBStar",
+  "cache": "hit",
+  "ttl": "5m",
+  "lifetime": "exact",
+  "check": "size_range"
+ },
+ "rates": "fixture-v1",
+ "steps": [
+  {
+   "begin": {
+    "meta": {
+     "requestId": "r0",
+     "session": "s1",
+     "model": "agent-model",
+     "at": "2026-03-02T09:00:00Z",
+     "billing": {
+      "mode": "api"
+     }
+    },
+    "client": {
+     "start": [
+      0,
+      0,
+      1
+     ],
+     "pos": [
+      {
+       "hash": 15745513492897880738,
+       "bytes": 8000
+      },
+      {
+       "hash": 5508475225053360789,
+       "bytes": 12000
+      },
+      {
+       "hash": 11608045664679988289,
+       "bytes": 12000
+      },
+      {
+       "hash": 17195989329813874534,
+       "bytes": 12000
+      },
+      {
+       "hash": 17438703347596249554,
+       "bytes": 12000
+      }
+     ]
+    },
+    "clientBreakpoints": [
+     {
+      "pos": {
+       "section": "system",
+       "index": 0
+      },
+      "ttl": "5m"
+     },
+     {
+      "pos": {
+       "section": "messages",
+       "index": 3
+      },
+      "ttl": "5m"
+     }
+    ]
+   },
+   "add": [],
+   "end": {
+    "thread": {
+     "id": "main"
+    },
+    "forwarded": {
+     "start": [
+      0,
+      0,
+      1
+     ],
+     "pos": [
+      {
+       "hash": 15745513492897880738,
+       "bytes": 8000
+      },
+      {
+       "hash": 5508475225053360789,
+       "bytes": 12000
+      },
+      {
+       "hash": 11608045664679988289,
+       "bytes": 12000
+      },
+      {
+       "hash": 17195989329813874534,
+       "bytes": 12000
+      },
+      {
+       "hash": 17438703347596249554,
+       "bytes": 12000
+      }
+     ]
+    },
+    "breakpoints": [
+     {
+      "pos": {
+       "section": "system",
+       "index": 0
+      },
+      "ttl": "5m"
+     },
+     {
+      "pos": {
+       "section": "messages",
+       "index": 3
+      },
+      "ttl": "5m"
+     }
+    ],
+    "facts": {
+     "ttl": "5m",
+     "lifetime": "exact"
+    }
+   },
+   "usage": {
+    "input": 0,
+    "cacheRead": 0,
+    "cacheWrite": 14000,
+    "cacheWrite1h": 0
+   },
+   "expected": {
+    "phase": "unknown",
+    "baselineUsage": {
+     "input": 0,
+     "cacheRead": 0,
+     "cacheWrite": 14000,
+     "cacheWrite1h": 0
+    },
+    "ops": [],
+    "unpriced": [
+     {
+      "reason": "penalty_unknown"
+     }
+    ]
+   }
+  },
+  {
+   "begin": {
+    "meta": {
+     "requestId": "r1",
+     "session": "s1",
+     "model": "agent-model",
+     "at": "2026-03-02T09:00:40Z",
+     "billing": {
+      "mode": "api"
+     }
+    },
+    "client": {
+     "start": [
+      0,
+      0,
+      1
+     ],
+     "pos": [
+      {
+       "hash": 15745513492897880738,
+       "bytes": 8000
+      },
+      {
+       "hash": 5508475225053360789,
+       "bytes": 12000
+      },
+      {
+       "hash": 11608045664679988289,
+       "bytes": 12000
+      },
+      {
+       "hash": 17195989329813874534,
+       "bytes": 12000
+      },
+      {
+       "hash": 17438703347596249554,
+       "bytes": 12000
+      },
+      {
+       "hash": 8453938350694027169,
+       "bytes": 24000
+      }
+     ]
+    },
+    "clientBreakpoints": [
+     {
+      "pos": {
+       "section": "system",
+       "index": 0
+      },
+      "ttl": "5m"
+     },
+     {
+      "pos": {
+       "section": "messages",
+       "index": 4
+      },
+      "ttl": "5m"
+     }
+    ]
+   },
+   "add": [
+    {
+     "id": "o1",
+     "kind": "rewrite",
+     "operator": "context-guru.cmdfilter",
+     "at": {
+      "section": "messages",
+      "index": 2
+     },
+     "sizeBefore": {
+      "bytes": 80001
+     },
+     "sizeAfter": {
+      "bytes": 0
+     },
+     "changeId": "cg:cmdfilter:i54bad"
+    },
+    {
+     "id": "o2",
+     "kind": "rewrite",
+     "operator": "context-guru.cmdfilter",
+     "at": {
+      "section": "messages",
+      "index": 4
+     },
+     "sizeBefore": {
+      "bytes": 24000
+     },
+     "sizeAfter": {
+      "bytes": 4000
+     },
+     "changeId": "cg:cmdfilter:i54ok"
+    }
+   ],
+   "end": {
+    "thread": {
+     "id": "main"
+    },
+    "forwarded": {
+     "start": [
+      0,
+      0,
+      1
+     ],
+     "pos": [
+      {
+       "hash": 15745513492897880738,
+       "bytes": 8000
+      },
+      {
+       "hash": 5508475225053360789,
+       "bytes": 12000
+      },
+      {
+       "hash": 11608045664679988289,
+       "bytes": 12000
+      },
+      {
+       "hash": 17195989329813874534,
+       "bytes": 12000
+      },
+      {
+       "hash": 17438703347596249554,
+       "bytes": 12000
+      },
+      {
+       "hash": 9653304718373531589,
+       "bytes": 4000
+      }
+     ]
+    },
+    "breakpoints": [
+     {
+      "pos": {
+       "section": "system",
+       "index": 0
+      },
+      "ttl": "5m"
+     },
+     {
+      "pos": {
+       "section": "messages",
+       "index": 4
+      },
+      "ttl": "5m"
+     }
+    ],
+    "facts": {
+     "ttl": "5m",
+     "lifetime": "exact"
+    }
+   },
+   "usage": {
+    "input": 0,
+    "cacheRead": 14000,
+    "cacheWrite": 1000,
+    "cacheWrite1h": 0
+   },
+   "expected": {
+    "phase": "hot",
+    "baselineUsage": {
+     "input": 0,
+     "cacheRead": 14000,
+     "cacheWrite": 6000,
+     "cacheWrite1h": 0
+    },
+    "ops": [
+     {
+      "changeId": "cg:cmdfilter:i54ok",
+      "saved": {
+       "cacheWrite5m": 5000
+      },
+      "caused": {},
+      "estimated": true
+     }
+    ],
+    "boundary": {
+     "section": "messages",
+     "index": 3
+    },
+    "unpriced": [
+     {
+      "opId": "o1",
+      "reason": "size_range"
+     }
+    ],
+    "checks": [
+     "size_range"
+    ]
+   }
+  }
+ ]
+}

@@ -1,0 +1,355 @@
+{
+ "id": "keepalive/ping-rescue-request-reads-less/5m",
+ "description": "Turn 0 caches 6,000 tokens. A ping at minute 4 reads all 6,000. At minute 8 a client edit changes message 0, so the request reads only the 2,000-token system block and writes 20,000. The rescue is the smaller of the two reads: 2,000 x ($3.75 - $0.30) = +$0.00690. The large write does not remove it (design \u00a74.4 condition 4).",
+ "source": "issue_cases.md#accountant-53",
+ "dims": {
+  "kind": "rescue",
+  "position": "beforeBStar",
+  "cache": "rescue",
+  "ttl": "5m",
+  "lifetime": "exact",
+  "keepalive": "true"
+ },
+ "rates": "fixture-v1",
+ "steps": [
+  {
+   "begin": {
+    "meta": {
+     "requestId": "r0",
+     "session": "s-keepalive-ping-rescue-request-reads-less-5m",
+     "model": "agent-model",
+     "at": "2026-03-02T09:00:00Z",
+     "billing": {
+      "mode": "api"
+     }
+    },
+    "client": {
+     "start": [
+      0,
+      0,
+      1
+     ],
+     "pos": [
+      {
+       "hash": 15745513492897880738,
+       "bytes": 8000
+      },
+      {
+       "hash": 5508475225053360789,
+       "bytes": 8000
+      },
+      {
+       "hash": 11608045664679988289,
+       "bytes": 8000
+      }
+     ]
+    },
+    "clientBreakpoints": [
+     {
+      "pos": {
+       "section": "system",
+       "index": 0
+      },
+      "ttl": "5m"
+     },
+     {
+      "pos": {
+       "section": "messages",
+       "index": 1
+      },
+      "ttl": "5m"
+     }
+    ]
+   },
+   "add": [],
+   "end": {
+    "thread": {
+     "id": "main"
+    },
+    "forwarded": {
+     "start": [
+      0,
+      0,
+      1
+     ],
+     "pos": [
+      {
+       "hash": 15745513492897880738,
+       "bytes": 8000
+      },
+      {
+       "hash": 5508475225053360789,
+       "bytes": 8000
+      },
+      {
+       "hash": 11608045664679988289,
+       "bytes": 8000
+      }
+     ]
+    },
+    "breakpoints": [
+     {
+      "pos": {
+       "section": "system",
+       "index": 0
+      },
+      "ttl": "5m"
+     },
+     {
+      "pos": {
+       "section": "messages",
+       "index": 1
+      },
+      "ttl": "5m"
+     }
+    ],
+    "facts": {
+     "ttl": "5m",
+     "lifetime": "exact"
+    }
+   },
+   "usage": {
+    "input": 0,
+    "cacheRead": 0,
+    "cacheWrite": 6000,
+    "cacheWrite1h": 0
+   },
+   "expected": {
+    "phase": "unknown",
+    "baselineUsage": {
+     "input": 0,
+     "cacheRead": 0,
+     "cacheWrite": 6000,
+     "cacheWrite1h": 0
+    },
+    "ops": [],
+    "unpriced": [
+     {
+      "reason": "penalty_unknown"
+     }
+    ]
+   }
+  },
+  {
+   "standalone": {
+    "version": 1,
+    "requestId": "ping-240",
+    "session": "s-keepalive-ping-rescue-request-reads-less-5m",
+    "thread": {
+     "id": "main"
+    },
+    "at": "2026-03-02T09:04:00Z",
+    "billing": {
+     "mode": "api"
+    },
+    "ops": [
+     {
+      "id": "op1",
+      "kind": "spend",
+      "operator": "keeper",
+      "changeId": "ka:main:w-i53-5m",
+      "call": {
+       "host": "api.anthropic.com",
+       "model": "agent-model",
+       "usage": {
+        "input": 5,
+        "cacheRead": 6000,
+        "cacheWrite": 0,
+        "cacheWrite1h": 0,
+        "output": 1
+       }
+      }
+     }
+    ]
+   },
+   "usage": {
+    "input": 0,
+    "cacheRead": 0,
+    "cacheWrite": 0,
+    "cacheWrite1h": 0
+   },
+   "expected": {
+    "ops": [
+     {
+      "changeId": "ka:main:w-i53-5m",
+      "saved": {},
+      "caused": {},
+      "call": {
+       "host": "api.anthropic.com",
+       "model": "agent-model",
+       "usage": {
+        "input": 5,
+        "cacheRead": 6000,
+        "cacheWrite": 0,
+        "cacheWrite1h": 0,
+        "output": 1
+       }
+      }
+     }
+    ]
+   }
+  },
+  {
+   "begin": {
+    "meta": {
+     "requestId": "r1",
+     "session": "s-keepalive-ping-rescue-request-reads-less-5m",
+     "model": "agent-model",
+     "at": "2026-03-02T09:08:00Z",
+     "billing": {
+      "mode": "api"
+     }
+    },
+    "client": {
+     "start": [
+      0,
+      0,
+      1
+     ],
+     "pos": [
+      {
+       "hash": 15745513492897880738,
+       "bytes": 8000
+      },
+      {
+       "hash": 4570361901473690306,
+       "bytes": 8000
+      },
+      {
+       "hash": 87473752052698188,
+       "bytes": 8000
+      },
+      {
+       "hash": 8241491144365360201,
+       "bytes": 64000
+      }
+     ]
+    },
+    "clientBreakpoints": [
+     {
+      "pos": {
+       "section": "system",
+       "index": 0
+      },
+      "ttl": "5m"
+     },
+     {
+      "pos": {
+       "section": "messages",
+       "index": 2
+      },
+      "ttl": "5m"
+     }
+    ]
+   },
+   "add": [],
+   "end": {
+    "thread": {
+     "id": "main"
+    },
+    "forwarded": {
+     "start": [
+      0,
+      0,
+      1
+     ],
+     "pos": [
+      {
+       "hash": 15745513492897880738,
+       "bytes": 8000
+      },
+      {
+       "hash": 4570361901473690306,
+       "bytes": 8000
+      },
+      {
+       "hash": 87473752052698188,
+       "bytes": 8000
+      },
+      {
+       "hash": 8241491144365360201,
+       "bytes": 64000
+      }
+     ]
+    },
+    "breakpoints": [
+     {
+      "pos": {
+       "section": "system",
+       "index": 0
+      },
+      "ttl": "5m"
+     },
+     {
+      "pos": {
+       "section": "messages",
+       "index": 2
+      },
+      "ttl": "5m"
+     }
+    ],
+    "facts": {
+     "ttl": "5m",
+     "lifetime": "exact",
+     "pingWindow": "ka:main:w-i53-5m",
+     "lastPing": "2026-03-02T09:04:00Z",
+     "pingRead": {
+      "section": "messages",
+      "index": 1
+     }
+    }
+   },
+   "usage": {
+    "input": 0,
+    "cacheRead": 2000,
+    "cacheWrite": 20000,
+    "cacheWrite1h": 0
+   },
+   "expected": {
+    "phase": "hot",
+    "baselineUsage": {
+     "input": 0,
+     "cacheRead": 0,
+     "cacheWrite": 22000,
+     "cacheWrite1h": 0
+    },
+    "ops": [],
+    "effects": [
+     {
+      "kind": "rescue",
+      "changeId": "ka:main:w-i53-5m",
+      "saved": {
+       "cacheWrite5m": 2000
+      },
+      "caused": {
+       "cacheRead": 2000
+      },
+      "to": {
+       "section": "messages",
+       "index": 1
+      }
+     },
+     {
+      "kind": "break",
+      "changeId": "",
+      "saved": {},
+      "caused": {},
+      "inBaseline": true,
+      "from": {
+       "section": "system",
+       "index": 0
+      },
+      "to": {
+       "section": "system",
+       "index": 0
+      }
+     }
+    ],
+    "boundary": {
+     "section": "system",
+     "index": 0
+    }
+   }
+  }
+ ]
+}

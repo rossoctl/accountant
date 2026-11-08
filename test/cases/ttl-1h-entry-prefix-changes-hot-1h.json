@@ -1,0 +1,236 @@
+{
+ "id": "ttl/1h-entry-prefix-changes/hot/1h",
+ "description": "r0 writes 7,000 tokens at 1h. r1 comes 20 minutes later and the client has edited message 0, so the provider reads nothing and writes all 7,500 at 1h. The 1h entry is alive, so the phase is hot (not cold from a 5m expiry), and the lost read is a break nobody caused, in the client body's bill too.",
+ "source": "more_examples.md#I56a",
+ "dims": {
+  "kind": "rewrite",
+  "position": "afterBStarToL",
+  "cache": "break",
+  "ttl": "1h",
+  "lifetime": "exact"
+ },
+ "rates": "fixture-v1",
+ "steps": [
+  {
+   "begin": {
+    "meta": {
+     "requestId": "r0",
+     "session": "s1",
+     "model": "agent-model",
+     "at": "2026-03-02T09:00:00Z",
+     "billing": {
+      "mode": "api"
+     }
+    },
+    "client": {
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "pos": [
+      {
+       "hash": 620337896427418084,
+       "bytes": 8000
+      },
+      {
+       "hash": 12340099932563210358,
+       "bytes": 12000
+      },
+      {
+       "hash": 14899682270663221853,
+       "bytes": 8000
+      }
+     ]
+    },
+    "clientBreakpoints": [
+     {
+      "pos": {
+       "section": "messages",
+       "index": 2
+      },
+      "ttl": "1h"
+     }
+    ]
+   },
+   "add": [],
+   "end": {
+    "thread": {
+     "id": "main"
+    },
+    "forwarded": {
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "pos": [
+      {
+       "hash": 620337896427418084,
+       "bytes": 8000
+      },
+      {
+       "hash": 12340099932563210358,
+       "bytes": 12000
+      },
+      {
+       "hash": 14899682270663221853,
+       "bytes": 8000
+      }
+     ]
+    },
+    "breakpoints": [
+     {
+      "pos": {
+       "section": "messages",
+       "index": 2
+      },
+      "ttl": "1h"
+     }
+    ],
+    "facts": {
+     "ttl": "1h",
+     "lifetime": "exact"
+    }
+   },
+   "usage": {
+    "input": 0,
+    "cacheRead": 0,
+    "cacheWrite": 7000,
+    "cacheWrite1h": 7000
+   },
+   "expected": {
+    "phase": "unknown",
+    "baselineUsage": {
+     "input": 0,
+     "cacheRead": 0,
+     "cacheWrite": 7000,
+     "cacheWrite1h": 7000
+    },
+    "ops": [],
+    "unpriced": [
+     {
+      "reason": "penalty_unknown"
+     }
+    ]
+   }
+  },
+  {
+   "begin": {
+    "meta": {
+     "requestId": "r1",
+     "session": "s1",
+     "model": "agent-model",
+     "at": "2026-03-02T09:20:00Z",
+     "billing": {
+      "mode": "api"
+     }
+    },
+    "client": {
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "pos": [
+      {
+       "hash": 16608399222428361838,
+       "bytes": 8000
+      },
+      {
+       "hash": 12363049064247175660,
+       "bytes": 12000
+      },
+      {
+       "hash": 3654029627447833831,
+       "bytes": 8000
+      },
+      {
+       "hash": 4316988095248224763,
+       "bytes": 2000
+      }
+     ]
+    },
+    "clientBreakpoints": [
+     {
+      "pos": {
+       "section": "messages",
+       "index": 3
+      },
+      "ttl": "1h"
+     }
+    ]
+   },
+   "add": [],
+   "end": {
+    "thread": {
+     "id": "main"
+    },
+    "forwarded": {
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "pos": [
+      {
+       "hash": 16608399222428361838,
+       "bytes": 8000
+      },
+      {
+       "hash": 12363049064247175660,
+       "bytes": 12000
+      },
+      {
+       "hash": 3654029627447833831,
+       "bytes": 8000
+      },
+      {
+       "hash": 4316988095248224763,
+       "bytes": 2000
+      }
+     ]
+    },
+    "breakpoints": [
+     {
+      "pos": {
+       "section": "messages",
+       "index": 3
+      },
+      "ttl": "1h"
+     }
+    ],
+    "facts": {
+     "ttl": "1h",
+     "lifetime": "exact"
+    }
+   },
+   "usage": {
+    "input": 0,
+    "cacheRead": 0,
+    "cacheWrite": 7500,
+    "cacheWrite1h": 7500
+   },
+   "expected": {
+    "phase": "hot",
+    "baselineUsage": {
+     "input": 0,
+     "cacheRead": 0,
+     "cacheWrite": 7500,
+     "cacheWrite1h": 7500
+    },
+    "ops": [],
+    "effects": [
+     {
+      "kind": "break",
+      "changeId": "",
+      "saved": {},
+      "caused": {},
+      "inBaseline": true,
+      "note": "the client edited message 0; the break moves no tokens"
+     }
+    ]
+   }
+  }
+ ]
+}

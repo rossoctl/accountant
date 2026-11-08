@@ -1,0 +1,255 @@
+{
+ "id": "keepalive/no-ping-large-turn/no-rescue/5m",
+ "description": "Turn 0 caches 6,000 tokens. No ping is sent. The request at minute 8 reads 6,000 and writes 20,000. The provider read the entry, so the clock is wrong and the phase is hot (design \u00a75.2). A large write alone never earns a rescue: no effect.",
+ "source": "issue_cases.md#accountant-53",
+ "dims": {
+  "kind": "rescue",
+  "position": "beforeBStar",
+  "cache": "no-rescue",
+  "ttl": "5m",
+  "lifetime": "exact",
+  "keepalive": "false"
+ },
+ "rates": "fixture-v1",
+ "steps": [
+  {
+   "begin": {
+    "meta": {
+     "requestId": "r0",
+     "session": "s-keepalive-no-ping-large-turn-no-rescue-5m",
+     "model": "agent-model",
+     "at": "2026-03-02T09:00:00Z",
+     "billing": {
+      "mode": "api"
+     }
+    },
+    "client": {
+     "start": [
+      0,
+      0,
+      1
+     ],
+     "pos": [
+      {
+       "hash": 15745513492897880738,
+       "bytes": 8000
+      },
+      {
+       "hash": 5508475225053360789,
+       "bytes": 8000
+      },
+      {
+       "hash": 11608045664679988289,
+       "bytes": 8000
+      }
+     ]
+    },
+    "clientBreakpoints": [
+     {
+      "pos": {
+       "section": "system",
+       "index": 0
+      },
+      "ttl": "5m"
+     },
+     {
+      "pos": {
+       "section": "messages",
+       "index": 1
+      },
+      "ttl": "5m"
+     }
+    ]
+   },
+   "add": [],
+   "end": {
+    "thread": {
+     "id": "main"
+    },
+    "forwarded": {
+     "start": [
+      0,
+      0,
+      1
+     ],
+     "pos": [
+      {
+       "hash": 15745513492897880738,
+       "bytes": 8000
+      },
+      {
+       "hash": 5508475225053360789,
+       "bytes": 8000
+      },
+      {
+       "hash": 11608045664679988289,
+       "bytes": 8000
+      }
+     ]
+    },
+    "breakpoints": [
+     {
+      "pos": {
+       "section": "system",
+       "index": 0
+      },
+      "ttl": "5m"
+     },
+     {
+      "pos": {
+       "section": "messages",
+       "index": 1
+      },
+      "ttl": "5m"
+     }
+    ],
+    "facts": {
+     "ttl": "5m",
+     "lifetime": "exact"
+    }
+   },
+   "usage": {
+    "input": 0,
+    "cacheRead": 0,
+    "cacheWrite": 6000,
+    "cacheWrite1h": 0
+   },
+   "expected": {
+    "phase": "unknown",
+    "baselineUsage": {
+     "input": 0,
+     "cacheRead": 0,
+     "cacheWrite": 6000,
+     "cacheWrite1h": 0
+    },
+    "ops": [],
+    "unpriced": [
+     {
+      "reason": "penalty_unknown"
+     }
+    ]
+   }
+  },
+  {
+   "begin": {
+    "meta": {
+     "requestId": "r1",
+     "session": "s-keepalive-no-ping-large-turn-no-rescue-5m",
+     "model": "agent-model",
+     "at": "2026-03-02T09:08:00Z",
+     "billing": {
+      "mode": "api"
+     }
+    },
+    "client": {
+     "start": [
+      0,
+      0,
+      1
+     ],
+     "pos": [
+      {
+       "hash": 15745513492897880738,
+       "bytes": 8000
+      },
+      {
+       "hash": 5508475225053360789,
+       "bytes": 8000
+      },
+      {
+       "hash": 11608045664679988289,
+       "bytes": 8000
+      },
+      {
+       "hash": 17195989329813874534,
+       "bytes": 80000
+      }
+     ]
+    },
+    "clientBreakpoints": [
+     {
+      "pos": {
+       "section": "system",
+       "index": 0
+      },
+      "ttl": "5m"
+     },
+     {
+      "pos": {
+       "section": "messages",
+       "index": 2
+      },
+      "ttl": "5m"
+     }
+    ]
+   },
+   "add": [],
+   "end": {
+    "thread": {
+     "id": "main"
+    },
+    "forwarded": {
+     "start": [
+      0,
+      0,
+      1
+     ],
+     "pos": [
+      {
+       "hash": 15745513492897880738,
+       "bytes": 8000
+      },
+      {
+       "hash": 5508475225053360789,
+       "bytes": 8000
+      },
+      {
+       "hash": 11608045664679988289,
+       "bytes": 8000
+      },
+      {
+       "hash": 17195989329813874534,
+       "bytes": 80000
+      }
+     ]
+    },
+    "breakpoints": [
+     {
+      "pos": {
+       "section": "system",
+       "index": 0
+      },
+      "ttl": "5m"
+     },
+     {
+      "pos": {
+       "section": "messages",
+       "index": 2
+      },
+      "ttl": "5m"
+     }
+    ],
+    "facts": {
+     "ttl": "5m",
+     "lifetime": "exact"
+    }
+   },
+   "usage": {
+    "input": 0,
+    "cacheRead": 6000,
+    "cacheWrite": 20000,
+    "cacheWrite1h": 0
+   },
+   "expected": {
+    "phase": "hot",
+    "baselineUsage": {
+     "input": 0,
+     "cacheRead": 6000,
+     "cacheWrite": 20000,
+     "cacheWrite1h": 0
+    },
+    "ops": []
+   }
+  }
+ ]
+}
