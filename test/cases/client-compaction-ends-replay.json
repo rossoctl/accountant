@@ -940,7 +940,7 @@
      "operator": "context-guru.cmdfilter",
      "at": {
       "section": "messages",
-      "index": 6
+      "index": 4
      },
      "sizeBefore": {
       "bytes": 32000

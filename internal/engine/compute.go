@@ -322,7 +322,7 @@ func (c *calcState) compaction() *CompactionRecord {
 	if c.r.Meta.Compaction == "" {
 		return nil
 	}
-	rec := &CompactionRecord{Trigger: c.r.Meta.Compaction}
+	rec := &CompactionRecord{Trigger: c.r.Meta.Compaction, Ended: []string{}} // [] and not null in JSON
 	for _, it := range c.items {
 		if it.active && it.ended && it.op.ChangeID != "" {
 			rec.Ended = append(rec.Ended, it.op.ChangeID)

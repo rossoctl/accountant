@@ -1,6 +1,6 @@
 {
  "id": "client-compaction/tail-edit-keeps-replay/hot/5m",
- "description": "One cmdfilter change is reported on request 1 and applied again on request 2. On request 3 the client rewrites m10, a message after the change. Nothing at or before the change moved, so the change did not end (design \u00a74.3) and it is priced as a read again (+$0.00210). An edit at the tail must not end a change.",
+ "description": "One cmdfilter change is reported on request 1 and applied again on request 2. On request 3 the client rewrites m10, a message after the change. Nothing at or before the change moved, so the change did not end (design \u00a74.3) and it is priced as a read again (+$0.00210). The host reports the edit as an auto compaction: the record exists and its list of ended changes is empty. An edit at the tail must not end a change.",
  "source": "issue_cases.md",
  "dims": {
   "kind": "rewrite",
@@ -616,7 +616,8 @@
      "at": "2026-03-02T09:02:10Z",
      "billing": {
       "mode": "api"
-     }
+     },
+     "compaction": "auto"
     },
     "client": {
      "start": [
@@ -814,6 +815,10 @@
       "note": "applied again; the client edit is after the change, so the change goes on"
      }
     ],
+    "compaction": {
+     "trigger": "auto",
+     "ended": []
+    },
     "effects": [
      {
       "kind": "break",
