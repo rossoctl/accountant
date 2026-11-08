@@ -81,12 +81,102 @@ func NewBody(tools, system, messages [][]byte) Body {
 // Text that only quotes "base64" or "data" is not media. A position that is not valid JSON counts
 // what was read before the error.
 func mediaBytes(p []byte) int {
+	if !mightHoldMedia(p) {
+		return 0
+	}
+	return mediaBytesExact(p)
+}
+
+// mediaBytesExact is the exact detector: it decodes every token of the position.
+func mediaBytesExact(p []byte) int {
 	dec := json.NewDecoder(bytes.NewReader(p))
 	n := 0
 	for {
 		if _, ok := walkValue(dec, &n); !ok {
 			return n
 		}
+	}
+}
+
+// mightHoldMedia is a byte-level pre-filter for mediaBytes. It returns false only when the exact
+// detector must count 0; true means "decode and decide". Every count comes from one of these:
+//   - a "base64" source or data URL: the text "base64" (data URLs: ";base64," without case);
+//   - a Gemini or OpenAI audio object: a key "inlineData", "inline_data" or "input_audio", and a "data" key;
+//   - a Bedrock Converse source: the keys "source" and "bytes".
+//
+// A key or value compares after JSON decoding, so an escape could hide any of these. A letter,
+// digit or ":;," can come from \u only, and "/" from \/ (a "/" alone never makes a marker). So a
+// \u escape that decodes below 0x80, or one that is not four hex digits, makes the answer true.
+// A \u escape of 0x80 or more cannot spell an ASCII marker: the keys match exactly, and a case fold
+// that spells ASCII needs the same number of bytes.
+func mightHoldMedia(p []byte) bool {
+	if escapeMightSpellMarker(p) {
+		return true
+	}
+	if hasBase64Fold(p) {
+		return true
+	}
+	if bytes.Contains(p, []byte(`"source"`)) && bytes.Contains(p, []byte(`"bytes"`)) {
+		return true
+	}
+	if bytes.Contains(p, []byte(`"data"`)) &&
+		(bytes.Contains(p, []byte(`"inlineData"`)) || bytes.Contains(p, []byte(`"inline_data"`)) || bytes.Contains(p, []byte(`"input_audio"`))) {
+		return true
+	}
+	return false
+}
+
+// hasBase64Fold reports whether p holds "base64" in any case (ASCII).
+func hasBase64Fold(p []byte) bool {
+	for off := 0; ; {
+		i := bytes.Index(p[off:], []byte("64"))
+		if i < 0 {
+			return false
+		}
+		i += off
+		if i >= 4 && strings.EqualFold(string(p[i-4:i]), "base") {
+			return true
+		}
+		off = i + 1
+	}
+}
+
+// escapeMightSpellMarker reports whether p holds a backslash escape that could decode to an ASCII
+// character other than "/". Plain escapes (\n, \", \\) and \u escapes of 0x80 or more cannot.
+func escapeMightSpellMarker(p []byte) bool {
+	for off := 0; ; {
+		i := bytes.IndexByte(p[off:], '\\')
+		if i < 0 {
+			return false
+		}
+		i += off
+		if i+1 >= len(p) {
+			return false // a lone backslash ends the input: the decoder reads nothing past it
+		}
+		if p[i+1] != 'u' {
+			off = i + 2 // \\ , \" , \/ , \n ...: skip the pair, so \\u is not read as \u
+			continue
+		}
+		if i+6 > len(p) {
+			return true
+		}
+		v := 0
+		for _, c := range p[i+2 : i+6] {
+			switch {
+			case c >= '0' && c <= '9':
+				v = v<<4 | int(c-'0')
+			case c >= 'a' && c <= 'f':
+				v = v<<4 | int(c-'a'+10)
+			case c >= 'A' && c <= 'F':
+				v = v<<4 | int(c-'A'+10)
+			default:
+				return true
+			}
+		}
+		if v < 0x80 {
+			return true
+		}
+		off = i + 6
 	}
 }
 
