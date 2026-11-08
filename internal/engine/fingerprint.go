@@ -107,8 +107,10 @@ func mediaBytesExact(p []byte) int {
 // A key or value compares after JSON decoding, so an escape could hide any of these. A letter,
 // digit or ":;," can come from \u only, and "/" from \/ (a "/" alone never makes a marker). So a
 // \u escape that decodes below 0x80, or one that is not four hex digits, makes the answer true.
-// A \u escape of 0x80 or more cannot spell an ASCII marker: the keys match exactly, and a case fold
-// that spells ASCII needs the same number of bytes.
+// A \u escape of 0x80 or more cannot spell an ASCII marker: the keys match exactly, and the case fold
+// of the data URL marker compares a slice of len(";base64,") BYTES (hasPrefixFold), so a rune that folds to
+// an ASCII letter in more bytes (U+017F to "s", U+212A to "k") cuts the slice short and never matches. The
+// tests pin both spellings.
 func mightHoldMedia(p []byte) bool {
 	if escapeMightSpellMarker(p) {
 		return true
@@ -134,11 +136,26 @@ func hasBase64Fold(p []byte) bool {
 			return false
 		}
 		i += off
-		if i >= 4 && strings.EqualFold(string(p[i-4:i]), "base") {
+		if i >= 4 && foldASCII4(p[i-4:i], "base") {
 			return true
 		}
 		off = i + 1
 	}
+}
+
+// foldASCII4 reports whether the four bytes b equal the lower-case ASCII word w without case. It compares
+// bytes, so it does not allocate.
+func foldASCII4(b []byte, w string) bool {
+	for i := 0; i < 4; i++ {
+		c := b[i]
+		if c >= 'A' && c <= 'Z' {
+			c += 'a' - 'A'
+		}
+		if c != w[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // escapeMightSpellMarker reports whether p holds a backslash escape that could decode to an ASCII
