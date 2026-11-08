@@ -1410,12 +1410,18 @@ func (c *calcState) premiums() (ttl, mark *CacheEffect) {
 // request wrote the tail up to that breakpoint (a markPremium, a cost). This request reads it, and the
 // client body, whose last breakpoint is earlier, would have billed it as input. Each forwarded position
 // after B* that the provider read, that both bodies hold, and that the client body would not have cached,
-// moves from input to read. No operation prices these tokens, and the split and the rescue book their
-// own tokens, so a request with either does not get a payback.
+// moves from input to read. No operation prices these tokens, and the split and every rescue book their
+// own tokens (a ping rescue, a mixed-TTL tail rescue, a head's ttlRescue), so a request that already holds
+// a split or a rescue does not get a payback: a token is in one effect only.
 func (c *calcState) markPayback(res *Result) {
 	if c.phase != PhaseHot || c.unknown || c.pingHot || c.readEnd < 0 || len(c.clientBPs) == 0 || len(c.prevFwdBPs) == 0 ||
 		c.noCacheTokens() || c.splitItem() != "" || c.bstarFwd >= c.readEnd {
 		return
+	}
+	for _, e := range res.CacheEffects {
+		if e.Kind == EffectRescue || e.Kind == EffectTTLRescue || e.Kind == EffectSplit {
+			return
+		}
 	}
 	var bytes, media, first, last = 0, 0, -1, -1
 	for i := c.bstarFwd + 1; i <= min(c.readEnd, len(c.fwd.Pos)-1); i++ {

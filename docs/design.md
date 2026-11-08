@@ -417,7 +417,7 @@ allows it.
 A `CacheEffect` has a kind, a prefix range, and a `ChangeID`. The range is `From` to `To`. A nil `From`
 is the start of the prompt, and a nil `To` is the end of the body. One exception: a `break` with no B\*
 (no client breakpoint at or before the first difference, §5.1) has an empty range. Its `To` is nil, it moves
-no tokens, and the `Saved` and `Caused` tiers are zero. Six kinds cover it:
+no tokens, and the `Saved` and `Caused` tiers are zero. Seven kinds cover it:
 
 - **`break`: a prefix is broken.** The provider no longer reads content it read before. `From` is the
   end of what it still reads and `To` is B\* (§6.2). The `ChangeID` is the change that caused it (§5.2),
@@ -461,7 +461,8 @@ conditions of the current `keepaliveSavedUSD`:
 after it. The clock calls the head alive, so the request is `hot` without the ping, and the rule above would
 give no rescue. The tail expired without the ping, though, so the library adds a rescue for the tail only: the
 tokens between the live head and the end of the part the ping read, capped by what the request read past the
-head, at the tail's write tier. The head is not credited.
+head, at the tail's write tier. The head is not credited. A `SharedWarm` prefix drops the whole tail rescue,
+not only the shared part: the doubtful figure may only lower a saving (R45).
 
 **A 1h ask the provider bills as 5m (accountant#56).** When the request wrote, read nothing, the bill has
 `CacheWrite1h` = 0, and `EntryFacts.TTL` is 5m, every 1h breakpoint of that request held its entry for 5m. The
@@ -585,9 +586,11 @@ Rules that follow from the table:
   below the baseline by the whole benefit. The next request now gets a `markPayback` effect. It moves `n` tokens
   from `Saved.Input` to `Caused.CacheRead`: the forwarded positions after B* that the provider read, that both
   bodies hold, and that no client breakpoint would have cached. `n` is capped by `Usage.CacheRead`. Its
-  `ChangeID` is the `ChangeID` of the operation that covers the previous request's host breakpoint, or empty.
-  A request with a split, a ping rescue or a host breakpoint of its own is not given one: they book their own
-  tokens. Where the provider does not find the host's entry (the 20-block lookback), the bill shows no read
+  `ChangeID` is the `ChangeID` of the operation of this request that covers the previous request's host
+  breakpoint, or empty. It is an approximation: the operation that covered the breakpoint when the entry was
+  written may not be reported now, and attribution is all it affects, not the token count (as for `markPremium`).
+  A request that already holds a split, a rescue (a ping rescue or a mixed-TTL tail rescue) or a `ttlRescue` is
+  not given one: they book their own tokens, and a token is in one effect only. Where the provider does not find the host's entry (the 20-block lookback), the bill shows no read
   there, so `n` is 0. After the TTL the entry is gone and there is nothing to read. A `ChangeID` that keeps the
   premium shows a negative total until a later request reads the entry, and a positive one after
   (a 1h mark breaks even at the third turn).
