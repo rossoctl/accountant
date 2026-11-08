@@ -26,7 +26,21 @@ type RequestMeta struct {
 	Params    map[string]string `json:"params,omitempty"`
 	At        time.Time         `json:"at"`
 	Billing   Billing           `json:"billing"`
+	// Compaction is the host's verdict that this request is the first one after a client compaction.
+	// The library cannot tell a compaction from another client edit: both end the changes at or after
+	// the first difference (§4.3). Empty means the host says nothing. The library records the verdict
+	// in Result.Compaction and never reads it for pricing.
+	Compaction CompactionTrigger `json:"compaction,omitempty"`
 }
+
+// CompactionTrigger says how a client compaction started, as the host knows it.
+type CompactionTrigger string
+
+const (
+	CompactionManual  CompactionTrigger = "manual"  // the user ran /compact
+	CompactionAuto    CompactionTrigger = "auto"    // the client compacted by itself
+	CompactionUnknown CompactionTrigger = "unknown" // the host saw a compaction and cannot tell which
+)
 
 // Billing is a fact the host reads from the request's credential, not a price.
 type Billing struct {

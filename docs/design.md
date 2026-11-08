@@ -1084,7 +1084,12 @@ type RequestMeta struct {
     Params             map[string]string
     At                 time.Time
     Billing            Billing
+    Compaction         CompactionTrigger // the host's verdict of a client compaction (R55); "" says nothing
 }
+
+// CompactionTrigger is "manual", "auto" or "unknown". The library cannot tell a compaction from another
+// client edit, so the host says it. The library records the verdict and prices nothing from it.
+type CompactionTrigger string
 
 // 1. Before the pass. The client body is hashed once, here (the body before any plugin), with the
 //    client's own cache breakpoints, which B* needs (§5.1) and which cachesplit and headttl are
@@ -1321,6 +1326,13 @@ type Result struct {
     Boundary *Position      // the B* used; nil when unknown
     Recomputed bool         // another request replaced the ThreadState first (R53, §6.1)
     Phase    CachePhase     // the cache phase it used (§5.2). For the host's own checks, never an input
+    Compaction *CompactionRecord // set when the host reported a client compaction (R55); changes no figure
+}
+
+// CompactionRecord echoes the host's verdict and lists the changes that ended on this request.
+type CompactionRecord struct {
+    Trigger CompactionTrigger
+    Ended   []string // the ChangeID of each change that ended here, in pipeline order; can be empty
 }
 
 type Unpriced struct {

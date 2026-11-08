@@ -304,6 +304,7 @@ func (r *Request) calc(s ThreadState, usage Usage) (Result, ThreadState) {
 	c := r.newCalc(s, items, usage)
 	c.seeded = seeded
 
+	res.Compaction = c.compaction()
 	c.phaseAndBoundary(&res)
 	if !c.skipsPricing() {
 		c.cacheEffects(&res)
@@ -313,6 +314,21 @@ func (r *Request) calc(s ThreadState, usage Usage) (Result, ThreadState) {
 	c.checkUsage(&res)
 	c.conservation(&res)
 	return res, c.nextState()
+}
+
+// compaction records the host's verdict of a client compaction and the changes that ended on this
+// request. It is nil when the host reported none.
+func (c *calcState) compaction() *CompactionRecord {
+	if c.r.Meta.Compaction == "" {
+		return nil
+	}
+	rec := &CompactionRecord{Trigger: c.r.Meta.Compaction, Ended: []string{}} // [] and not null in JSON
+	for _, it := range c.items {
+		if it.active && it.ended && it.op.ChangeID != "" {
+			rec.Ended = append(rec.Ended, it.op.ChangeID)
+		}
+	}
+	return rec
 }
 
 // items builds the operation list in pipeline order: the active operations first, as they ran on

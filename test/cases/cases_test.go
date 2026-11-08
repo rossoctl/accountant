@@ -177,6 +177,7 @@ func compare(t *testing.T, i int, want Expected, got accountant.Result) {
 	if want.Boundary != nil && (got.Boundary == nil || *got.Boundary != *want.Boundary) {
 		t.Errorf("step %d: boundary %v, want %v", i, got.Boundary, *want.Boundary)
 	}
+	compareCompaction(t, i, want.Compaction, got.Compaction)
 	var priced []accountant.PricedOp
 	for _, p := range got.Ops {
 		if p.Saved != (accountant.TierTokens{}) || p.Caused != (accountant.TierTokens{}) || p.Call != nil {
@@ -391,5 +392,18 @@ func TestPingReadFromUsageMeetsEveryCase(t *testing.T) {
 				compare(t, i, s.Expected, res)
 			}
 		})
+	}
+}
+
+// compareCompaction checks Result.Compaction both ways: absent when the step reports no verdict.
+func compareCompaction(t *testing.T, i int, want *ExpectedCompaction, got *accountant.CompactionRecord) {
+	t.Helper()
+	switch {
+	case want == nil && got != nil:
+		t.Errorf("step %d: compaction record %+v, want none", i, *got)
+	case want != nil && got == nil:
+		t.Errorf("step %d: no compaction record, want %+v", i, *want)
+	case want != nil && (got.Trigger != want.Trigger || !slices.Equal(got.Ended, want.Ended)):
+		t.Errorf("step %d: compaction %+v, want %+v", i, *got, *want)
 	}
 }

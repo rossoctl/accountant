@@ -84,8 +84,10 @@ def eop(change, saved=None, caused=None, note=None, call=None):
 
 
 def step(sec, rid, client, fwd, cbp, fbp, add, usage, exp, session="s1", model="agent-model",
-         params=None, facts=None, thread=None):
+         params=None, facts=None, thread=None, compaction=None):
     meta = {"requestId": rid, "session": session, "model": model, "at": ts(sec), "billing": {"mode": "api"}}
+    if compaction:  # the host's verdict of a client compaction manual | auto | unknown
+        meta["compaction"] = compaction
     if params:
         meta["params"] = params
     return {
@@ -120,8 +122,10 @@ def effect(kind, change, saved=None, caused=None, frm=None, to=None, ttl=None, n
     return e
 
 
-def expect(phase, baseline, ops, boundary=None, unpriced=None, effects=None, checks=None):
+def expect(phase, baseline, ops, boundary=None, unpriced=None, effects=None, checks=None, ended=None, compaction=None):
     e = {"phase": phase, "baselineUsage": baseline, "ops": ops}
+    if compaction:  # the record the library returns for the verdict, with the changes that ended
+        e["compaction"] = {"trigger": compaction, "ended": ended or []}
     if phase == "cold" and not effects:  # §5.2 row 5: the expiry is on the record, and it moves no tokens
         effects = [effect("break", "", note="the entry expired; B* is 0, so the read extent to B* is empty")]
     if effects:
@@ -606,7 +610,7 @@ ISSUES = "issue_cases.md"
 
 
 def sim(sec, rid, C, F, ops, phase, add=(), prev=(0, 0), effects=None, usage=None, base=None,
-        boundary=None, cbp=None, fbp=None, unpriced=None, checks=None, **kw):
+        boundary=None, cbp=None, fbp=None, unpriced=None, checks=None, compaction=None, ended=None, **kw):
     """One request step. C and F are (tools, system, msgs) of the client and forwarded bodies.
     hot: the provider reads the previous body's tokens and writes the rest; unknown/cold: writes all."""
     ct, ft = tokens(*C), tokens(*F)
@@ -616,9 +620,10 @@ def sim(sec, rid, C, F, ops, phase, add=(), prev=(0, 0), effects=None, usage=Non
         u, b = U(write=ft), U(write=ct)
     if phase == "unknown" and unpriced is None:  # §5.2 row 6 and §6.4: a first request has no known boundary
         unpriced = [{"reason": "penalty_unknown"}]  # request-level: the boundary is unknown, no operation owns it
-    e = expect(phase, base or b, ops, boundary=boundary, unpriced=unpriced, effects=effects, checks=checks)
+    e = expect(phase, base or b, ops, boundary=boundary, unpriced=unpriced, effects=effects, checks=checks,
+               compaction=compaction, ended=ended)
     return step(sec, rid, body(*C), body(*F), bps(C[2]) if cbp is None else cbp, bps(F[2]) if fbp is None else fbp, list(add),
-                usage or u, e, **kw)
+                usage or u, e, compaction=compaction, **kw)
 
 
 def BP(*pairs, ttl="5m"):
@@ -1033,6 +1038,264 @@ def c_threads():
                "a case.)",
                ISSUES, DIMS("rewrite", "afterBStarToL", "hit", threads="3"), steps),
           "threads-change-stays-on-its-thread")
+
+
+# A client compaction ends the replay of an earlier change (§4.3). Nothing is replayed across it, and a change
+# reported after it is new work, priced in full. One thread: a change, a replay, the compaction, then a new change.
+def c_client_compaction():
+    C1, F1 = M_BASE + [("m9", 8000)], M_BASE + [("m9f", 1000)]
+    C2, F2 = C1 + [("m10", 500)], F1 + [("m10", 500)]
+    # The client compacts: a summary replaces message 0 and the messages after it, and the last two stay.
+    S = [("sum", 1500), ("m9k", 1500), ("m10k", 500)]
+    S2 = S + [("m11", 500)]
+    C3, F3 = S2 + [("m12", 8000)], S2 + [("m12f", 1000)]
+    CF2 = "cg:cmdfilter:9b17"
+    op2 = rewrite("o2", "context-guru.cmdfilter", "messages", 4, 8000, 1000, CF2)
+    bp = lambda last: BP(("system", 0), ("messages", last))
+    steps = [
+        sim(0, "r0", ([], SYS1, M_BASE), ([], SYS1, M_BASE), [], "unknown"),
+        sim(10, "r1", ([], SYS1, C1), ([], SYS1, F1), [eop(CF, saved=TT(cacheWrite5m=7000),
+            note="new content, would have been written")], "hot", add=[cmdfilter_op()], prev=(30000, 30000),
+            boundary=P("messages", 8)),
+        sim(70, "r2", ([], SYS1, C2), ([], SYS1, F2), [eop(CF, saved=TT(cacheRead=7000),
+            note="applied again; the client's prefix would be cached")], "hot", prev=(38000, 31000),
+            boundary=P("messages", 9)),
+        # r3: the client compacted. Message 0 is new, so the provider reads only the system block (2,000 tokens)
+        # and writes the other 3,500. The old change has ended: it has no operation and no saving.
+        sim(130, "r3", ([], SYS1, S), ([], SYS1, S), [], "hot", compaction="manual", ended=[CF], usage=U(read=2000, write=3500),
+            base=U(read=2000, write=3500), cbp=bp(2), fbp=bp(2), boundary=P("system", 0),
+            effects=[effect("break", "", to=P("system", 0),
+                            note="the client compacted: its body differs from message 0 on, and the break moves no tokens")]),
+        sim(190, "r4", ([], SYS1, S2), ([], SYS1, S2), [], "hot", prev=(5500, 5500), cbp=bp(3), fbp=bp(3),
+            boundary=P("messages", 2)),
+        # r5: the same operator shortens a new output after the compaction. It is a new change: priced as new content.
+        sim(250, "r5", ([], SYS1, C3), ([], SYS1, F3), [eop(CF2, saved=TT(cacheWrite5m=7000),
+            note="new content after the compaction, would have been written")], "hot", add=[op2], prev=(6000, 6000),
+            cbp=bp(4), fbp=bp(4), boundary=P("messages", 3)),
+    ]
+    write(case("client-compaction/ends-replay-then-new-change/hot/5m",
+               "One cmdfilter change is reported on request 1 and applied again on request 2 (+$0.02625 as new "
+               "content, +$0.00210 as a read). On request 3 the client compacts: a summary replaces message 0, so the "
+               "provider reads only the system block and the client body would have done the same. The change has ended "
+               "(design §4.3): it has no operation on request 3 or later, and nothing is replayed across the "
+               "compaction. The break has an empty ChangeID and moves no tokens, because B* is the system block. On "
+               "request 5 the same operator shortens a new output: a new change, priced in full as a write.",
+               ISSUES, DIMS("rewrite", "afterBStarToL", "hit", **{"break": "client"}), steps),
+          "client-compaction-ends-replay")
+
+
+# The client drops messages from the middle of its body and keeps message 0. This is an edit before the change, so
+# the change ends (§4.3) just as it does when message 0 is replaced. The shape matters because the end rule compares
+# positions, and a trim that keeps the head must not leave the old change running.
+def c_client_trim_keeps_head():
+    C1, F1 = M_BASE + [("m9", 8000)], M_BASE + [("m9f", 1000)]
+    C2, F2 = C1 + [("m10", 500)], F1 + [("m10", 500)]
+    # The client drops m1 to m3 (9,000 tokens) and keeps m0, the shortened output's neighbours, and the tail.
+    T = [m for m in M_BASE if m[0] not in ("m1", "m2", "m3")]
+    T2 = T + [("m9", 8000), ("m10", 500)]
+    bp = lambda last: BP(("system", 0), ("messages", 0), ("messages", last))
+    steps = [
+        sim(0, "r0", ([], SYS1, M_BASE), ([], SYS1, M_BASE), [], "unknown"),
+        sim(10, "r1", ([], SYS1, C1), ([], SYS1, F1), [eop(CF, saved=TT(cacheWrite5m=7000),
+            note="new content, would have been written")], "hot", add=[cmdfilter_op()], prev=(30000, 30000),
+            boundary=P("messages", 8)),
+        sim(70, "r2", ([], SYS1, C2), ([], SYS1, F2), [eop(CF, saved=TT(cacheRead=7000),
+            note="applied again; the client's prefix would be cached")], "hot", prev=(38000, 31000),
+            boundary=P("messages", 9)),
+        # r3: the client trimmed m1 to m3. It now sends 29,500 tokens. The provider reads the system block and m0
+        # (2,000 + 4,000 tokens) and writes the other 23,500. The old change sits after the first difference, so it ended.
+        sim(130, "r3", ([], SYS1, T2), ([], SYS1, T2), [], "hot", compaction="auto", ended=[CF], usage=U(read=6000, write=sum(t for _, t in T2) + 2000 - 6000),
+            base=U(read=6000, write=sum(t for _, t in T2) + 2000 - 6000), cbp=bp(len(T2) - 1), fbp=bp(len(T2) - 1),
+            boundary=P("messages", 0),
+            effects=[effect("break", "", to=P("messages", 0),
+                            note="the client trimmed its own body after m0: B* is m0, and the break moves no tokens")]),
+    ]
+    write(case("client-compaction/trim-keeps-head-ends-replay/hot/5m",
+               "One cmdfilter change is reported on request 1 and applied again on request 2. On request 3 the client "
+               "drops m1 to m3 and keeps m0. The first difference is after m0 and before the change, so the change "
+               "ended (design §4.3): it has no operation on request 3. The provider reads the system block and m0, and "
+               "the client body would have done the same, so the break moves no tokens.",
+               ISSUES, DIMS("rewrite", "afterBStarToL", "hit", **{"break": "client"}), steps),
+          "client-trim-keeps-head-ends-replay")
+
+
+# The client rewrites an early message in place, so its body is as long as before and still holds the position of the
+# change. Only the edit check can end the change here: the position has not vanished. (Design §4.3, §11 question 12.)
+def c_client_rewrite_in_place_ends_replay():
+    C1, F1 = M_BASE + [("m9", 8000)], M_BASE + [("m9f", 1000)]
+    C2, F2 = C1 + [("m10", 500)], F1 + [("m10", 500)]
+    E = [("m2c", 3000) if m[0] == "m2" else m for m in C2]  # m2 rewritten, same size; the change's position still exists
+    bp = lambda last: BP(("system", 0), ("messages", 1), ("messages", last))
+    total = SYS1[0][1] + tokens(E)
+    steps = [
+        sim(0, "r0", ([], SYS1, M_BASE), ([], SYS1, M_BASE), [], "unknown"),
+        sim(10, "r1", ([], SYS1, C1), ([], SYS1, F1), [eop(CF, saved=TT(cacheWrite5m=7000),
+            note="new content, would have been written")], "hot", add=[cmdfilter_op()], prev=(30000, 30000),
+            boundary=P("messages", 8)),
+        sim(70, "r2", ([], SYS1, C2), ([], SYS1, F2), [eop(CF, saved=TT(cacheRead=7000),
+            note="applied again; the client's prefix would be cached")], "hot", prev=(38000, 31000),
+            boundary=P("messages", 9)),
+        # r3: the client rewrote m2 and nothing else. The provider reads the system block, m0 and m1 (2,000 + 4,000 + 3,000
+        # tokens) and writes the rest. The body is as long as before, so the change's position still exists in it: the
+        # change ended because the client edited before it, not because its position vanished.
+        sim(130, "r3", ([], SYS1, E), ([], SYS1, E), [], "hot", usage=U(read=9000, write=total - 9000),
+            base=U(read=9000, write=total - 9000), cbp=bp(len(E) - 1), fbp=bp(len(E) - 1), boundary=P("messages", 1),
+            effects=[effect("break", "", to=P("messages", 1),
+                            note="the client rewrote m2 itself: B* is m1, and the break moves no tokens")]),
+    ]
+    write(case("client-edit/rewrite-in-place-ends-replay/hot/5m",
+               "One cmdfilter change is reported on request 1 and applied again on request 2. On request 3 the client "
+               "rewrites m2, an early message, and keeps the body as long as before, so the position of the change "
+               "still exists in it. The change ended because the client edited before it (design §4.3). It has no "
+               "operation on request 3. The provider reads the system block, m0 and m1, and the client body would have "
+               "done the same, so the break moves no tokens. Two rules end the change here: the client edit, and the "
+               "restore check (the forwarded item has the client item's size again, because the operator reported "
+               "nothing on request 3). A host that ends a change forwards the client's item, so a valid request "
+               "triggers both, and this case cannot tell them apart.",
+               ISSUES, DIMS("rewrite", "afterBStarToL", "hit", **{"break": "client"}), steps),
+          "client-edit-rewrite-in-place-ends-replay")
+
+
+# The host reports a compaction on a thread that has no change at all. The record exists and lists nothing.
+def c_client_compaction_before_any_change():
+    C1 = M_BASE + [("m9", 500)]
+    T = [("sum", 1500), ("m9", 500), ("m10", 500)]
+    bp = lambda last: BP(("system", 0), ("messages", last))
+    steps = [
+        sim(0, "r0", ([], SYS1, M_BASE), ([], SYS1, M_BASE), [], "unknown"),
+        sim(10, "r1", ([], SYS1, C1), ([], SYS1, C1), [], "hot", prev=(30000, 30000), boundary=P("messages", 8)),
+        # r2: the client replaces its head with a summary. No change ran in this thread, so nothing ends.
+        sim(70, "r2", ([], SYS1, T), ([], SYS1, T), [], "hot", compaction="manual", ended=[],
+            usage=U(read=2000, write=tokens(*([], [], T))), base=U(read=2000, write=tokens(*([], [], T))),
+            cbp=bp(2), fbp=bp(2), boundary=P("system", 0),
+            effects=[effect("break", "", to=P("system", 0),
+                            note="the client compacted its head: the cache has no entry before it, and the break moves no tokens")]),
+    ]
+    write(case("client-compaction/before-any-change/hot/5m",
+               "The client compacts its body on a thread where no operator reported a change. The host reports a "
+               "manual compaction. The library returns the record with an empty list of ended changes, and "
+               "prices nothing.",
+               ISSUES, DIMS("rewrite", "afterBStarToL", "hit", **{"break": "client"}), steps),
+          "client-compaction-before-any-change")
+
+
+def _cmd_head_steps(bp9=False):
+    """Requests 0 to 2 of the compaction cases: a first request, one cmdfilter change, and its replay."""
+    C1, F1 = M_BASE + [("m9", 8000)], M_BASE + [("m9f", 1000)]
+    C2, F2 = C1 + [("m10", 500)], F1 + [("m10", 500)]
+    steps = [
+        sim(0, "r0", ([], SYS1, M_BASE), ([], SYS1, M_BASE), [], "unknown"),
+        sim(10, "r1", ([], SYS1, C1), ([], SYS1, F1), [eop(CF, saved=TT(cacheWrite5m=7000),
+            note="new content, would have been written")], "hot", add=[cmdfilter_op()], prev=(30000, 30000),
+            boundary=P("messages", 8)),
+        sim(70, "r2", ([], SYS1, C2), ([], SYS1, F2), [eop(CF, saved=TT(cacheRead=7000),
+            note="applied again; the client's prefix would be cached")], "hot", prev=(38000, 31000),
+            boundary=P("messages", 9),
+            **({"cbp": BP(("system", 0), ("messages", 9), ("messages", 10)),
+                "fbp": BP(("system", 0), ("messages", 9), ("messages", 10))} if bp9 else {})),
+    ]
+    return steps, C2, F2
+
+
+# The client edits its body after the change (the tail). The change is not affected: nothing before it moved, so it
+# is replayed again. This is the negative control for the end rule: an edit at the tail must not end a change.
+def c_client_tail_edit_keeps_replay():
+    steps, C2, F2 = _cmd_head_steps(bp9=True)
+    swap = lambda b: [("m10x", 500) if m[0] == "m10" else m for m in b]
+    C3, F3 = swap(C2), swap(F2)
+    bp = lambda last: BP(("system", 0), ("messages", 9), ("messages", last))
+    steps.append(
+        # r3: the client rewrote m10, after the change. The provider reads up to the changed message (31,000 tokens)
+        # and writes m10 (500). The client body would have read 38,000 tokens up to m9.
+        sim(130, "r3", ([], SYS1, C3), ([], SYS1, F3), [eop(CF, saved=TT(cacheRead=7000),
+            note="applied again; the client edit is after the change, so the change goes on")], "hot",
+            compaction="auto", ended=[],
+            usage=U(read=31000, write=500), base=U(read=38000, write=500), cbp=bp(10), fbp=bp(10),
+            boundary=P("messages", 10),
+            effects=[effect("break", "", to=P("messages", 10),
+                            note="the client edit is at m10, after the change: B* is m10, and the break moves no tokens")]))
+    write(case("client-compaction/tail-edit-keeps-replay/hot/5m",
+               "One cmdfilter change is reported on request 1 and applied again on request 2. On request 3 the client "
+               "rewrites m10, a message after the change. Nothing at or before the change moved, so the change did "
+               "not end (design §4.3) and it is priced as a read again (+$0.00210). The host reports the edit as an "
+               "auto compaction: the record exists and its list of ended changes is empty. An edit at the tail must "
+               "not end a change.",
+               ISSUES, DIMS("rewrite", "afterBStarToL", "hit", **{"break": "client"}), steps),
+          "client-compaction-tail-edit-keeps-replay")
+
+
+# The client compacts the tail: a summary replaces the changed message and the one after it, and everything before
+# stays. The change's own position now holds other content, so the change ended.
+def c_client_tail_compaction_ends_replay():
+    steps, C2, F2 = _cmd_head_steps()
+    T = M_BASE + [("sumT", 1500)]
+    bp = lambda last: BP(("system", 0), ("messages", last))
+    steps.append(
+        # r3: the cache holds entries at the system block and at m10 only, so the provider reads the system block
+        # (2,000 tokens) and writes the other 29,500.
+        sim(130, "r3", ([], SYS1, T), ([], SYS1, T), [], "hot", compaction="unknown", ended=[CF], usage=U(read=2000, write=29500),
+            base=U(read=2000, write=29500), cbp=bp(9), fbp=bp(9), boundary=P("system", 0),
+            effects=[effect("break", "", to=P("system", 0),
+                            note="the client compacted its tail: the cache has no entry before it, and the break moves no tokens")]))
+    write(case("client-compaction/tail-compaction-ends-replay/hot/5m",
+               "One cmdfilter change is reported on request 1 and applied again on request 2. On request 3 the client "
+               "replaces m9 and m10 with a summary and keeps m0 to m8. The change's position holds other content, so "
+               "the change ended (design §4.3): no operation on request 3. The cache holds entries only at the system "
+               "block and at m10, so the provider reads the system block and writes the rest. The client body would have "
+               "done the same, so the break moves no tokens.",
+               ISSUES, DIMS("rewrite", "afterBStarToL", "hit", **{"break": "client"}), steps),
+          "client-compaction-tail-ends-replay")
+
+
+# Two compactions in one thread. Each ends the change that was running, and the change after it is priced as new
+# content. The first compaction replaces the head; the second drops a message from the middle of the new body.
+def c_client_two_compactions():
+    steps, C2, F2 = _cmd_head_steps()
+    CF2, CF3 = "cg:cmdfilter:9b17", "cg:cmdfilter:5e02"
+    S = [("sum", 1500), ("m9k", 1500), ("m10k", 500)]
+    S2 = S + [("m11", 500)]
+    C3, F3 = S2 + [("m12", 8000)], S2 + [("m12f", 1000)]
+    C4, F4 = C3 + [("m13", 500)], F3 + [("m13", 500)]
+    # The second compaction drops m9k from the middle. The client body keeps m12 at its full size.
+    T = [S2[0], S2[2], S2[3], ("m12", 8000), ("m13", 500)]
+    C6, F6 = T + [("m14", 8000)], T + [("m14f", 1000)]
+    bp = lambda last: BP(("system", 0), ("messages", last))
+    op2 = rewrite("o2", "context-guru.cmdfilter", "messages", 4, 8000, 1000, CF2)
+    op3 = rewrite("o3", "context-guru.cmdfilter", "messages", 5, 8000, 1000, CF3)
+    steps += [
+        # r3: first compaction (head). The old change ended.
+        sim(130, "r3", ([], SYS1, S), ([], SYS1, S), [], "hot", compaction="manual", ended=[CF], usage=U(read=2000, write=3500),
+            base=U(read=2000, write=3500), cbp=bp(2), fbp=bp(2), boundary=P("system", 0),
+            effects=[effect("break", "", to=P("system", 0),
+                            note="the first compaction: its body differs from message 0 on, and the break moves no tokens")]),
+        sim(190, "r4", ([], SYS1, S2), ([], SYS1, S2), [], "hot", prev=(5500, 5500), cbp=bp(3), fbp=bp(3),
+            boundary=P("messages", 2)),
+        # r5: a new change after the first compaction, priced as new content.
+        sim(250, "r5", ([], SYS1, C3), ([], SYS1, F3), [eop(CF2, saved=TT(cacheWrite5m=7000),
+            note="new content after the first compaction, would have been written")], "hot", add=[op2],
+            prev=(6000, 6000), cbp=bp(4), fbp=bp(4), boundary=P("messages", 3)),
+        # r6: the second change is replayed.
+        sim(310, "r6", ([], SYS1, C4), ([], SYS1, F4), [eop(CF2, saved=TT(cacheRead=7000),
+            note="applied again; the client's prefix would be cached")], "hot", prev=(14000, 7000),
+            cbp=bp(5), fbp=bp(5), boundary=P("messages", 4)),
+        # r7: second compaction (middle): m9k is dropped. The provider reads the system block only (2,000 tokens) and writes the rest.
+        sim(370, "r7", ([], SYS1, T), ([], SYS1, T), [], "hot", compaction="auto", ended=[CF2], usage=U(read=2000, write=11000),
+            base=U(read=2000, write=11000), cbp=bp(4), fbp=bp(4), boundary=P("system", 0),
+            effects=[effect("break", "", to=P("system", 0),
+                            note="the second compaction: the cache has no entry before it, and the break moves no tokens")]),
+        # r8: a third change after the second compaction, priced as new content.
+        sim(430, "r8", ([], SYS1, C6), ([], SYS1, F6), [eop(CF3, saved=TT(cacheWrite5m=7000),
+            note="new content after the second compaction, would have been written")], "hot", add=[op3],
+            prev=(13000, 13000), cbp=bp(5), fbp=bp(5), boundary=P("messages", 4)),
+    ]
+    write(case("client-compaction/two-compactions-each-ends-replay/hot/5m",
+               "Three cmdfilter changes in one thread, separated by two client compactions. The first change is "
+               "reported and replayed, then the client replaces message 0 with a summary: the change ended and a second "
+               "change after it is priced as new content (+$0.02625), then replayed (+$0.00210). Then the client drops "
+               "m9k from the middle of its body: the second change ended too, and a third change is priced as new "
+               "content again. Each compaction ends only the change that was running, and no credit crosses either one.",
+               ISSUES, DIMS("rewrite", "afterBStarToL", "hit", **{"break": "client"}), steps),
+          "client-compaction-two-compactions")
 
 
 # accountant#16: the clock and the order of calls do not win over the usage.
@@ -3147,7 +3410,7 @@ if __name__ == "__main__":
     for old in os.listdir(OUT):  # the generator owns this directory: drop cases that no longer exist
         if old.endswith(".json"):
             os.remove(os.path.join(OUT, old))
-    for f in (ex12, ex3, ex4, ex5, ex67, ex8, shared_prefix_cases, ex9, c01, c02, c03_04, c05, c06, c07, c08, c09, c10, c11, c12, c_threads, c_clock, c_ttl, c_mix,
+    for f in (ex12, ex3, ex4, ex5, ex67, ex8, shared_prefix_cases, ex9, c01, c02, c03_04, c05, c06, c07, c08, c09, c10, c11, c12, c_threads, c_client_compaction, c_client_trim_keeps_head, c_client_rewrite_in_place_ends_replay, c_client_compaction_before_any_change, c_client_tail_edit_keeps_replay, c_client_tail_compaction_ends_replay, c_client_two_compactions, c_clock, c_ttl, c_mix,
               c14, s909, r909_system_hash, c15, c16, c17, c18, a1, a2, a3, a4_b3, b1_b2, b4, b5, c1_, c2_, c2b, c3_, c5, d2, d3, d4,
               d5, d6, e2, e345, f245, h2, h5, r9, i53, i54, i56, i55_split, i55_no_cache, i55_media_one_side, r14, r21, r20, r20b, c42, c42b, c42c, c42d, c43, i44, c49, i52_all):
         f()

@@ -17,6 +17,18 @@ type Result struct {
 	// tokens the client body would have billed cold (write). InteractionCaused is what the ops
 	// already book for them (read). The host prices Interaction minus InteractionCaused.
 	InteractionCaused TierTokens
+	// Compaction is set when the host reported a client compaction on this request
+	// (RequestMeta.Compaction). It is a record for the host, which closes its own epoch on it. It
+	// changes no figure.
+	Compaction *CompactionRecord
+}
+
+// CompactionRecord is what the library recorded for a client compaction.
+type CompactionRecord struct {
+	Trigger CompactionTrigger
+	// Ended holds the ChangeID of each change that ended on this request, in pipeline order. A change
+	// that was already over is not listed. It can be empty: a compaction before any change.
+	Ended []string
 }
 
 // Unpriced names an operation the library did not price and why.

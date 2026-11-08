@@ -647,6 +647,31 @@ Not covered by a case: a removed client breakpoint (the inverse). It is out of s
 | `keepalive/ping-rescue-1h-head-5m-tail/tail-only/5m` | A 1h head, a 5m tail, a ping at minute 4, the return at minute 8: rescue on the tail only, +$0.00690 (#56). |
 | `keepalive/ping-rescue-1h-thread/across-the-hour/1h` | A ping at minute 59, the return at minute 62: rescue 6,000 x $5.70/M = +$0.03420 (#56). |
 
+## 9f. Cases for a client compaction (the end rule, §4.3)
+
+A change ends when the client edits its body at or before the change, or compacts it. Until now no case
+covered the end rule with a compaction. Each case reports one `cmdfilter` change on request 1 and applies
+it again on request 2 (+$0.02625 as new content, +$0.00210 as a read), then the client changes its body.
+
+| Case ID | What the spec requires |
+|---|---|
+| `client-compaction/ends-replay-then-new-change/hot/5m` | The client replaces message 0 with a summary and keeps the last two messages. The provider reads the system block and writes the rest. The old change has no operation on this request or after it, and nothing is replayed across the compaction. The break has an empty `ChangeID` and moves no tokens. Later the same operator shortens a new output: a new change, priced as new content (+$0.02625). |
+| `client-compaction/trim-keeps-head-ends-replay/hot/5m` | The client drops m1 to m3 and keeps m0. The first difference is after m0 and before the change, so the change ended. The provider reads the system block and m0 (6,000 tokens) and writes the other 23,500. No operation, and the break moves no tokens. |
+| `client-edit/rewrite-in-place-ends-replay/hot/5m` | The client rewrites m2 and keeps the body as long as before, so the change's position still exists. The change ended, with no operation. |
+| `client-compaction/tail-edit-keeps-replay/hot/5m` | Negative control. The client rewrites m10, a message after the change. Nothing at or before the change moved, so the change goes on and is priced as a read again (+$0.00210). The break at m10 moves no tokens. The host reports an `auto` compaction here, so the record exists and its list of ended changes is empty. |
+| `client-compaction/before-any-change/hot/5m` | A `manual` compaction on a thread where no change ran. The record exists with an empty list of ended changes. Nothing is priced. |
+| `client-compaction/tail-compaction-ends-replay/hot/5m` | The client replaces m9 and m10 with a summary and keeps m0 to m8. No operation on this request. This case does not fail when the end rule is removed: with the client's own item forwarded, the change prices at zero either way. It checks the result, not the rule. |
+| `client-compaction/two-compactions-each-ends-replay/hot/5m` | Two compactions (head, then middle) in one thread, with a new change after each. Each compaction ends only the change that was running, and each new change is priced as new content (+$0.02625). |
+
+The first two cases end the change because its position no longer exists in the client body. The third ends
+it through two rules at once: the client edit, and the restore check (the forwarded item has the client
+item's size again, because the operator reported nothing on that request). A host that ends a change
+forwards the client's item, so every valid request of this shape triggers both rules. No case can test the
+client-edit rule alone. Breaking `clientEdited` on its own fails no case.
+
+Not covered by a case: a compaction that a host forwards with a still-shortened item and no operation. That
+is an inconsistent host report, and the sum check flags it.
+
 ## 10. Limits of this document
 
 - **The expected figures were computed by hand** from the spec's rules and the issue text. Cases 1, 3,

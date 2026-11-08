@@ -350,6 +350,12 @@ numbers are not used: those requirements were dropped.
 - <a id="r52"></a>**R52.** The library never returns one token total. It returns tokens for each tier. Tiers differ in
   price by up to 20 times (a 1h cache write against a cache read), so a sum across them is not an invariant. A host that wants one figure
   prices the tiers and sums dollars. This is the rule of the tool-prune accounting (cortex#952).
+- <a id="r55"></a>**R55.** A host that knows a request is the first one after a client compaction says so in
+  `RequestMeta.Compaction` (`manual`, `auto` or `unknown`). The library records the verdict in
+  `Result.Compaction` with the `ChangeID` of each change that ended on that request. It prices nothing from the
+  verdict and it does not detect a compaction: a compaction and any other client edit at or before a change end
+  the change in the same way ([§4.3](design.md#43-why-positions-are-section-index)). A host that reports nothing gets no
+  record. The host closes its own epoch from the record.
 - <a id="r54"></a>**R54.** A rescue credits only what the ping kept alive. Another thread of the same session can keep
   a shared prefix warm: subagents start with the same `system` and `tools`, and each request of one
   refreshes that entry for the others. The host reports the longest prefix of the request that another thread

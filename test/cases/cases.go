@@ -107,6 +107,15 @@ type Expected struct {
 	Unpriced []ExpectedUnpriced `json:"unpriced,omitempty"`
 	// Checks are the names of the checks (§6.5) that must fail on this step. Absent means none fails.
 	Checks []string `json:"checks,omitempty"`
+	// Compaction is the record the library must return for a reported client compaction. It is asserted
+	// both ways: a step that reports no verdict must get no record.
+	Compaction *ExpectedCompaction `json:"compaction,omitempty"`
+}
+
+// ExpectedCompaction is the Result.Compaction record: the host's verdict and the changes that ended.
+type ExpectedCompaction struct {
+	Trigger accountant.CompactionTrigger `json:"trigger"`
+	Ended   []string                     `json:"ended"`
 }
 
 // ExpectedOp is one priced operation.
