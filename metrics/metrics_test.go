@@ -79,7 +79,8 @@ func sumF(ps []point) (n float64) {
 
 func obs(model string, ops ...accountant.PricedOp) accountant.Observation {
 	return accountant.Observation{
-		Meta:   accountant.RequestMeta{Model: model, At: time.Unix(1700000000, 0)},
+		Meta: accountant.RequestMeta{Model: model, At: time.Unix(1700000000, 0),
+			Billing: accountant.Billing{Mode: accountant.BillingAPI}},
 		Result: accountant.Result{Ops: ops},
 	}
 }
@@ -302,8 +303,9 @@ func TestBillingModeDecidesMoney(t *testing.T) {
 		wantEstim int64
 	}{
 		{accountant.BillingAPI, true, 0},
-		{accountant.BillingUnknown, true, 1},
-		{accountant.BillingSubscription, false, 0},
+		{accountant.BillingUnknown, false, 1},
+		{accountant.BillingSubscription, false, 1},
+		{"", false, 1}, // an unset mode is not api
 	} {
 		s, r := newSink(t)
 		o := obs("m", op)
@@ -353,7 +355,30 @@ func TestComponentIsSafeUnderConcurrency(t *testing.T) {
 	for g := 0; g < 8; g++ {
 		<-done
 	}
+	if got := s.component("a-name-past-the-limit"); got != "other" {
+		t.Fatalf("a name past the limit = %q, want other", got)
+	}
 	if n := len(*s.seen.Load()); n > maxComponents {
 		t.Fatalf("seen %d names, limit %d", n, maxComponents)
+	}
+}
+
+// Once the set is full, a new name must not take the lock: hold the lock and call component.
+func TestComponentPastTheLimitTakesNoLock(t *testing.T) {
+	s, _ := newSink(t)
+	for i := 0; i < maxComponents; i++ {
+		s.component("op" + itoa(i))
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	done := make(chan string, 1)
+	go func() { done <- s.component("one-more") }()
+	select {
+	case got := <-done:
+		if got != "other" {
+			t.Fatalf("got %q, want other", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("component took the lock for a name past the limit")
 	}
 }

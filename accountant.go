@@ -79,7 +79,8 @@ type (
 	Sink        = engine.Sink
 )
 
-// Multi returns a [Sink] that calls each sink in order and survives a panic in one of them.
+// Multi returns a [Sink] that calls each sink in order and survives a panic in one of them. It skips
+// nil sinks, and returns nil when none is left.
 func Multi(sinks ...Sink) Sink { return engine.Multi(sinks...) }
 
 // What the library returns.

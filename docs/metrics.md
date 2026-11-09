@@ -13,8 +13,8 @@ That spec is not in this repository. This page is the contract of the code.
 2. After `Compute`, call `sink.Observe(accountant.Observation{Meta, Usage, Result})`.
 3. Use `accountant.Multi` to give the same observation to several sinks.
 
-`Observe` only adds to in-memory counters. It makes no network call. It takes a lock only the first time it
-sees a new component name. The library never calls the sink: the host does, after the request is answered.
+`Observe` only adds to in-memory counters. It makes no network call. It takes a lock only to add one of the first
+64 component names. After that, no call takes a lock. The library never calls the sink: the host does, after the request is answered.
 
 ## The `Pricer`
 
@@ -54,8 +54,11 @@ OTel names use dots. The collector converts them to Prometheus names (`llm_savin
 3. **Refused calls.** If the library listed a spend in `Result.Unpriced`, the sink books none of its call usage.
 4. **Billing mode** (design §7.1). Token counters always move.
    - `api`: money counters move.
-   - `unknown`: money counters move, and the request counts as estimated.
-   - `subscription`: no money counter moves. An API-equivalent dollar never enters a money total.
+   - `unknown`: no money counter moves, and the request counts as estimated. The dollar may be a
+     subscription user's, and design §7.1 keeps it out of every money total.
+   - `subscription`: no money counter moves, and the request counts as estimated. An API-equivalent dollar
+     never enters a money total.
+   - Unset mode: treated as `unknown`.
 5. **Cache effects.** An effect that is `InBaseline` is skipped. An effect with `Estimated` set, or priced from a
    fallback rate, marks the request estimated. The camel case kinds map to snake case values. `markPremium`
    becomes `mark_premium`.

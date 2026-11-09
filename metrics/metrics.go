@@ -3,12 +3,11 @@
 // each proxy brings its own.
 //
 // A host builds one [Sink] with [New] and calls Observe after each Compute. Observe adds to
-// in-memory counters. It makes no network call and, once the component names are known, takes no
-// lock, so it adds a small fixed
-// time to the request path.
+// in-memory counters. It makes no network call and takes a lock only to add one of the first
+// maxComponents names, so it adds a small fixed time to the request path.
 //
-// The module knows no price. The host gives it a [Pricer] (metrics spec, context-guru#886, R47), so each proxy keeps its own rate
-// table.
+// The module knows no price. The host gives it a [Pricer] (metrics spec R47, context-guru#886), so
+// each proxy keeps its own rate table.
 package metrics
 
 import (
@@ -74,8 +73,8 @@ type Sink struct {
 	interactionUSD metric.Float64Counter
 
 	allowed map[string]bool // nil: accept the first maxComponents names
-	// seen is copy-on-write: the hot path reads it with no lock. mu serialises the rare add of a new
-	// name, at most maxComponents times in the life of the sink.
+	// seen is copy-on-write: the hot path reads it with no lock. mu serialises the add of a new name,
+	// at most maxComponents times in the life of the sink. Once seen is full, no call takes mu.
 	seen atomic.Pointer[map[string]bool]
 	mu   sync.Mutex
 }
@@ -119,15 +118,15 @@ func New(m metric.Meter, p Pricer, opts ...Option) (*Sink, error) {
 
 // Observe adds one request to the counters. It skips dry-run operations.
 //
-// Money follows Billing.Mode. For api, USD counters carry the price. For unknown, they carry it and
-// the request counts as estimated. For subscription, no USD counter moves: an API-equivalent dollar
-// never enters a money total (design §7.1). Token counters always move.
+// Money follows Billing.Mode (design §7.1). Only api books money. For unknown, subscription or an unset
+// mode, no USD counter moves, because that dollar may be a subscription user's and never enters a money total.
+// Token counters always move. An unknown request counts as estimated.
 func (s *Sink) Observe(o accountant.Observation) {
 	ctx := context.Background()
 	res, model, at := o.Result, o.Meta.Model, o.Meta.At
 	mode := o.Meta.Billing.Mode
-	money := mode != accountant.BillingSubscription
-	anyEstimated := mode == accountant.BillingUnknown
+	money := mode == accountant.BillingAPI
+	anyEstimated := !money // unknown, subscription's weights or an unset mode are all estimates
 
 	// A spend whose call the library refused to price must not book that call's usage.
 	refused := map[string]bool{}
@@ -197,8 +196,16 @@ func (s *Sink) Observe(o accountant.Observation) {
 		for t, n := range tiers(res.InteractionCaused) {
 			net[t] -= n
 		}
-		if usd, est := s.price(net, model, at); usd != 0 {
+		empty := true
+		for _, n := range net {
+			empty = empty && n == 0
+		}
+		usd, est := 0.0, false
+		if !empty {
+			usd, est = s.price(net, model, at)
 			anyEstimated = anyEstimated || est
+		}
+		if usd != 0 {
 			dir := "saved"
 			if usd < 0 {
 				dir, usd = "added", -usd
@@ -271,12 +278,16 @@ func (s *Sink) component(operator string) string {
 		}
 		return other
 	}
-	if (*s.seen.Load())[name] {
+	cur := *s.seen.Load()
+	if cur[name] {
 		return name
+	}
+	if len(cur) >= maxComponents {
+		return other // full: no lock, and every later call for this name agrees
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	cur := *s.seen.Load()
+	cur = *s.seen.Load()
 	if cur[name] {
 		return name
 	}
