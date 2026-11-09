@@ -60,7 +60,7 @@ func WithComponents(names ...string) Option {
 	}
 }
 
-// Sink implements [accountant.Sink] for the savings set (metrics spec 5.2, context-guru#886).
+// Sink is the OpenTelemetry [Observer] for the savings set (metrics spec 5.2, context-guru#886).
 type Sink struct {
 	pricer Pricer
 
@@ -79,7 +79,7 @@ type Sink struct {
 	mu   sync.Mutex
 }
 
-var _ accountant.Sink = (*Sink)(nil)
+var _ Observer = (*Sink)(nil)
 
 // New builds every instrument once. It returns an error if the meter refuses one.
 func New(m metric.Meter, p Pricer, opts ...Option) (*Sink, error) {
@@ -121,7 +121,7 @@ func New(m metric.Meter, p Pricer, opts ...Option) (*Sink, error) {
 // Money follows Billing.Mode (design §7.1). Only api books money. For unknown, subscription or an unset
 // mode, no USD counter moves, because that dollar may be a subscription user's and never enters a money total.
 // Token counters always move. An unknown request counts as estimated.
-func (s *Sink) Observe(o accountant.Observation) {
+func (s *Sink) Observe(o Observation) {
 	ctx := context.Background()
 	res, model, at := o.Result, o.Meta.Model, o.Meta.At
 	mode := o.Meta.Billing.Mode

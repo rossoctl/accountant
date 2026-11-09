@@ -10,11 +10,17 @@ That spec is not in this repository. This page is the contract of the code.
 ## How a host uses it
 
 1. Build the sink once: `metrics.New(meter, pricer, opts...)`.
-2. After `Compute`, call `sink.Observe(accountant.Observation{Meta, Usage, Result})`.
-3. Use `accountant.Multi` to give the same observation to several sinks.
+2. After `Compute`, call `sink.Observe(metrics.Observation{Meta, Usage, Result})`.
+3. Use `metrics.Multi` to give the same observation to several observers.
+
+The hook lives in this module, not in the root. `Observer` is a one-method interface,
+`Observe(Observation)`, and `Sink` is the OpenTelemetry one. A host with another consumer, such as a
+ledger, declares the same interface itself and needs no import of this module. An `Observer` must return
+fast, make no network call, and not keep the slices of the `Result`. `Multi` skips nil observers,
+recovers a panic in one, and returns nil when none is left.
 
 `Observe` only adds to in-memory counters. It makes no network call. It takes a lock only to add one of the first
-64 component names. After that, no call takes a lock. The library never calls the sink: the host does, after the request is answered.
+64 component names. After that, no call takes a lock. The accountant never calls the sink: the host does, after the request is answered.
 
 ## The `Pricer`
 

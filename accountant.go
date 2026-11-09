@@ -73,16 +73,6 @@ type (
 	CompactionTrigger = engine.CompactionTrigger
 )
 
-// What a host hands to a metrics sink after Compute. The library never calls a [Sink] itself.
-type (
-	Observation = engine.Observation
-	Sink        = engine.Sink
-)
-
-// Multi returns a [Sink] that calls each sink in order and survives a panic in one of them. It skips
-// nil sinks, and returns nil when none is left.
-func Multi(sinks ...Sink) Sink { return engine.Multi(sinks...) }
-
 // What the library returns.
 type (
 	PricedOp         = engine.PricedOp

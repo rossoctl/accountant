@@ -77,8 +77,8 @@ func sumF(ps []point) (n float64) {
 	return n
 }
 
-func obs(model string, ops ...accountant.PricedOp) accountant.Observation {
-	return accountant.Observation{
+func obs(model string, ops ...accountant.PricedOp) Observation {
+	return Observation{
 		Meta: accountant.RequestMeta{Model: model, At: time.Unix(1700000000, 0),
 			Billing: accountant.Billing{Mode: accountant.BillingAPI}},
 		Result: accountant.Result{Ops: ops},
