@@ -3,10 +3,11 @@
 // each proxy brings its own.
 //
 // A host builds one [Sink] with [New] and calls Observe after each Compute. Observe adds to
-// in-memory counters. It makes no network call and takes no blocking lock, so it adds a small fixed
-// time to the request path (R46).
+// in-memory counters. It makes no network call and, once the component names are known, takes no
+// lock, so it adds a small fixed
+// time to the request path.
 //
-// The module knows no price. The host gives it a [Pricer] (R47), so each proxy keeps its own rate
+// The module knows no price. The host gives it a [Pricer] (metrics spec, context-guru#886, R47), so each proxy keeps its own rate
 // table.
 package metrics
 
@@ -14,6 +15,7 @@ import (
 	"context"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/rossoctl/accountant"
@@ -21,7 +23,7 @@ import (
 	"go.opentelemetry.io/otel/metric"
 )
 
-// Tier is a price class of tokens (R34).
+// Tier is a price class of tokens (metrics spec R34, context-guru#886).
 type Tier string
 
 const (
@@ -39,7 +41,7 @@ type Pricer interface {
 	Price(model string, at time.Time, tier Tier) (usdPerToken float64, estimated bool)
 }
 
-// maxComponents bounds the label `component` when the host gives no list (5.7).
+// maxComponents bounds the label `component` when the host gives no list (metrics spec 5.7, context-guru#886).
 const maxComponents = 64
 
 // other is the value of `component` for a name outside the list.
@@ -59,7 +61,7 @@ func WithComponents(names ...string) Option {
 	}
 }
 
-// Sink implements [accountant.Sink] for the savings set (spec 5.2).
+// Sink implements [accountant.Sink] for the savings set (metrics spec 5.2, context-guru#886).
 type Sink struct {
 	pricer Pricer
 
@@ -69,16 +71,22 @@ type Sink struct {
 	requests, unpriced       metric.Int64Counter
 	estimated, checkFailures metric.Int64Counter
 
+	interactionUSD metric.Float64Counter
+
 	allowed map[string]bool // nil: accept the first maxComponents names
-	mu      sync.Mutex      // guards seen; held only to read or add one name
-	seen    map[string]bool
+	// seen is copy-on-write: the hot path reads it with no lock. mu serialises the rare add of a new
+	// name, at most maxComponents times in the life of the sink.
+	seen atomic.Pointer[map[string]bool]
+	mu   sync.Mutex
 }
 
 var _ accountant.Sink = (*Sink)(nil)
 
 // New builds every instrument once. It returns an error if the meter refuses one.
 func New(m metric.Meter, p Pricer, opts ...Option) (*Sink, error) {
-	s := &Sink{pricer: p, seen: map[string]bool{}}
+	s := &Sink{pricer: p}
+	empty := map[string]bool{}
+	s.seen.Store(&empty)
 	for _, o := range opts {
 		o(s)
 	}
@@ -98,6 +106,7 @@ func New(m metric.Meter, p Pricer, opts ...Option) (*Sink, error) {
 	f64(&s.savedUSD, "llm.savings.saved.usd", "Saved tokens priced at the tier rate at request time.")
 	f64(&s.addedUSD, "llm.savings.added.usd", "Added tokens priced the same way.")
 	f64(&s.effectUSD, "llm.savings.cache_effect.usd", "Cache effects by effect, cause and direction. A breakdown: never add it to saved or added.")
+	f64(&s.interactionUSD, "llm.savings.interaction.usd", "Net value of the tokens no operation owns on a rescued request (Result.Interaction minus InteractionCaused). direction is saved or added. A breakdown of the bill difference: it is counted in neither saved nor added.")
 	i64(&s.requests, "llm.savings.requests", "Requests the accountant saw, by result.")
 	i64(&s.unpriced, "llm.savings.unpriced", "Operations the accountant did not price, by reason.")
 	i64(&s.estimated, "llm.savings.estimated", "Requests whose figure is marked estimated.")
@@ -109,11 +118,26 @@ func New(m metric.Meter, p Pricer, opts ...Option) (*Sink, error) {
 }
 
 // Observe adds one request to the counters. It skips dry-run operations.
+//
+// Money follows Billing.Mode. For api, USD counters carry the price. For unknown, they carry it and
+// the request counts as estimated. For subscription, no USD counter moves: an API-equivalent dollar
+// never enters a money total (design §7.1). Token counters always move.
 func (s *Sink) Observe(o accountant.Observation) {
 	ctx := context.Background()
 	res, model, at := o.Result, o.Meta.Model, o.Meta.At
+	mode := o.Meta.Billing.Mode
+	money := mode != accountant.BillingSubscription
+	anyEstimated := mode == accountant.BillingUnknown
 
-	priced, anyEstimated := 0, false
+	// A spend whose call the library refused to price must not book that call's usage.
+	refused := map[string]bool{}
+	for _, u := range res.Unpriced {
+		if u.OpID != "" {
+			refused[u.OpID] = true
+		}
+	}
+
+	priced := 0
 	for _, op := range res.Ops {
 		if op.DryRun {
 			continue
@@ -127,21 +151,31 @@ func (s *Sink) Observe(o accountant.Observation) {
 				attribute.String("component", s.component(op.Operator)),
 			)
 		}
-		saved, caused := tiers(op.Saved), tiers(op.Caused)
-		if op.Kind == accountant.KindSpend && op.Call != nil {
-			caused = addTiers(caused, callTiers(op.Call.Usage))
-		}
-		e1 := s.book(ctx, s.saved, s.savedUSD, saved, attrs, model, at)
-		e2 := s.book(ctx, s.added, s.addedUSD, caused, attrs, model, at)
+		e1 := s.book(ctx, s.saved, s.savedUSD, tiers(op.Saved), attrs, model, at, money)
+		e2 := s.book(ctx, s.added, s.addedUSD, tiers(op.Caused), attrs, model, at, money)
 		anyEstimated = anyEstimated || e1 || e2
+		if op.Kind == accountant.KindSpend && op.Call != nil && !refused[op.OpID] {
+			// The call names its own model. It can differ from the agent's model (metrics spec R49).
+			callModel := op.Call.Model
+			if callModel == "" {
+				callModel = model
+			}
+			e3 := s.book(ctx, s.added, s.addedUSD, callTiers(op.Call.Usage), attrs, callModel, at, money)
+			anyEstimated = anyEstimated || e3
+		}
 	}
 
 	for _, e := range res.CacheEffects {
 		if e.InBaseline {
 			continue // on the record, not part of the bill difference
 		}
+		anyEstimated = anyEstimated || e.Estimated
+		if !money {
+			continue
+		}
 		for dir, tt := range map[string]accountant.TierTokens{"saved": e.Saved, "added": e.Caused} {
-			usd, _ := s.price(tiers(tt), model, at)
+			usd, est := s.price(tiers(tt), model, at)
+			anyEstimated = anyEstimated || est
 			if usd == 0 {
 				continue
 			}
@@ -150,6 +184,26 @@ func (s *Sink) Observe(o accountant.Observation) {
 				attribute.String("cause", effectCause(e)),
 				attribute.String("direction", dir),
 			)))
+		}
+	}
+
+	// The tokens no operation owns on a rescued request. The ops already book InteractionCaused (the
+	// read), so the host adds the difference (design §6.2).
+	if money {
+		net := map[Tier]int{}
+		for t, n := range tiers(res.Interaction) {
+			net[t] += n
+		}
+		for t, n := range tiers(res.InteractionCaused) {
+			net[t] -= n
+		}
+		if usd, est := s.price(net, model, at); usd != 0 {
+			anyEstimated = anyEstimated || est
+			dir := "saved"
+			if usd < 0 {
+				dir, usd = "added", -usd
+			}
+			s.interactionUSD.Add(ctx, usd, metric.WithAttributes(attribute.String("direction", dir)))
 		}
 	}
 
@@ -175,13 +229,16 @@ func (s *Sink) Observe(o accountant.Observation) {
 // book adds one op's tokens and their price, and says whether any rate was a fallback. A tier with
 // no tokens adds nothing.
 func (s *Sink) book(ctx context.Context, tok metric.Int64Counter, usd metric.Float64Counter,
-	tt map[Tier]int, attrs func(Tier) attribute.Set, model string, at time.Time) (anyEst bool) {
+	tt map[Tier]int, attrs func(Tier) attribute.Set, model string, at time.Time, money bool) (anyEst bool) {
 	for t, n := range tt {
 		if n <= 0 {
 			continue
 		}
 		set := metric.WithAttributeSet(attrs(t))
 		tok.Add(ctx, int64(n), set)
+		if !money {
+			continue
+		}
 		rate, est := s.pricer.Price(model, at, t)
 		cost := rate * float64(n)
 		usd.Add(ctx, cost, set)
@@ -214,15 +271,24 @@ func (s *Sink) component(operator string) string {
 		}
 		return other
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.seen[name] {
+	if (*s.seen.Load())[name] {
 		return name
 	}
-	if len(s.seen) >= maxComponents {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cur := *s.seen.Load()
+	if cur[name] {
+		return name
+	}
+	if len(cur) >= maxComponents {
 		return other
 	}
-	s.seen[name] = true
+	next := make(map[string]bool, len(cur)+1)
+	for k := range cur {
+		next[k] = true
+	}
+	next[name] = true
+	s.seen.Store(&next)
 	return name
 }
 
@@ -241,7 +307,7 @@ func addTiers(a, b map[Tier]int) map[Tier]int {
 }
 
 // callTiers splits the usage of a component's own LLM call into tiers. CacheWrite1h is the part of
-// CacheWrite billed at the one-hour rate, so the 5m part is the difference (R45).
+// CacheWrite billed at the one-hour rate, so the 5m part is the difference. A spend call books as added (metrics spec R45).
 func callTiers(u accountant.CallUsage) map[Tier]int {
 	w5 := u.CacheWrite - u.CacheWrite1h
 	if w5 < 0 {

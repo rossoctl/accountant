@@ -1368,15 +1368,19 @@ type TierTokens struct {
     Input, CacheWrite5m, CacheWrite1h, CacheRead int
 }
 
-// Sink is the hook for a host's metrics. The host calls Observe after Compute. The library never
-// calls it, so pricing stays pure (R24). A Sink must return fast, make no network call, and not keep
-// the slices of the Result. Multi calls several sinks in order and recovers a panic in one of them.
 type Observation struct {
     Meta   RequestMeta
     Usage  Usage
     Result Result
 }
+
+// Sink is the hook for a host's metrics. The host calls Observe after Compute. The library never
+// calls it, so pricing stays pure (R26). A Sink must return fast, make no network call, and not keep
+// the slices of the Result. Multi calls several sinks in order and recovers a panic in one of them.
+// With no sink left, Multi returns nil. The OpenTelemetry sink built on this hook is described in
+// [metrics.md](metrics.md).
 type Sink interface{ Observe(Observation) }
+
 func Multi(sinks ...Sink) Sink
 
 type CacheEffectKind string // break | rescue | split | ttlPremium | ttlRescue | markPremium | markPayback

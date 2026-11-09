@@ -228,3 +228,132 @@ func itoa(i int) string {
 	}
 	return itoa(i/10) + string(rune('0'+i%10))
 }
+
+// modelPricer prices by model, so a test can tell which model a figure was priced with.
+type modelPricer struct{}
+
+func (modelPricer) Price(model string, _ time.Time, _ Tier) (float64, bool) {
+	if model == "haiku" {
+		return 0.001, false
+	}
+	return 0.01, false // any other model, "opus" included
+}
+
+func newSinkWith(t *testing.T, p Pricer, opts ...Option) (*Sink, *sdk.ManualReader) {
+	t.Helper()
+	r := sdk.NewManualReader()
+	s, err := New(sdk.NewMeterProvider(sdk.WithReader(r)).Meter("test"), p, opts...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s, r
+}
+
+// A spend names its own model. It is priced with that model, not with the agent's model (R49).
+func TestSpendIsPricedWithTheCallsOwnModel(t *testing.T) {
+	s, r := newSinkWith(t, modelPricer{})
+	s.Observe(obs("opus", accountant.PricedOp{Kind: accountant.KindSpend, Operator: "cg.compact",
+		Call: &accountant.ModelCall{Model: "haiku", Usage: accountant.CallUsage{Usage: accountant.Usage{Input: 1000}}}}))
+	if v := sumF(collect(t, r)["llm.savings.added.usd"]); v < 0.99 || v > 1.01 {
+		t.Fatalf("added usd = %v, want 1 (1000 tokens at the haiku rate), not 10", v)
+	}
+}
+
+// A call the library marked unpriced books nothing, in tokens or in money.
+func TestUnpricedSpendBooksNoCallUsage(t *testing.T) {
+	s, r := newSink(t)
+	o := obs("m", accountant.PricedOp{OpID: "s1", Kind: accountant.KindSpend, Operator: "cg.compact",
+		Call: &accountant.ModelCall{Model: "m", Usage: accountant.CallUsage{Usage: accountant.Usage{Input: 100, CacheWrite: 50, CacheWrite1h: 200}}}})
+	o.Result.Unpriced = []accountant.Unpriced{{OpID: "s1", Reason: accountant.ReasonBadUsage}}
+	s.Observe(o)
+	got := collect(t, r)
+	if len(got["llm.savings.added.tokens"]) != 0 || len(got["llm.savings.added.usd"]) != 0 {
+		t.Fatalf("a refused call was booked: %v", got)
+	}
+}
+
+// A cache effect that is marked Estimated, or priced from a fallback rate, marks the request.
+func TestEstimatedCacheEffectMarksTheRequest(t *testing.T) {
+	s, r := newSink(t)
+	o := obs("m")
+	o.Result.CacheEffects = []accountant.CacheEffect{{ID: "ce:1", Kind: accountant.EffectSplit, Estimated: true,
+		Saved: accountant.TierTokens{CacheRead: 10}}}
+	s.Observe(o)
+	if n := sumI(collect(t, r)["llm.savings.estimated"]); n != 1 {
+		t.Fatalf("estimated = %d, want 1", n)
+	}
+
+	s2, r2 := newSink(t)
+	o2 := obs("guess") // flat{} marks this model a fallback
+	o2.Result.CacheEffects = []accountant.CacheEffect{{ID: "ce:1", Kind: accountant.EffectSplit,
+		Saved: accountant.TierTokens{CacheRead: 10}}}
+	s2.Observe(o2)
+	if n := sumI(collect(t, r2)["llm.savings.estimated"]); n != 1 {
+		t.Fatalf("a fallback rate on an effect: estimated = %d, want 1", n)
+	}
+}
+
+// Billing.Mode decides what is money (design 7.1).
+func TestBillingModeDecidesMoney(t *testing.T) {
+	op := accountant.PricedOp{Kind: accountant.KindRewrite, Operator: "cg.mask", Saved: accountant.TierTokens{Input: 100}}
+	for _, tc := range []struct {
+		mode      accountant.BillingMode
+		wantUSD   bool
+		wantEstim int64
+	}{
+		{accountant.BillingAPI, true, 0},
+		{accountant.BillingUnknown, true, 1},
+		{accountant.BillingSubscription, false, 0},
+	} {
+		s, r := newSink(t)
+		o := obs("m", op)
+		o.Meta.Billing = accountant.Billing{Mode: tc.mode}
+		s.Observe(o)
+		got := collect(t, r)
+		if n := sumI(got["llm.savings.saved.tokens"]); n != 100 {
+			t.Errorf("%s: tokens = %d, want 100 (tokens always count)", tc.mode, n)
+		}
+		if has := len(got["llm.savings.saved.usd"]) > 0; has != tc.wantUSD {
+			t.Errorf("%s: usd booked = %v, want %v", tc.mode, has, tc.wantUSD)
+		}
+		if n := sumI(got["llm.savings.estimated"]); n != tc.wantEstim {
+			t.Errorf("%s: estimated = %d, want %d", tc.mode, n, tc.wantEstim)
+		}
+	}
+}
+
+// On a rescued request the tokens no op owns are booked: Interaction minus InteractionCaused.
+func TestInteractionIsBookedNet(t *testing.T) {
+	s, r := newSink(t)
+	o := obs("m")
+	o.Result.Interaction = accountant.TierTokens{CacheWrite5m: 1000}
+	o.Result.InteractionCaused = accountant.TierTokens{CacheRead: 200}
+	s.Observe(o)
+	pts := collect(t, r)["llm.savings.interaction.usd"]
+	if len(pts) != 1 || pts[0].attrs["direction"] != "saved" || pts[0].f < 0.79 || pts[0].f > 0.81 {
+		t.Fatalf("interaction = %+v, want one saved point of 0.8 (1000-200 tokens at 0.001)", pts)
+	}
+	// It is a breakdown: it must not reach saved or added.
+	if got := collect(t, r); len(got["llm.savings.saved.usd"])+len(got["llm.savings.added.usd"]) != 0 {
+		t.Fatalf("interaction reached saved or added: %v", got)
+	}
+}
+
+func TestComponentIsSafeUnderConcurrency(t *testing.T) {
+	s, _ := newSink(t)
+	done := make(chan struct{})
+	for g := 0; g < 8; g++ {
+		go func(g int) {
+			for i := 0; i < 500; i++ {
+				s.component("op" + itoa((g*7+i)%100))
+			}
+			done <- struct{}{}
+		}(g)
+	}
+	for g := 0; g < 8; g++ {
+		<-done
+	}
+	if n := len(*s.seen.Load()); n > maxComponents {
+		t.Fatalf("seen %d names, limit %d", n, maxComponents)
+	}
+}

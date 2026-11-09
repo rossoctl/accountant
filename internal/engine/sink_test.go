@@ -26,9 +26,10 @@ func TestMultiSurvivesAPanickingSink(t *testing.T) {
 	}
 }
 
-func TestMultiOfNothingIsSafe(t *testing.T) {
-	Multi().Observe(Observation{})
-	Multi(nil).Observe(Observation{})
+func TestMultiOfNothingIsNil(t *testing.T) {
+	if Multi() != nil || Multi(nil, nil) != nil {
+		t.Fatal("Multi with no live sink must return nil, so a host can test sink == nil")
+	}
 }
 
 // Every priced op carries the Kind of the operation it came from, so a sink needs no join by OpID.

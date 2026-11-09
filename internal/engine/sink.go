@@ -17,7 +17,7 @@ type Sink interface {
 	Observe(Observation)
 }
 
-// Multi returns a Sink that calls each sink in order. A nil sink is skipped. A panic in one sink
+// Multi returns a Sink that calls each sink in order. A nil sink is skipped. With no sink left, Multi returns nil. A panic in one sink
 // does not stop the others: Multi recovers it and goes on.
 func Multi(sinks ...Sink) Sink {
 	var live multi
@@ -25,6 +25,9 @@ func Multi(sinks ...Sink) Sink {
 		if s != nil {
 			live = append(live, s)
 		}
+	}
+	if len(live) == 0 {
+		return nil // a host that tests sink == nil gets true
 	}
 	return live
 }
