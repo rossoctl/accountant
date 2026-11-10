@@ -15,10 +15,10 @@ func TestRequestRecordsTheCallsInOrder(t *testing.T) {
 	r.Add(Operation{ID: "b", Kind: KindSetting, Operator: "router"})
 	r.EndRequest(Thread{ID: "main"}, Body{}, []Breakpoint{{TTL: "5m"}}, EntryFacts{})
 
-	if len(r.Ops) != 2 || r.Ops[0].ID != "a" || r.Ops[1].ID != "b" {
-		t.Fatalf("Ops = %+v, want a then b", r.Ops)
+	if len(r.ops) != 2 || r.ops[0].ID != "a" || r.ops[1].ID != "b" {
+		t.Fatalf("Ops = %+v, want a then b", r.ops)
 	}
-	if !r.ended || len(r.Breakpoints) != 1 || r.Thread.ID != "main" {
+	if !r.ended || len(r.breakpoints) != 1 || r.thread.ID != "main" {
 		t.Fatalf("EndRequest did not record: %+v", r)
 	}
 }

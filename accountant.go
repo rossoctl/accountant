@@ -158,6 +158,21 @@ const (
 	CompactionUnknown = engine.CompactionUnknown
 )
 
+// Names of the checks in [CheckFailure].Check.
+const (
+	CheckSum          = engine.CheckSum
+	CheckUniqueChange = engine.CheckUniqueChange
+	CheckSpans        = engine.CheckSpans
+	CheckConservation = engine.CheckConservation
+	CheckSharedWarm   = engine.CheckSharedWarm
+	CheckBadUsage     = engine.CheckBadUsage
+	CheckRatioRange   = engine.CheckRatioRange
+	CheckBreakpoints  = engine.CheckBreakpoints
+	CheckMediaTokens  = engine.CheckMediaTokens
+	CheckSizeTokens   = engine.CheckSizeTokens
+	CheckSizeRange    = engine.CheckSizeRange
+)
+
 // Machine-stable reasons in [Result].Unpriced.
 const (
 	ReasonEndRequestMissing = engine.ReasonEndRequestMissing

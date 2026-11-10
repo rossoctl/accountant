@@ -584,7 +584,7 @@ Rules that follow from the table:
 - **The ChangeID** of `markPremium` is the `ChangeID` of the applied operation whose forwarded span covers the
   last forwarded breakpoint, or empty when none does. The library cannot tell a host's breakpoint from the
   client's, so it names the last one: the provider writes up to it. This is attribution only; it moves no
-  priced figure. Check 5 allows both.
+  priced figure. The attribution rule (§6.5) allows both.
 - **The ChangeID** of a `ttlPremium` with no active `headttl:` change is the change of the last 1h breakpoint
   that a reported operation covers (the scan goes on past a 1h breakpoint no operation covers), or empty.
   Attribution only.
@@ -1357,8 +1357,8 @@ type Unpriced struct {
 }
 
 type CheckFailure struct {
-    Check    string // "sum" | "order" | "unique_change" | "spans" | "attribution" |
-                    // "conservation" | "shared_warm" | "bad_usage" | "ratio_range" | "breakpoints" |
+    Check    string // one of the Check constants: "sum" | "unique_change" | "spans" | "conservation" |
+                    // "shared_warm" | "bad_usage" | "ratio_range" | "breakpoints" |
                     // "media_tokens" | "size_tokens" | "size_range" (§6.5)
     Operator string // "" when the check is not about one operator
     Detail   string // numbers only, no content
@@ -1444,8 +1444,13 @@ one. It shows the gross saving, and marks the net as `Estimated`.
 
 ### 6.5 Checks
 
-**Not run in v0:** check 2 (order). Attribution (check 5) holds by construction, because a break takes only
-the `ChangeID` of an operation of the same request.
+Checks 2 (order) and 5 (attribution) are not checks. The library has no code for them and never reports them. The
+numbers stay reserved, so the other check numbers do not change. Attribution holds by construction, because a break
+takes only the `ChangeID` of an operation of the same request. The order of the operations is the order of
+`Request.Add`, and the library does not test it.
+
+Each check has a constant, `Check<Name>` (for example `CheckSum` and `CheckSizeRange`), and the code and the host use
+it in place of the bare string.
 
 The library reports failed checks in `Result.Checks`. A failure does not stop pricing. The one exception is check 13 (`size_range`), which stops the pricing of the one operation it names. `Compute` also
 logs each failure at warning level with `log/slog` (message `accountant check failed`, with the
@@ -1458,10 +1463,10 @@ check, the operator, the detail, and the request, session and thread IDs). `Prev
    both sizes (taken in `BeginRequest` and `EndRequest`, §6.1). A failure means one of three things: a plugin changed
    the body and did not report it, `Compute` applied a change that has ended, or `Compute` dropped a
    change that is still in the body (§4.5, §4.6).
-2. **Order:** the context operations are in pipeline order, so a context operator's output positions are mapped through the `MessageSplice` of the context operations before it. An active context operation keeps its client-space position and its pipeline position, and is mapped through this request's splices (§4.3).
+2. **Reserved.** Order is not checked (see above). A context operator's output positions are mapped through the `MessageSplice` of the context operations before it (§4.3).
 3. **Unique `ChangeID`:** no two `rewrite` or `setting` context operations of one request, reported or active, have the same `ChangeID`. A `spend` or a cache effect may share the `ChangeID` of the change it belongs to.
 4. **Spans:** for a context operation with `Spans`, its `SizeBefore` and `SizeAfter` equal the sums over its spans.
-5. **Attribution:** a `break` effect's `ChangeID` is the `ChangeID` of a context operation of the same request, or empty. A `markPremium` has the `ChangeID` of the operation whose span covers the host's breakpoint, or none; a `markPayback` has the `ChangeID` of the operation that covered the host's breakpoint on the request that wrote the entry, or none. A `rescue`, `ttlPremium` and `ttlRescue` are exempt: their `ChangeID` is a keep-alive window or a head entry, which names no operation of this request.
+5. **Reserved.** Attribution is not checked (see above). The rule that holds by construction: a `break` effect's `ChangeID` is the `ChangeID` of a context operation of the same request, or empty. A `markPremium` has the `ChangeID` of the operation whose span covers the host's breakpoint, or none; a `markPayback` has the `ChangeID` of the operation that covered the host's breakpoint on the request that wrote the entry, or none. A `rescue`, `ttlPremium` and `ttlRescue` are exempt: their `ChangeID` is a keep-alive window or a head entry, which names no operation of this request.
 6. **Conservation:** the request total of the applied context operations and the cache effects equals the bill difference (§6.3). The ranges of operations unpriced for `media_tokens` are taken out of the bill difference (as `DryRun` operations are left out), because the operation prices none of it; every other operation stays in the check.
    Each size is compared at the request ratio, so a correct `Size.Tokens` passes (the gap between the host's tokens
    and the ratio's figure for the same bytes is taken out of the total). `DryRun` context operations are left out,

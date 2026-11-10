@@ -293,7 +293,7 @@ func TestHonestChainBesideMalformedReReport(t *testing.T) {
 		}
 	}
 	for _, c := range res.Checks {
-		if c.Check == "sum" {
+		if c.Check == CheckSum {
 			t.Fatalf("sum check failed: %+v", res.Checks)
 		}
 	}

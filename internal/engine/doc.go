@@ -89,7 +89,7 @@
 //
 //   - Result.Interaction beyond the exact case (§6.2). Compute reports it only for a saved span at or
 //     before the ping's extent that the ops book at the read tier. Any other case adds zero.
-//   - The order check (§6.5 check 2). The attribution check (5) holds by
+//   - Checks 2 (order) and 5 (attribution) of §6.5 are reserved numbers, not checks. Attribution holds by
 //     construction: a break only takes the ChangeID of an operation of the same request.
 //   - The 20-block lookback (§5.1), and the long-context tier.
 //   - MessageSplice moves message positions only. A rewrite that removes or adds whole tools or
