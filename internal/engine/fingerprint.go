@@ -13,6 +13,7 @@ import (
 type Fingerprint struct {
 	Thread                                  string
 	Model                                   string    // the model the request was sent for; "" when the host did not say
+	ModelKey                                string    // RequestMeta.ModelKey; "" when the host gave none
 	At                                      time.Time // the start of the request; the request gap is measured from it (§5.2)
 	Client                                  Body      // client body, before any plugin
 	Forwarded                               Body      // body as sent upstream
@@ -324,4 +325,12 @@ func clamp32(n int) int32 {
 		return math.MaxInt32
 	}
 	return int32(n)
+}
+
+// modelID is the string that identifies the fingerprint's model in a comparison (RequestMeta.modelID).
+func (fp *Fingerprint) modelID() string {
+	if fp.ModelKey != "" {
+		return fp.ModelKey
+	}
+	return fp.Model
 }

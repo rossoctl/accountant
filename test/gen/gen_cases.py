@@ -84,8 +84,10 @@ def eop(change, saved=None, caused=None, note=None, call=None):
 
 
 def step(sec, rid, client, fwd, cbp, fbp, add, usage, exp, session="s1", model="agent-model",
-         params=None, facts=None, thread=None, compaction=None):
+         params=None, facts=None, thread=None, compaction=None, model_key=None):
     meta = {"requestId": rid, "session": session, "model": model, "at": ts(sec), "billing": {"mode": "api"}}
+    if model_key:  # the host's name for the model apart from the spelling of its id (accountant#44)
+        meta["modelKey"] = model_key
     if compaction:  # the host's verdict of a client compaction manual | auto | unknown
         meta["compaction"] = compaction
     if params:
@@ -1530,6 +1532,23 @@ def c_mix():
                 "subagent's own thread is untouched. cg's seenModel is keyed by model alone, so main's first request "
                 "on the small model is not a cold start: the subagent used it first.",
                 DIMS("none", "beforeBStar", "break", threads="2", models="2", **{"break": "model"}), [m0, s0, m1, s1])
+
+    # 2b. The same id in two spellings is not a model change (accountant#44). Main moves from a model id to
+    # its dated spelling, and the host gives both the same ModelKey. The entry is lost all the same, so the
+    # break is there, with no cause.
+    k0 = sim(0, "main-0", ([], SYS1, M_BASE), ([], SYS1, M_BASE), [], "unknown", model="small-model", model_key="small")
+    k1 = sim(10, "main-1", ([], SYS1, C1), ([], SYS1, F1), [eop(CF, saved=TT(cacheWrite5m=7000))], "hot",
+             add=[cmdfilter_op()], prev=(30000, 30000), boundary=P("messages", 8), model="small-model-20251001",
+             model_key="small", usage=U(write=31000), base=U(write=38000),
+             effects=[effect("break", "", saved=TT(cacheRead=30000), caused=TT(cacheWrite5m=30000), to=P("messages", 8),
+                             note="the entry was lost; both ids are the model small, so no cause")])
+    write_issue("threads/model-switch-unreported/same-model-key-two-spellings", 44,
+                "Main sends a request on small-model and the next one on small-model-20251001. The host gives both ids "
+                "the ModelKey small, so they are one model. The usage shows the entry lost: nothing is read and all "
+                "31,000 tokens are written. The library records the break nobody caused, 30,000 tokens from read to "
+                "write, with no cause: the break is not labelled model_changed, because the model did not change. "
+                "It is in the client body's bill too, so the baseline equals the bill and the break nets out.",
+                DIMS("none", "beforeBStar", "break", threads="1", models="1", **{"break": "unexplained"}), [k0, k1])
 
     # 3. Two sessions, each with a main and a subagent, all reporting the same ChangeID.
     C1, F1 = M_BASE + [("m9", 8000)], M_BASE + [("m9f", 1000)]

@@ -244,7 +244,7 @@ func (r *Request) seededFromParent(s ThreadState) (ThreadState, bool) {
 	}
 	ps := pt.snapshot()
 	p := ps.PrevPrint
-	if p == nil || ps.Cache.Extent == nil || p.Model != r.Meta.Model {
+	if p == nil || ps.Cache.Extent == nil || p.modelID() != r.Meta.modelID() {
 		return s, false
 	}
 	ttl := ps.Cache.EntryTTL // the parent's entry lives as long as the parent wrote it for

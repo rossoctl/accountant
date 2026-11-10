@@ -977,7 +977,7 @@ stored one is the newer request, so the next request is compared with that one (
 
 **A fork reads its parent's entry.** A thread with no previous request and a `Thread.Parent` starts from the
 parent's fingerprint and cache state, when the fork's forwarded body keeps the parent's whole cached extent
-(equal hashes up to it) and the fork uses the parent's model. Otherwise the phase is `unknown`. The fork's
+(equal hashes up to it) and the fork uses the parent's model (`RequestMeta.ModelKey` decides when set, see `Cause` in §6.3). Otherwise the phase is `unknown`. The fork's
 own fingerprint then replaces the seed, and the parent's state does not change. The seed is used only when the fork starts at or after the parent's last request and within the TTL, so it
 can only give `hot`; otherwise the fork is `unknown` and a read in the usage makes it `hot`. A fork that
 started before the parent's last completed request is not seeded. The seed is the parent's fingerprint at the
@@ -1094,6 +1094,7 @@ func (ts *Trackers) Trimmed() uint64
 type RequestMeta struct {
     RequestID, Session string
     Model              string
+    ModelKey           string // the model apart from the spelling of its id; compared instead of Model when set (§6.3, Cause)
     Params             map[string]string
     At                 time.Time
     Billing            Billing
@@ -1400,6 +1401,15 @@ type CacheEffect struct {
 
 `Cause` is "model_changed" when row 4 (§5.2) finds a loss and the model differs from the previous
 request's: the provider keeps a cache for each model, so the loss is explained. It is empty otherwise.
+
+"The model differs" compares `RequestMeta.ModelKey` when the host sets it, and `RequestMeta.Model` as written
+otherwise. The library treats ids as opaque strings. A dated id (`claude-sonnet-4-5-20250929`), an alias
+(`claude-sonnet-4-5`) and a vendor prefix (`aws/...`, `anthropic/...`) of one model are different strings, so
+a host that wants them to count as one model gives all of them the same `ModelKey`. The host knows its model
+catalog and the library does not. The key is stored with the fingerprint, so a restart keeps it. A request
+with a key is compared with the key of the previous one: if only one of the two has a key, the key is
+compared with the other id as written. The same comparison decides whether a forked thread can use its
+parent's entry (§5.2, "A fork reads its parent's entry"). Only the label and the fork rule use it: no price depends on the model id.
 
 `Saved` and `Caused` are separate and both non-negative, because the money layer rejects negative
 values (`pricing.MicrosFromUSD`). Cortex prices each side with the existing code.

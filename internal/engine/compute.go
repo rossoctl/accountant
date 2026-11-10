@@ -1095,7 +1095,7 @@ func (c *calcState) cacheEffects(res *Result) {
 	}
 	c.addBreak(res, c.readEnd, "") // row 4: the entry was lost early
 	c.inBaseline(res)
-	if prev := c.s.PrevPrint; prev.Model != "" && c.r.Meta.Model != "" && prev.Model != c.r.Meta.Model {
+	if prev := c.s.PrevPrint; prev.modelID() != "" && c.r.Meta.modelID() != "" && prev.modelID() != c.r.Meta.modelID() {
 		// the provider keeps a cache for each model, so this is not a loss nobody can explain
 		res.CacheEffects[len(res.CacheEffects)-1].Cause = CauseModelChanged
 	}
@@ -1889,7 +1889,7 @@ func (c *calcState) activeOps() []Operation {
 // space, this request's fingerprint, and what it left cached (§4.6, §6.1).
 func (c *calcState) nextState() ThreadState {
 	next := ThreadState{Version: c.s.Version, Active: c.activeOps()}
-	fp := &Fingerprint{Thread: c.r.Thread.ID, Model: c.r.Meta.Model, At: c.r.Meta.At, Client: c.client, Forwarded: c.fwd,
+	fp := &Fingerprint{Thread: c.r.Thread.ID, Model: c.r.Meta.Model, ModelKey: c.r.Meta.ModelKey, At: c.r.Meta.At, Client: c.client, Forwarded: c.fwd,
 		ClientBreakpoints: c.r.ClientBreakpoints, ForwardedBreakpoints: c.r.Breakpoints}
 	if c.downgraded() { // the entry was written at 5m: the next request must not judge it by the 1h it asked for
 		fp.ForwardedBreakpoints = append([]Breakpoint(nil), c.r.Breakpoints...)
