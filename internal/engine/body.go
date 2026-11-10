@@ -209,7 +209,8 @@ func (r ratio) between(b Body, from, to int) int {
 }
 
 // extent returns the last candidate position whose estimated prefix fits in tokens, or -1. The
-// tolerance absorbs the error of the byte ratio and the 128-token rounding of older OpenAI models.
+// tolerance absorbs the error of the byte ratio and the read step of the provider (128 tokens for older
+// OpenAI models, the default; Provider.ReadGranularity).
 // With no candidate breakpoint every position is a candidate.
 func extent(b Body, r ratio, tokens int, candidates []bp) int {
 	return extentWith(b, r, tokens, candidates, Provider{})

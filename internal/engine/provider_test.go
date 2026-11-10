@@ -1,6 +1,9 @@
 package engine
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 // accountant#33: the provider profile in EntryFacts. The zero value keeps the Anthropic behaviour.
 
@@ -40,12 +43,22 @@ func TestProviderTTLsDecideTheBreakpointsCheck(t *testing.T) {
 	if res := run(Provider{TTLs: []string{"5m", "1h"}}); hasCheck(res, ReasonBreakpoints) {
 		t.Fatalf("5m and 1h: Checks = %+v, want valid", res.Checks)
 	}
-	// An empty TTL is always valid, and a provider may name its own string.
+	// The engine prices only "5m" and "1h": a custom string fails even when listed.
 	f := exact5m
-	f.Provider = Provider{TTLs: []string{"24h"}}
-	res := req{at: t0, client: body, clientBPs: []Breakpoint{{Pos: msg(1)}, {Pos: msg(2), TTL: "24h"}}, facts: f, usage: Usage{CacheWrite: 400}}.run(NewTrackers())
+	f.Provider = Provider{TTLs: []string{"5m", "24h"}}
+	res := req{at: t0, client: body, clientBPs: []Breakpoint{{Pos: msg(1), TTL: "24h"}}, facts: f, usage: Usage{CacheWrite: 400}}.run(NewTrackers())
+	if !hasCheck(res, ReasonBreakpoints) {
+		t.Fatalf("24h: Checks = %+v, want breakpoints", res.Checks)
+	}
+	// An empty TTL is valid, and an empty non-nil list allows nothing else.
+	f.Provider = Provider{TTLs: []string{}}
+	res = req{at: t0, client: body, clientBPs: []Breakpoint{{Pos: msg(1)}}, facts: f, usage: Usage{CacheWrite: 400}}.run(NewTrackers())
 	if hasCheck(res, ReasonBreakpoints) {
-		t.Fatalf("24h: Checks = %+v, want valid", res.Checks)
+		t.Fatalf("empty TTL: Checks = %+v, want valid", res.Checks)
+	}
+	res = req{at: t0, client: body, clientBPs: bps5(msg(1)), facts: f, usage: Usage{CacheWrite: 400}}.run(NewTrackers())
+	if !hasCheck(res, ReasonBreakpoints) {
+		t.Fatalf("empty list, 5m: Checks = %+v, want breakpoints", res.Checks)
 	}
 }
 
@@ -76,5 +89,26 @@ func TestToleranceUsesTheProfile(t *testing.T) {
 	}
 	if got, want := (Provider{ReadGranularity: 1}).tolerance(1000), 1+20; got != want {
 		t.Fatalf("1 = %d, want %d", got, want)
+	}
+}
+
+// Row 4 through Compute: the same body, a hot entry, and a read 200 tokens short of the cached extent.
+// Inside the default 128 tokens plus 2% it is no break. A provider that reports the exact count has
+// no such slack, so the short read is a break.
+func TestReadGranularityDecidesTheEarlyLossVerdict(t *testing.T) {
+	run := func(p Provider) Result {
+		f := exact5m
+		f.Provider = p
+		ts := NewTrackers()
+		body := mk(nil, nil, msgs(6, 1000))
+		req{at: t0, client: body, clientBPs: bps5(msg(5)), facts: f, usage: Usage{CacheWrite: 6000}}.run(ts)
+		return req{at: t0.Add(time.Minute), client: body, clientBPs: bps5(msg(5)), facts: f,
+			usage: Usage{CacheRead: 5800, CacheWrite: 200}}.run(ts)
+	}
+	if res := run(Provider{}); len(res.CacheEffects) != 0 {
+		t.Fatalf("default: CacheEffects = %+v, want none", res.CacheEffects)
+	}
+	if res := run(Provider{ReadGranularity: 1}); len(res.CacheEffects) == 0 {
+		t.Fatalf("exact: want a break for the short read")
 	}
 }

@@ -793,7 +793,7 @@ apply to it.
 The rule has one exception: a delivered cachesplit, a client diff before the end of the system section (the
 tools section counts too), and a read that stops at the split. The split exists for the turn where the volatile
 tail moved: the client body would miss from the system block on, and the forwarded body reads only the stable
-half. On a short conversation that half is within the read tolerance (128 tokens plus 2%) of the whole previous
+half. On a short conversation that half is within the read tolerance (one read step plus 2%; 128 tokens by default) of the whole previous
 extent, so the read looks like a full read. It is not proof that nothing broke. The exception holds when the
 billed read is at most the forwarded prefix before the first forwarded difference (`upTo(fwd, fwdFD-1)`), with
 no tolerance. Then the full-read rule does not apply. B* is not moved to the end of the extent, so it stays where
@@ -920,7 +920,7 @@ A host that sums cache effects into a net skips each break with `InBaseline`.
 | 1 | `fwdFirstDiff` ≤ `prevExtent`, and `fwdFirstDiff` < `clientFirstDiff` | A plugin broke the cache. Add a break with `at: fwdFirstDiff` and the `ChangeID` of the context operation, reported or active, that changed the position `fwdFirstDiff`. |
 | 2 | `clientFirstDiff` ≤ `prevExtent`, and `fwdFirstDiff` ≥ `clientFirstDiff` | The client changed its body inside the cached prefix. Add a break with no `ChangeID`. |
 | 3 | A `setting` context operation changed the model or a param (`effort`, `thinking`) since the previous request, and `Usage.CacheRead` is below the read that the forwarded body and the phase predict | Add a break with the `ChangeID` of the `setting` context operation. The break starts at the earliest `SettingChange.At` of the operation, snapped down to the last breakpoint before it (§6.2), because the bodies are equal there and no hash shows the position. If `At` is nil, the break starts at the read the usage shows and `penalty_unknown` is added (§6.4). If the operation changed several settings, the break names the operation, not one setting: the library cannot say which of them caused it. This is the one cost of a param change that can be measured. |
-| 4 | No diff inside `prevExtent`, the phase is `hot`, but `Usage.CacheRead` is below the read the phase predicts: the end of `prevExtent`, snapped down to the last forwarded breakpoint at or before it. When the request is more than 5 minutes after the previous one, the prediction is cut at the head (the end of the first forwarded breakpoint group that is held at 1h): a 5m part past the head has expired | The entry was lost early (eviction, the lookback window, another reason the library cannot see). Add a break with no `ChangeID`; set `Cause` to `model_changed` when the model differs from the previous request's. A one-block tolerance absorbs the 128-token rounding of older OpenAI models. |
+| 4 | No diff inside `prevExtent`, the phase is `hot`, but `Usage.CacheRead` is below the read the phase predicts: the end of `prevExtent`, snapped down to the last forwarded breakpoint at or before it. When the request is more than 5 minutes after the previous one, the prediction is cut at the head (the end of the first forwarded breakpoint group that is held at 1h): a 5m part past the head has expired | The entry was lost early (eviction, the lookback window, another reason the library cannot see). Add a break with no `ChangeID`; set `Cause` to `model_changed` when the model differs from the previous request's. A one-block tolerance absorbs the read step of the provider (128 tokens by default, `Provider.ReadGranularity`). |
 | 5 | No diff inside `prevExtent`, and the phase is `cold` | The cache expired. Add a break with no `ChangeID`, so the expiry is on the record ([R31](spec.md#r31)). It moves no tokens: B\* = 0 already prices every position as a write (§6.2), so the range from the read extent to B\* is empty, and the expiry is not counted twice. |
 | 6 | No previous fingerprint for this thread | First turn of the thread with no `Inherits`, or a restart: no break is added. B\* is unknown (§6.4). |
 
@@ -1667,7 +1667,7 @@ Three provider facts are inputs and no longer fixed in the code. A zero `Provide
 | Field | Used by | Describes |
 |---|---|---|
 | `ReadGranularity` | the extent search, the read-beats-the-clock rule, the row 4 test | OpenAI before GPT-5.6 reports the cached count rounded down to a multiple of 128 (set 128, or leave 0). A provider that reports the exact count sets 1. |
-| `TTLs` | check 10 (`breakpoints`) | A Bedrock model may accept only `"5m"`. A TTL outside the list fails the check. |
+| `TTLs` | check 10 (`breakpoints`) | A Bedrock model may accept only `"5m"`. A TTL outside the list fails the check. The list can only narrow `"5m"` and `"1h"`: the clock and the tiers price no other lifetime, so any other string fails the check even when listed. An empty non-nil list allows only the empty TTL. |
 | `StorageBilled` | `Result.StorageTokens` | Gemini explicit caching bills the stored tokens by the hour. The result carries the tokens the request wrote (`CacheWrite`). The host multiplies by the hours and its rate. The library knows neither: the host decides when it deletes the cache. |
 
 How a host describes each provider:
@@ -1676,3 +1676,5 @@ How a host describes each provider:
 - **OpenAI, before GPT-5.6:** `Provider{ReadGranularity: 128}`. From GPT-5.6: `Provider{ReadGranularity: 1}`.
 - **Gemini explicit cache:** `Provider{ReadGranularity: 1, StorageBilled: true}`.
 - **Bedrock, a model with a 5m TTL only:** `Provider{TTLs: []string{"5m"}}`.
+
+`ComputeStandalone` takes no `EntryFacts`, so it sets no `StorageTokens`. A host that bills storage for a ping's write reads the figure from the ping's own usage.

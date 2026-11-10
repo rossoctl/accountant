@@ -207,10 +207,12 @@ type EntryFacts struct {
 type Provider struct {
 	// ReadGranularity is the step in tokens of the cached count the provider reports (OpenAI before
 	// GPT-5.6 rounds down to a multiple of 128). The extent search allows one step plus 2%. 0 = 128.
-	// Use 1 for a provider that reports the exact count.
+	// Use 1 for a provider that reports the exact count. A negative value counts as 0.
 	ReadGranularity int `json:"readGranularity,omitempty"`
-	// TTLs are the breakpoint TTL strings the model accepts, besides the empty one. A breakpoint with
-	// another TTL fails the check "breakpoints". Nil = "5m" and "1h".
+	// TTLs narrows the breakpoint TTL strings the model accepts, besides the empty one. It may list
+	// "5m" and "1h" only: the engine prices no other lifetime, so a string outside them is refused by
+	// check "breakpoints" even if listed. A breakpoint with an unlisted TTL fails that check.
+	// Nil = "5m" and "1h". An empty non-nil list allows only the empty TTL.
 	TTLs []string `json:"ttls,omitempty"`
 	// StorageBilled says the provider bills the storage of a cache entry by token and hour (Gemini
 	// explicit caching). Result.StorageTokens then holds the tokens the request wrote. The host
@@ -235,7 +237,7 @@ func (p Provider) allowsTTL(ttl string) bool {
 	if p.TTLs == nil {
 		return ttl == "5m" || ttl == "1h"
 	}
-	return slices.Contains(p.TTLs, ttl)
+	return (ttl == "5m" || ttl == "1h") && slices.Contains(p.TTLs, ttl)
 }
 
 // The enums are strings, not integers, so an unknown value from a newer operator survives a

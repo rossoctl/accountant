@@ -977,7 +977,7 @@ func liveExtent(segs []entrySeg, gap time.Duration, read func(at int) bool) (int
 }
 
 // readReaches reports whether Usage.CacheRead covers the first bytes bytes of the previous forwarded
-// body up to position i, with the tolerance of extent (128 tokens plus 2%). The prefix is priced at the
+// body up to position i, with the tolerance of extent (one read step plus 2%; the step is Provider.ReadGranularity, default 128). The prefix is priced at the
 // byte ratio of this request, its media at the fixed media price. It is the one tolerance for the read-beats-the-clock rule and for the B* rule (decision 7).
 func (c *calcState) readReaches(b Body, i int) bool {
 	want := c.ratio.upTo(b, i)
@@ -1604,7 +1604,8 @@ func (c *calcState) badRatio() bool {
 }
 
 // badBreakpoints says whether the forwarded body has more than 4 breakpoints, or any breakpoint
-// has a TTL other than "5m", "1h" or empty (empty is the 5m default).
+// has a TTL that EntryFacts.Provider does not allow: by default "5m", "1h" or empty (empty is the 5m
+// default); Provider.TTLs can only narrow that list.
 func (c *calcState) badBreakpoints() bool {
 	if len(c.r.Breakpoints) > maxBreakpoints {
 		return true
