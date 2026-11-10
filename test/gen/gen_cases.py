@@ -3440,6 +3440,71 @@ def d60():
                 DIMS("rewrite", "tools", "unknown-hit-miss", spans="true"), steps)
 
 
+# Issue 60, 1h entry: the same deferral under 1h breakpoints. The 1h entry is still alive after the 5m TTL, so a
+# request 20 minutes after the last one is hot, not cold. It becomes cold only after the 1h TTL.
+def d60_1h():
+    TD = "td:set-1h"
+    tools_c = [("t0", 250), ("t1", 750), ("t2", 500)]
+    tools_f = [("t0", 250), ("t1", 10), ("t2", 10)]
+    sysb = [("sys", 750)]
+    op = rewrite("op1", "tool-defer", "tools", 1, 1250, 20, TD,
+                 spans=[{"section": "tools", "from": 1, "to": 1, "sizeBefore": size(750), "sizeAfter": size(10)},
+                        {"section": "tools", "from": 2, "to": 2, "sizeBefore": size(500), "sizeAfter": size(10)}])
+    msgs = [("m0", 250), ("m1", 250)]
+    plan = [(0, "r0", 1, "unknown", True), (1260, "r1", 2, "hot", False), (6000, "r2", 2, "cold", False)]
+    steps, prev_c, prev_f = [], 0, 0
+    for sec, rid, n, phase, first in plan:
+        m = msgs[:n]
+        ct, ft = tokens(tools_c, sysb, m), tokens(tools_f, sysb, m)
+        if phase == "hot":
+            ops = [eop(TD, saved=TT(cacheRead=1230), note="tools come first, so the 1,230 tokens are before B*")]
+            usage, base = U(read=prev_f, write=ft - prev_f, w1h=ft - prev_f), U(read=prev_c, write=ct - prev_c, w1h=ct - prev_c)
+        else:
+            ops = [eop(TD, saved=TT(cacheWrite1h=1230), note="nothing is cached or the entry expired")]
+            usage, base = U(write=ft, w1h=ft), U(write=ct, w1h=ct)
+        steps.append(sim(sec, rid, (tools_c, sysb, m), (tools_f, sysb, m), ops, phase,
+                         add=[op] if first else [], prev=(prev_c, prev_f), cbp=bps(m, "1h"), fbp=bps(m, "1h"),
+                         usage=usage, base=base, facts={"ttl": "1h", "lifetime": "exact"}))
+        prev_c, prev_f = ct, ft
+    write_issue("rewrite/tool-defer-stubs/first-hot-cold/1h", 60,
+                "The same deferral as the 5m case, under 1h breakpoints. The second request comes 21 minutes after "
+                "the first. A 5m entry would have expired, but the 1h entry is alive, so the request is hot and "
+                "reads the saving. The third request comes more than 1h after the second, so the entry is cold and "
+                "writes the saving at the 1h tier.",
+                DIMS("rewrite", "tools", "unknown-hit-miss", ttl="1h", spans="true"), steps)
+
+
+# Issue 60, loaded later: the model loads a deferred tool. Its full definition enters the messages. That is a
+# rewrite that makes the context larger (R33). The host reports it as a cost with its own ChangeID. The deferral
+# stays applied: the other deferred tool is still a stub.
+def d60_loaded():
+    TD, LD = "td:set-ld", "td:load-t1"
+    tools_c = [("t0", 250), ("t1", 750), ("t2", 500)]
+    tools_f = [("t0", 250), ("t1", 10), ("t2", 10)]
+    sysb = [("sys", 750)]
+    op = rewrite("op1", "tool-defer", "tools", 1, 1250, 20, TD,
+                 spans=[{"section": "tools", "from": 1, "to": 1, "sizeBefore": size(750), "sizeAfter": size(10)},
+                        {"section": "tools", "from": 2, "to": 2, "sizeBefore": size(500), "sizeAfter": size(10)}])
+    load = rewrite("op2", "tool-defer", "messages", 2, 250, 1000, LD)
+    m0, m1 = [("m0", 250), ("m1", 250)], [("m0", 250), ("m1", 250), ("m2", 250)]
+    m1f = [("m0", 250), ("m1", 250), ("m2f", 1000)]  # the loaded definition (750 tokens) is in the new message
+    s0 = sim(0, "r0", (tools_c, sysb, m0[:1]), (tools_f, sysb, m0[:1]), [eop(TD, saved=TT(cacheWrite5m=1230))],
+             "unknown", add=[op])
+    s1 = sim(60, "r1", (tools_c, sysb, m0), (tools_f, sysb, m0),
+             [eop(TD, saved=TT(cacheRead=1230), note="tools come first, so the 1,230 tokens are before B*")],
+             "hot", prev=(tokens(tools_c, sysb, m0[:1]), tokens(tools_f, sysb, m0[:1])))
+    s2 = sim(120, "r2", (tools_c, sysb, m1), (tools_f, sysb, m1f),
+             [eop(LD, caused=TT(cacheWrite5m=750)), eop(TD, saved=TT(cacheRead=1230))],  # reported this request first, then carried
+             "hot", add=[load], prev=(tokens(tools_c, sysb, m0), tokens(tools_f, sysb, m0)))
+    write_issue("rewrite/tool-defer-stubs/loaded-later/5m", 60,
+                "tool-defer defers 2 tools, as in the first case. On the third request the model loads one of them, "
+                "and its full definition (750 tokens) enters the new message. The client body does not hold it, so "
+                "the host reports a rewrite that makes message 2 larger, with its own ChangeID. The new message is "
+                "after the cached prefix, so the 750 tokens are written, not read: a cost, R33. The deferral "
+                "keeps its 1,230 tokens of saving, because the stubs stay in the tools.",
+                DIMS("rewrite", "tools", "unknown-hit-miss", spans="true"), [s0, s1, s2])
+
+
 if __name__ == "__main__":
     os.makedirs(OUT, exist_ok=True)
     for old in os.listdir(OUT):  # the generator owns this directory: drop cases that no longer exist
@@ -3447,5 +3512,5 @@ if __name__ == "__main__":
             os.remove(os.path.join(OUT, old))
     for f in (ex12, ex3, ex4, ex5, ex67, ex8, shared_prefix_cases, ex9, c01, c02, c03_04, c05, c06, c07, c08, c09, c10, c11, c12, c_threads, c_client_compaction, c_client_trim_keeps_head, c_client_rewrite_in_place_ends_replay, c_client_compaction_before_any_change, c_client_tail_edit_keeps_replay, c_client_tail_compaction_ends_replay, c_client_two_compactions, c_clock, c_ttl, c_mix,
               c14, s909, r909_system_hash, c15, c16, c17, c18, a1, a2, a3, a4_b3, b1_b2, b4, b5, c1_, c2_, c2b, c3_, c5, d2, d3, d4,
-              d5, d6, e2, e345, f245, h2, h5, r9, i53, i54, i56, i55_split, i55_no_cache, i55_media_one_side, r14, r21, r20, r20b, c42, c42b, c42c, c42d, c43, i44, c49, i52_all, d60):
+              d5, d6, e2, e345, f245, h2, h5, r9, i53, i54, i56, i55_split, i55_no_cache, i55_media_one_side, r14, r21, r20, r20b, c42, c42b, c42c, c42d, c43, i44, c49, i52_all, d60, d60_1h, d60_loaded):
         f()
