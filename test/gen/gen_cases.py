@@ -3405,6 +3405,41 @@ def c49():
                 DIMS("setting-breakpoint", "messages", "mark-premium-evicted", ttl="1h"), [s0, s1])
 
 
+# Issue 60: tool deferral with defer_loading. The host leaves each deferred definition in the body it forwards,
+# and the provider bills a stub for it. The host builds the forwarded body as the prompt the provider bills, so
+# a deferred tool has the size of its stub. The deferral is then a shrink of tools positions, priced with no
+# new field.
+def d60():
+    TD = "td:set-1"
+    tools_c = [("t0", 250), ("t1", 750), ("t2", 500)]
+    tools_f = [("t0", 250), ("t1", 10), ("t2", 10)]  # t1 and t2 are deferred: the bill holds a stub of 10 tokens
+    sysb = [("sys", 750)]
+    op = rewrite("op1", "tool-defer", "tools", 1, 1250, 20, TD,
+                 spans=[{"section": "tools", "from": 1, "to": 1, "sizeBefore": size(750), "sizeAfter": size(10)},
+                        {"section": "tools", "from": 2, "to": 2, "sizeBefore": size(500), "sizeAfter": size(10)}])
+    msgs = [("m0", 250), ("m1", 250)]
+    plan = [(0, "r0", 1, "unknown", True), (60, "r1", 2, "hot", False), (1260, "r2", 2, "cold", False)]
+    steps, prev_c, prev_f = [], 0, 0
+    for sec, rid, n, phase, first in plan:
+        m = msgs[:n]
+        ct, ft = tokens(tools_c, sysb, m), tokens(tools_f, sysb, m)
+        if phase == "hot":
+            ops = [eop(TD, saved=TT(cacheRead=1230), note="tools come first, so the 1,230 tokens are before B*")]
+        else:
+            ops = [eop(TD, saved=TT(cacheWrite5m=1230), note="nothing is cached or the entry expired")]
+        steps.append(sim(sec, rid, (tools_c, sysb, m), (tools_f, sysb, m), ops, phase,
+                         add=[op] if first else [], prev=(prev_c, prev_f)))
+        prev_c, prev_f = ct, ft
+    write_issue("rewrite/tool-defer-stubs/first-hot-cold/5m", 60,
+                "tool-defer sets defer_loading on 2 tools (750 + 500 = 1,250 tokens). The definitions stay in the "
+                "body the host forwards, and the provider bills a stub of 10 tokens for each. The host builds the "
+                "forwarded body as the billed prompt, so the 2 tools have 10 tokens each there, and the deferral "
+                "saves 1,250 - 20 = 1,230 tokens. The tools come first in the prefix, so a hot request reads the "
+                "saving ($0.00037) and a first or cold request writes it ($0.00461). The forwarded prefix "
+                "does not change, so there is no cache break.",
+                DIMS("rewrite", "tools", "unknown-hit-miss", spans="true"), steps)
+
+
 if __name__ == "__main__":
     os.makedirs(OUT, exist_ok=True)
     for old in os.listdir(OUT):  # the generator owns this directory: drop cases that no longer exist
@@ -3412,5 +3447,5 @@ if __name__ == "__main__":
             os.remove(os.path.join(OUT, old))
     for f in (ex12, ex3, ex4, ex5, ex67, ex8, shared_prefix_cases, ex9, c01, c02, c03_04, c05, c06, c07, c08, c09, c10, c11, c12, c_threads, c_client_compaction, c_client_trim_keeps_head, c_client_rewrite_in_place_ends_replay, c_client_compaction_before_any_change, c_client_tail_edit_keeps_replay, c_client_tail_compaction_ends_replay, c_client_two_compactions, c_clock, c_ttl, c_mix,
               c14, s909, r909_system_hash, c15, c16, c17, c18, a1, a2, a3, a4_b3, b1_b2, b4, b5, c1_, c2_, c2b, c3_, c5, d2, d3, d4,
-              d5, d6, e2, e345, f245, h2, h5, r9, i53, i54, i56, i55_split, i55_no_cache, i55_media_one_side, r14, r21, r20, r20b, c42, c42b, c42c, c42d, c43, i44, c49, i52_all):
+              d5, d6, e2, e345, f245, h2, h5, r9, i53, i54, i56, i55_split, i55_no_cache, i55_media_one_side, r14, r21, r20, r20b, c42, c42b, c42c, c42d, c43, i44, c49, i52_all, d60):
         f()

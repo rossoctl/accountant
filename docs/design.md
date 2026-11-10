@@ -1029,7 +1029,12 @@ cache break (§6.2), which counts forwarded content between the break and B\*. T
 Both hosts send bytes for each forwarded position (`Body`) and for each operation (`Size`). The
 library converts both with the request's own ratio (billed prompt tokens ÷ body bytes), as
 `pricing.EstimateTokensFromBytes` does today. Results that use the ratio are marked `Estimated`.
-A host may also send a token count in `Size.Tokens` (§4.2 rule 7). The same tokens in both hosts
+A host may also send a token count in `Size.Tokens` (§4.2 rule 7).
+
+**The forwarded `Body` is the prompt the provider bills.** A tool that the host defers with `defer_loading` stays in the
+bytes the host sends, but the provider bills a stub for it. The host builds the forwarded `Body` with the stub size for
+that tool. The deferral is then an ordinary shrink of a `tools` position, and the sum check and the conservation check
+hold (spec R56). The same tokens in both hosts
 holds whenever the two hosts receive the same bodies, the same operations and send the same token counts.
 
 ## 6. The library
