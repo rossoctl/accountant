@@ -231,7 +231,7 @@ type EntryFacts struct {
 
 type Provider struct {
     ReadGranularity int      // step of the reported cached count; the extent tolerance is one step plus 2%. 0 = 128, 1 = exact
-    TTLs            []string // breakpoint TTL strings the model accepts, besides empty. nil = "5m", "1h"
+    TTLs            []string // narrows "5m" and "1h" (no other string is priced); nil = both. Empty TTL is always valid
     StorageBilled   bool     // the provider bills cache storage by token and hour: Result.StorageTokens is set
 }
 
@@ -1472,7 +1472,7 @@ check, the operator, the detail, and the request, session and thread IDs). `Prev
    the range too. A body of media only has no text bytes: it passes only when the bill is at most the media price (a smaller bill is cut, check 11). A bill above it fails this check, because the extra tokens fit no content. Without this
    check the ratio, and so the conservation check (check 6), agree with themselves for any usage.
 10. **Breakpoints:** a request has at most 4 forwarded breakpoints (the Anthropic limit), and each TTL (client and
-    forwarded) is empty (counts as `5m`) or one of `EntryFacts.Provider.TTLs` (default `"5m"` and `"1h"`). Otherwise the check `breakpoints` fails.
+    forwarded) is empty (counts as `5m`), or `"5m"` or `"1h"` and listed in `EntryFacts.Provider.TTLs` (nil lists both). A listed string outside that pair still fails. Otherwise the check `breakpoints` fails.
 
 11. **Media tokens (`media_tokens`):** the fixed price of the forwarded body's media (1 token per 250 bytes) is not above the
     billed prompt tokens. If it is, the price is wrong, because the provider cannot bill less than the media costs (it

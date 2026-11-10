@@ -1948,8 +1948,8 @@ func (c *calcState) splitDelivered() bool {
 // splitChangedSystem says a delivered cachesplit sits on a system section whose client text changed since
 // the previous request, and the read stopped at the split. The split exists for that case: the volatile tail
 // moved, the client body would have missed from the system block on, and the forwarded body read only the
-// stable half. A read that comes within the tolerance of the previous extent (a short turn adds less than 128
-// tokens plus 2%) is then no proof that nothing broke: the read is the stable half, and the extent is the
+// stable half. A read that comes within the tolerance of the previous extent (a short turn adds less than one read
+// step, 128 tokens by default, plus 2%) is then no proof that nothing broke: the read is the stable half, and the extent is the
 // whole previous entry (context-guru#909).
 //
 // A read that passes the forwarded first difference is different. It read text the hashes call changed, so
