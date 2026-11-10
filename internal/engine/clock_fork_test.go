@@ -45,6 +45,31 @@ func TestAForkOnAnotherModelIsNotSeeded(t *testing.T) {
 	}
 }
 
+// accountant#44: two spellings of one model are one model when the host gives them one ModelKey. The
+// fork is seeded. With different keys it is not.
+func TestAForkOnAnotherSpellingOfTheModelIsSeeded(t *testing.T) {
+	run := func(parentKey, forkKey string) Result {
+		ts := NewTrackers()
+		body := mk(nil, nil, msgs(6, 1000))
+		r := ts.BeginRequest(RequestMeta{RequestID: "p", Session: "s1", At: t0, Model: "claude-sonnet-4-5", ModelKey: parentKey}, body, bps5(msg(5)))
+		r.EndRequest(Thread{ID: "main"}, body, bps5(msg(5)), exact5m)
+		r.Compute(Usage{CacheWrite: 6000})
+		fb := mk(nil, nil, msgs(7, 1000))
+		f := ts.BeginRequest(RequestMeta{RequestID: "f", Session: "s1", At: t0.Add(time.Second), Model: "claude-sonnet-4-5-20250929", ModelKey: forkKey}, fb, bps5(msg(6)))
+		f.EndRequest(Thread{ID: "sub", Parent: "main"}, fb, bps5(msg(6)), exact5m)
+		return f.Compute(Usage{CacheWrite: 7000})
+	}
+	if res := run("sonnet-4-5", "sonnet-4-5"); res.Phase != PhaseHot {
+		t.Fatalf("same key: phase %q, want hot", res.Phase)
+	}
+	if res := run("sonnet-4-5", "opus-4-5"); res.Phase != PhaseUnknown {
+		t.Fatalf("different key: phase %q, want unknown", res.Phase)
+	}
+	if res := run("", ""); res.Phase != PhaseUnknown { // no key: the ids as written differ
+		t.Fatalf("no key: phase %q, want unknown", res.Phase)
+	}
+}
+
 // A fork whose At is before the parent's last request is not seeded, and its own fingerprint is stored
 // (the out-of-order guard compares only with the thread's own previous request).
 func TestAForkBeforeTheParentsLastRequestKeepsItsOwnFingerprint(t *testing.T) {

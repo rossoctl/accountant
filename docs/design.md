@@ -84,7 +84,6 @@ type RequestOps struct {
     Session   string
     Thread    Thread
     Model     string            // the model the request was sent for
-    ModelKey  string            // the model apart from the spelling of its id; compared instead of Model when set (§4.4)
     Params    map[string]string // other settings that change the cost: effort, thinking, max_output, ...
     At        time.Time
     // Billing prices every operation of the request, a `spend` included (R41, R42, §7.1).
@@ -978,7 +977,7 @@ stored one is the newer request, so the next request is compared with that one (
 
 **A fork reads its parent's entry.** A thread with no previous request and a `Thread.Parent` starts from the
 parent's fingerprint and cache state, when the fork's forwarded body keeps the parent's whole cached extent
-(equal hashes up to it) and the fork uses the parent's model. Otherwise the phase is `unknown`. The fork's
+(equal hashes up to it) and the fork uses the parent's model (`RequestMeta.ModelKey` decides when set, see `Cause` in §6.3). Otherwise the phase is `unknown`. The fork's
 own fingerprint then replaces the seed, and the parent's state does not change. The seed is used only when the fork starts at or after the parent's last request and within the TTL, so it
 can only give `hot`; otherwise the fork is `unknown` and a read in the usage makes it `hot`. A fork that
 started before the parent's last completed request is not seeded. The seed is the parent's fingerprint at the
@@ -1095,6 +1094,7 @@ func (ts *Trackers) Trimmed() uint64
 type RequestMeta struct {
     RequestID, Session string
     Model              string
+    ModelKey           string // the model apart from the spelling of its id; compared instead of Model when set (§6.3, Cause)
     Params             map[string]string
     At                 time.Time
     Billing            Billing
