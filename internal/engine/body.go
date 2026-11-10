@@ -212,10 +212,15 @@ func (r ratio) between(b Body, from, to int) int {
 // tolerance absorbs the error of the byte ratio and the 128-token rounding of older OpenAI models.
 // With no candidate breakpoint every position is a candidate.
 func extent(b Body, r ratio, tokens int, candidates []bp) int {
+	return extentWith(b, r, tokens, candidates, Provider{})
+}
+
+// extentWith is extent with the read granularity of a provider profile.
+func extentWith(b Body, r ratio, tokens int, candidates []bp, p Provider) int {
 	if tokens <= 0 {
 		return -1
 	}
-	limit := tokens + 128 + tokens/50
+	limit := tokens + p.tolerance(tokens)
 	b = b.withPrefix()
 	if len(candidates) == 0 {
 		// upTo grows with i (the prefix sums never fall), so the fitting positions are a prefix

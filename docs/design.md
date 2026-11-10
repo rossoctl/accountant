@@ -225,6 +225,14 @@ type EntryFacts struct {
     SharedWarm *Position
     // MinCacheable is the model's minimum cacheable length in tokens. 0 = not set: no minimum applies.
     MinCacheable int
+    // Provider is the provider profile (D-provider). The zero value keeps the Anthropic behaviour.
+    Provider Provider
+}
+
+type Provider struct {
+    ReadGranularity int      // step of the reported cached count; the extent tolerance is one step plus 2%. 0 = 128, 1 = exact
+    TTLs            []string // breakpoint TTL strings the model accepts, besides empty. nil = "5m", "1h"
+    StorageBilled   bool     // the provider bills cache storage by token and hour: Result.StorageTokens is set
 }
 
 type Kind string          // rewrite | spend | setting
@@ -1464,7 +1472,7 @@ check, the operator, the detail, and the request, session and thread IDs). `Prev
    the range too. A body of media only has no text bytes: it passes only when the bill is at most the media price (a smaller bill is cut, check 11). A bill above it fails this check, because the extra tokens fit no content. Without this
    check the ratio, and so the conservation check (check 6), agree with themselves for any usage.
 10. **Breakpoints:** a request has at most 4 forwarded breakpoints (the Anthropic limit), and each TTL (client and
-    forwarded) is `"5m"`, `"1h"` or empty (empty counts as `5m`). Otherwise the check `breakpoints` fails.
+    forwarded) is empty (counts as `5m`) or one of `EntryFacts.Provider.TTLs` (default `"5m"` and `"1h"`). Otherwise the check `breakpoints` fails.
 
 11. **Media tokens (`media_tokens`):** the fixed price of the forwarded body's media (1 token per 250 bytes) is not above the
     billed prompt tokens. If it is, the price is wrong, because the provider cannot bill less than the media costs (it
@@ -1651,3 +1659,20 @@ Where a question has test cases, a host that compares them with its own code mar
 - <a id="q15"></a>**Q15. Re-pricing with `Preview`.** `Preview` prices a request from the current `ThreadState`. To price
     an old request again it needs the state the thread had then (§4.6), which the Tracker does not
     keep. Open: whether `Preview` takes a stored `ThreadState`, or is only for the current request.
+
+### Provider profile (`EntryFacts.Provider`, accountant#33)
+
+Three provider facts are inputs and no longer fixed in the code. A zero `Provider` keeps the Anthropic behaviour.
+
+| Field | Used by | Describes |
+|---|---|---|
+| `ReadGranularity` | the extent search, the read-beats-the-clock rule, the row 4 test | OpenAI before GPT-5.6 reports the cached count rounded down to a multiple of 128 (set 128, or leave 0). A provider that reports the exact count sets 1. |
+| `TTLs` | check 10 (`breakpoints`) | A Bedrock model may accept only `"5m"`. A TTL outside the list fails the check. |
+| `StorageBilled` | `Result.StorageTokens` | Gemini explicit caching bills the stored tokens by the hour. The result carries the tokens the request wrote (`CacheWrite`). The host multiplies by the hours and its rate. The library knows neither: the host decides when it deletes the cache. |
+
+How a host describes each provider:
+
+- **Anthropic:** the zero value.
+- **OpenAI, before GPT-5.6:** `Provider{ReadGranularity: 128}`. From GPT-5.6: `Provider{ReadGranularity: 1}`.
+- **Gemini explicit cache:** `Provider{ReadGranularity: 1, StorageBilled: true}`.
+- **Bedrock, a model with a 5m TTL only:** `Provider{TTLs: []string{"5m"}}`.

@@ -86,6 +86,7 @@ type (
 	Body        = engine.Body
 	Breakpoint  = engine.Breakpoint
 	EntryFacts  = engine.EntryFacts
+	Provider    = engine.Provider
 	Usage       = engine.Usage
 	Billing     = engine.Billing
 	ModelCall   = engine.ModelCall
