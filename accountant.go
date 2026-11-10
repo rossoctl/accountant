@@ -7,6 +7,40 @@
 // [Result]: the tokens each change saved or caused. The host turns tokens into money. A keep-alive
 // ping has no request record: use [ComputeStandalone]. [PingOps] builds its operations.
 //
+// # Building Usage from a response
+//
+// [Usage] counts each token once, in one tier. [Usage.Input] is the uncached input only. Providers do
+// not agree on this, so a host must convert before it calls Compute.
+//
+// Anthropic: the usage fields are already apart. Copy them.
+//
+//	Input        = usage.input_tokens                  (leaves out cached tokens)
+//	CacheRead    = usage.cache_read_input_tokens
+//	CacheWrite   = usage.cache_creation_input_tokens   (all lifetimes)
+//	CacheWrite1h = usage.cache_creation.ephemeral_1h_input_tokens
+//
+// Example: input_tokens 50, cache_read 8,000, cache_creation 1,200 of which 1,000 are 1h gives
+// Usage{Input: 50, CacheRead: 8000, CacheWrite: 1200, CacheWrite1h: 1000}.
+//
+// OpenAI: prompt_tokens (Responses API: input_tokens) includes the cached tokens. Subtract them.
+//
+//	CacheRead  = usage.prompt_tokens_details.cached_tokens
+//	CacheWrite = usage.cache_write_tokens              (GPT-5.6 and later; 0 before)
+//	Input      = usage.prompt_tokens - CacheRead - CacheWrite   (CacheWrite is 0 before GPT-5.6)
+//
+// Example: prompt_tokens 9,000, cached_tokens 8,000, no writes gives
+// Usage{Input: 1000, CacheRead: 8000}. If Input is not reduced, the 8,000 cached tokens count twice
+// and the sum check fails. OpenAI has no 1h tier: leave CacheWrite1h at 0.
+//
+// Gemini: promptTokenCount includes the cached tokens. Subtract them.
+//
+//	CacheRead = usageMetadata.cachedContentTokenCount
+//	Input     = usageMetadata.promptTokenCount - CacheRead
+//
+// Example: promptTokenCount 9,000, cachedContentTokenCount 8,000 gives
+// Usage{Input: 1000, CacheRead: 8000}. Gemini bills no cache write per request, so CacheWrite is 0.
+// Output and thinking tokens go in [CallUsage.Output], not in Usage.
+//
 // The module imports only the standard library. Its design is in docs/design.md, and a complete
 // program is in the package example.
 //
