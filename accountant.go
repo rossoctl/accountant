@@ -34,7 +34,8 @@
 // No check reports this: the ratio and every saving come out too high, so the host must subtract.
 // Limits: this rule assumes that prompt_tokens includes the write tokens, which docs/ does not yet
 // state. Usage has no 12-hour tier. Put all writes in CacheWrite and leave CacheWrite1h at 0. The
-// library then books them at the 5m tier, so the extra price of a 12-hour write is not tracked.
+// library books a write by the TTL of the Breakpoint, not by CacheWrite1h: only "1h" reaches the long
+// tier. The 2.5x price of a 12-hour write has no tier, so that extra price is not tracked.
 //
 // Gemini (not yet recorded in docs/cached-prefix.md): promptTokenCount includes the cached tokens. Subtract them.
 //
