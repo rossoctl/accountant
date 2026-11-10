@@ -355,8 +355,8 @@ numbers are not used: those requirements were dropped.
   prompt the provider bills: a deferred tool has the size of its stub. The deferral is then a `rewrite` that shrinks
   `tools` positions, and the library prices it as any other shrink, with no new field. The host reports it once, with a
   `ChangeID`, and the library applies it again on later requests (R22). A host that builds the forwarded `Body` from the
-  wire bytes reports a shrink that the bodies do not show. The `sum` check fails and the operation is not trusted
-  ([§6.5](design.md#65-checks)). When a deferred tool is loaded later, its definition enters the messages. That is
+  wire bytes reports a shrink that the bodies do not show. The `sum` check fails and names the section
+  ([§6.5](design.md#65-checks)). The library still prices the operation. When a deferred tool is loaded later, its definition enters the messages. That is
   a `rewrite` that makes the context larger (R33), reported by the host as a cost. A host that removes tool
   definitions from the body itself, for a model that ignores `defer_loading`, reports the removal as a `rewrite` in the
   usual way. The body shrinks, and nothing in R56 applies.

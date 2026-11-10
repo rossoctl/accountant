@@ -672,6 +672,22 @@ client-edit rule alone. Breaking `clientEdited` on its own fails no case.
 Not covered by a case: a compaction that a host forwards with a still-shortened item and no operation. That
 is an inconsistent host report, and the sum check flags it.
 
+## 9g. Cases from accountant#60 (a `defer_loading` deferral)
+
+A host that defers tools leaves each definition in the body it forwards, and the provider bills a stub for it.
+The host builds the forwarded `Body` as the billed prompt, so a deferred tool has the size of its stub (spec R56).
+The deferral is then a shrink of `tools` positions. No new field is needed. Each case defers two tools
+(750 and 500 tokens) to stubs of 10 tokens, a saving of 1,230 tokens.
+
+| Case ID | What the spec requires |
+|---|---|
+| `rewrite/tool-defer-stubs/first-hot-cold/5m` | The first request writes the 1,230 tokens, the hot request reads them, and the cold request, 21 minutes later, writes them again. The sum check and the conservation check hold. The deferral breaks nothing. The cold request has one break, the expired entry, and it moves no tokens. |
+| `rewrite/tool-defer-stubs/first-hot-cold/1h` | The same deferral under 1h breakpoints. The second request, 21 minutes later, is hot: a 5m entry would have expired, and the 1h entry has not. It reads the saving. The third request, after the 1h TTL, is cold and writes the saving at the 1h tier. |
+| `rewrite/tool-defer-stubs/loaded-later/5m` | The model loads one deferred tool. Its full definition (750 tokens) enters a new message, a rewrite that makes the context larger (R33), with its own `ChangeID`. It is written, as a cost. The other stub keeps the deferral saving of 1,230 tokens. |
+
+The unit tests in `internal/engine/deferral_test.go` cover two more situations. A host that builds the forwarded
+`Body` from the wire bytes fails the `sum` check. A deferral with no `ChangeID` is not carried to the next request.
+
 ## 10. Limits of this document
 
 - **The expected figures were computed by hand** from the spec's rules and the issue text. Cases 1, 3,

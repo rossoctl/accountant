@@ -3436,7 +3436,8 @@ def d60():
                 "forwarded body as the billed prompt, so the 2 tools have 10 tokens each there, and the deferral "
                 "saves 1,250 - 20 = 1,230 tokens. The tools come first in the prefix, so a hot request reads the "
                 "saving ($0.00037) and a first or cold request writes it ($0.00461). The forwarded prefix "
-                "does not change, so there is no cache break.",
+                "does not change, so the deferral breaks nothing. The cold request has one break, the expired entry, and it "
+                "moves no tokens.",
                 DIMS("rewrite", "tools", "unknown-hit-miss", spans="true"), steps)
 
 
