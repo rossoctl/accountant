@@ -41,9 +41,25 @@ type Unpriced struct {
 	Reason string // "unknown_kind", "negative_size", "operator_not_allowed", "penalty_unknown", ...
 }
 
+// The names of the checks in CheckFailure.Check (§6.5). A host that switches on a check uses these.
+// The five that equal a Reason are the same string by design (§6.5: the check name equals the reason).
+const (
+	CheckSum          = "sum"
+	CheckUniqueChange = "unique_change"
+	CheckSpans        = "spans"
+	CheckConservation = "conservation"
+	CheckSharedWarm   = "shared_warm"
+	CheckBadUsage     = ReasonBadUsage
+	CheckRatioRange   = ReasonRatioRange
+	CheckBreakpoints  = ReasonBreakpoints
+	CheckMediaTokens  = ReasonMediaTokens
+	CheckSizeTokens   = "size_tokens"
+	CheckSizeRange    = ReasonSizeRange
+)
+
 // CheckFailure is a failed check (§6.5). A failure does not stop pricing, except size_range, which unprices the one operation (§6.5, check 13).
 type CheckFailure struct {
-	Check    string // "sum" | "order" | "unique_change" | "spans" | "attribution" | "conservation" | "shared_warm" | "bad_usage" | "ratio_range" | "breakpoints" | "media_tokens" | "size_tokens" | "size_range"
+	Check    string // one of the Check constants
 	Operator string // "" when the check is not about one operator
 	Detail   string // numbers only, no content
 }

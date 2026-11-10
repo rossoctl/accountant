@@ -60,7 +60,7 @@ func TestTheSpansCheckComparesTheSums(t *testing.T) {
 		SizeBefore: Size{Bytes: 150}}
 	res := req{at: t0, client: mk([]blk{b("t0", 100)}, nil, msgs(1, 100)), fwd: mk(nil, nil, msgs(1, 100)),
 		ops: []Operation{op}, usage: Usage{Input: 100}}.run(NewTrackers())
-	if len(res.Checks) != 1 || res.Checks[0].Check != "spans" {
+	if len(res.Checks) != 1 || res.Checks[0].Check != CheckSpans {
 		t.Fatalf("Checks = %+v, want one spans failure", res.Checks)
 	}
 }
@@ -331,7 +331,7 @@ func TestASettingPositionWinsOverTheRead(t *testing.T) {
 func TestAnUnreportedChangeFailsTheSumCheck(t *testing.T) {
 	res := req{at: t0, client: mk(nil, nil, msgs(2, 1000)), fwd: mk(nil, nil, []blk{b("m0", 1000), b("x", 400)}),
 		usage: Usage{Input: 1400}}.run(NewTrackers())
-	if len(res.Checks) != 1 || res.Checks[0].Check != "sum" {
+	if len(res.Checks) != 1 || res.Checks[0].Check != CheckSum {
 		t.Fatalf("Checks = %+v, want one sum failure", res.Checks)
 	}
 }
@@ -480,7 +480,7 @@ func TestASharedWarmOutsideTheBodyFailsTheCheckAndCreditsNothing(t *testing.T) {
 				t.Fatalf("%s: no rescue for an invalid SharedWarm: %+v", name, e)
 			}
 		}
-		if len(res.Checks) != 1 || res.Checks[0].Check != "shared_warm" {
+		if len(res.Checks) != 1 || res.Checks[0].Check != CheckSharedWarm {
 			t.Fatalf("%s: checks %+v, want one shared_warm failure", name, res.Checks)
 		}
 	}

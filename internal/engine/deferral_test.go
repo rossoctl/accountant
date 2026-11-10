@@ -62,7 +62,7 @@ func TestADeferralWithTheWireBodyFailsTheSumCheck(t *testing.T) {
 	m := msgs(1, 1000)
 	res := req{at: t0, client: mk(tools, sysB, m), clientBPs: bps5(sys(0), msg(0)), ops: []Operation{op},
 		fwd: mk(tools, sysB, m), fwdBPs: bps5(sys(0), msg(0)), facts: exact5m, usage: Usage{CacheWrite: 1000 + 6000 + 3000}}.run(NewTrackers())
-	if len(res.Checks) == 0 || res.Checks[0].Check != "sum" {
+	if len(res.Checks) == 0 || res.Checks[0].Check != CheckSum {
 		t.Fatalf("Checks = %+v, want a sum failure: the op removes 4920 bytes the bodies still hold", res.Checks)
 	}
 }

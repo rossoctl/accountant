@@ -15,10 +15,10 @@ func TestRequestRecordsTheCallsInOrder(t *testing.T) {
 	r.Add(Operation{ID: "b", Kind: KindSetting, Operator: "router"})
 	r.EndRequest(Thread{ID: "main"}, Body{}, []Breakpoint{{TTL: "5m"}}, EntryFacts{})
 
-	if len(r.Ops) != 2 || r.Ops[0].ID != "a" || r.Ops[1].ID != "b" {
-		t.Fatalf("Ops = %+v, want a then b", r.Ops)
+	if len(r.ops) != 2 || r.ops[0].ID != "a" || r.ops[1].ID != "b" {
+		t.Fatalf("Ops = %+v, want a then b", r.ops)
 	}
-	if !r.ended || len(r.Breakpoints) != 1 || r.Thread.ID != "main" {
+	if !r.ended || len(r.breakpoints) != 1 || r.thread.ID != "main" {
 		t.Fatalf("EndRequest did not record: %+v", r)
 	}
 }
@@ -82,6 +82,28 @@ func TestEveryUnpricedReasonIsInTheDesign(t *testing.T) {
 		ReasonNegativeSize, ReasonPenaltyUnknown, ReasonNoUsage, ReasonNotSpend, ReasonBadUsage, ReasonRatioRange, ReasonMediaTokens, ReasonBreakpoints, ReasonSizeRange} {
 		if !strings.Contains(string(doc), `"`+reason+`"`) && !strings.Contains(string(doc), "`"+reason+"`") {
 			t.Errorf("reason %q is not named in docs/design.md", reason)
+		}
+	}
+}
+
+// The check names are machine-stable strings that a host switches on (design §6.5). Each constant
+// has the literal value here, and the design names it as written.
+func TestEveryCheckNameIsPinnedAndInTheDesign(t *testing.T) {
+	doc, err := os.ReadFile("../../docs/design.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for got, want := range map[string]string{
+		CheckSum: "sum", CheckUniqueChange: "unique_change", CheckSpans: "spans", CheckConservation: "conservation",
+		CheckSharedWarm: "shared_warm", CheckBadUsage: "bad_usage", CheckRatioRange: "ratio_range",
+		CheckBreakpoints: "breakpoints", CheckMediaTokens: "media_tokens", CheckSizeTokens: "size_tokens",
+		CheckSizeRange: "size_range",
+	} {
+		if got != want {
+			t.Errorf("check constant = %q, want %q", got, want)
+		}
+		if !strings.Contains(string(doc), `"`+want+`"`) && !strings.Contains(string(doc), "`"+want+"`") {
+			t.Errorf("check %q is not named in docs/design.md", want)
 		}
 	}
 }

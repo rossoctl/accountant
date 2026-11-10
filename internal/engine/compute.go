@@ -38,7 +38,7 @@ func (r *Request) Compute(usage Usage) Result {
 	if !r.ended {
 		return r.notEnded()
 	}
-	t := r.trackers.tracker(ThreadKey(r.Meta.Session, r.Thread), r.Meta.At)
+	t := r.trackers.tracker(ThreadKey(r.meta.Session, r.thread), r.meta.At)
 	for {
 		s := t.snapshot()
 		res, next := r.calc(s, usage)
@@ -55,7 +55,7 @@ func (r *Request) Compute(usage Usage) Result {
 func (r *Request) warnChecks(res Result) {
 	for _, f := range res.Checks {
 		slog.Warn("accountant check failed", "check", f.Check, "operator", f.Operator,
-			"detail", f.Detail, "request", r.Meta.RequestID, "session", r.Meta.Session, "thread", r.Thread.ID)
+			"detail", f.Detail, "request", r.meta.RequestID, "session", r.meta.Session, "thread", r.thread.ID)
 	}
 }
 
@@ -64,7 +64,7 @@ func (r *Request) Preview(usage Usage) Result {
 	if !r.ended {
 		return r.notEnded()
 	}
-	res, _ := r.calc(r.trackers.tracker(ThreadKey(r.Meta.Session, r.Thread), r.Meta.At).snapshot(), usage)
+	res, _ := r.calc(r.trackers.tracker(ThreadKey(r.meta.Session, r.thread), r.meta.At).snapshot(), usage)
 	return res
 }
 
@@ -81,7 +81,7 @@ func ComputeStandalone(ops RequestOps) Result {
 			res.Unpriced = append(res.Unpriced, Unpriced{OpID: op.ID, Reason: ReasonPingResultUnknown})
 		} else if badCall(op) {
 			res.Unpriced = append(res.Unpriced, Unpriced{OpID: op.ID, Reason: ReasonBadUsage})
-			res.Checks = append(res.Checks, CheckFailure{Check: ReasonBadUsage, Operator: op.Operator, Detail: callDetail(op)})
+			res.Checks = append(res.Checks, CheckFailure{Check: CheckBadUsage, Operator: op.Operator, Detail: callDetail(op)})
 		}
 	}
 	return res
@@ -163,10 +163,10 @@ func storedCopy(act Operation, reported []Operation) bool {
 }
 
 func (r *Request) limits(s ThreadState) limits {
-	client := r.Client.cumBytes(len(r.Client.Pos) - 1)
+	client := r.client.cumBytes(len(r.client.Pos) - 1)
 	fwd := client
 	if r.ended {
-		fwd = r.Forwarded.cumBytes(len(r.Forwarded.Pos) - 1)
+		fwd = r.forwarded.cumBytes(len(r.forwarded.Pos) - 1)
 	}
 	type entry struct {
 		op     Operation
@@ -175,11 +175,11 @@ func (r *Request) limits(s ThreadState) limits {
 	}
 	var es []*entry // the rewrites: the active ones, then the reported ones
 	for _, op := range s.Active {
-		if !storedCopy(op, r.Ops) {
+		if !storedCopy(op, r.ops) {
 			es = append(es, &entry{op: op, active: true})
 		}
 	}
-	for _, op := range r.Ops {
+	for _, op := range r.ops {
 		es = append(es, &entry{op: op})
 	}
 	sat := func(a, d int) int {
@@ -258,7 +258,7 @@ func resultUnknown(op Operation) bool {
 
 func (r *Request) notEnded() Result {
 	res := Result{Version: 1, Phase: PhaseUnknown, Unpriced: []Unpriced{{Reason: ReasonEndRequestMissing}}}
-	for _, op := range r.Ops {
+	for _, op := range r.ops {
 		res.Ops = append(res.Ops, priced(op, op.ID))
 		res.Unpriced = append(res.Unpriced, Unpriced{OpID: op.ID, Reason: ReasonEndRequestMissing})
 	}
@@ -319,10 +319,10 @@ func (r *Request) calc(s ThreadState, usage Usage) (Result, ThreadState) {
 // compaction records the host's verdict of a client compaction and the changes that ended on this
 // request. It is nil when the host reported none.
 func (c *calcState) compaction() *CompactionRecord {
-	if c.r.Meta.Compaction == "" {
+	if c.r.meta.Compaction == "" {
 		return nil
 	}
-	rec := &CompactionRecord{Trigger: c.r.Meta.Compaction, Ended: []string{}} // [] and not null in JSON
+	rec := &CompactionRecord{Trigger: c.r.meta.Compaction, Ended: []string{}} // [] and not null in JSON
 	for _, it := range c.items {
 		if it.active && it.ended && it.op.ChangeID != "" {
 			rec.Ended = append(rec.Ended, it.op.ChangeID)
@@ -337,7 +337,7 @@ func (c *calcState) compaction() *CompactionRecord {
 func (r *Request) items(s ThreadState) []*item {
 	l := r.limits(s)
 	reported := map[string]bool{} // a spend may share the ChangeID of its change (§6.5 check 3)
-	for _, op := range r.Ops {
+	for _, op := range r.ops {
 		if isChange(op, l) {
 			reported[op.ChangeID] = true
 		}
@@ -348,7 +348,7 @@ func (r *Request) items(s ThreadState) []*item {
 			items = append(items, &item{op: op, id: "active:" + op.ChangeID, active: true, spans: opSpans(op)})
 		}
 	}
-	for _, op := range r.Ops {
+	for _, op := range r.ops {
 		it := &item{op: op, id: op.ID}
 		switch {
 		case op.Kind != KindRewrite && op.Kind != KindSpend && op.Kind != KindSetting:
@@ -530,7 +530,7 @@ type calcState struct {
 }
 
 func (r *Request) newCalc(s ThreadState, items []*item, usage Usage) *calcState {
-	c := &calcState{r: r, s: s, items: items, usage: usage, client: r.Client, fwd: r.Forwarded,
+	c := &calcState{r: r, s: s, items: items, usage: usage, client: r.client, fwd: r.forwarded,
 		tailTo: -1, prevExt: -1, bstar: -1, bstarFwd: -1, readEnd: -1, cachedFwd: -1, prevExtCli: -1}
 	c.noUsage = usage == (Usage{})
 	for j, it := range items {
@@ -538,10 +538,10 @@ func (r *Request) newCalc(s ThreadState, items []*item, usage Usage) *calcState 
 			c.splicers = append(c.splicers, j)
 		}
 	}
-	c.ratio = newRatio(usage.Input+usage.CacheRead+usage.CacheWrite, r.Forwarded)
+	c.ratio = newRatio(usage.Input+usage.CacheRead+usage.CacheWrite, r.forwarded)
 	c.invalid = c.validate(usage)
-	c.clientBPs = c.client.breakpoints(r.ClientBreakpoints)
-	c.fwdBPs = c.fwd.breakpoints(r.Breakpoints)
+	c.clientBPs = c.client.breakpoints(r.clientBreakpoints)
+	c.fwdBPs = c.fwd.breakpoints(r.breakpoints)
 	if c.downgraded() {
 		for _, bps := range [][]bp{c.clientBPs, c.fwdBPs} {
 			for i := range bps {
@@ -567,10 +567,10 @@ func (r *Request) newCalc(s ThreadState, items []*item, usage Usage) *calcState 
 // leaves CacheWrite1h unset would look the same, so the host's own TTL must agree. With a read in the bill
 // some marks may be old 1h entries that were only read, so the usage proves nothing.
 func (c *calcState) downgraded() bool {
-	if c.noUsage || c.usage.CacheRead > 0 || c.usage.CacheWrite == 0 || c.usage.CacheWrite1h > 0 || c.r.Facts.TTL != 5*time.Minute {
+	if c.noUsage || c.usage.CacheRead > 0 || c.usage.CacheWrite == 0 || c.usage.CacheWrite1h > 0 || c.r.facts.TTL != 5*time.Minute {
 		return false
 	}
-	for _, b := range c.r.Breakpoints {
+	for _, b := range c.r.breakpoints {
 		if b.TTL == "1h" {
 			return true
 		}
@@ -749,7 +749,7 @@ func (c *calcState) candidates() []bp {
 // candidate, as for a read with no breakpoint, because the ping's usage is the only evidence. Nil
 // when neither is set or the ping cached nothing.
 func (c *calcState) pingRead() *Position {
-	f := c.r.Facts
+	f := c.r.facts
 	if f.PingRead != nil {
 		return f.PingRead
 	}
@@ -787,7 +787,7 @@ func (c *calcState) pingRead() *Position {
 // request (accountant#40, #41). With a 1h head and a 5m tail, the head can be alive after the tail has
 // expired: the phase is then hot with the head as the previous extent.
 func (c *calcState) phaseAndBoundary(res *Result) {
-	prev, f := c.s.PrevPrint, c.r.Facts
+	prev, f := c.s.PrevPrint, c.r.facts
 	c.phase = PhaseUnknown
 	entryTTL := c.s.Cache.EntryTTL
 	if entryTTL <= 0 {
@@ -795,13 +795,13 @@ func (c *calcState) phaseAndBoundary(res *Result) {
 	}
 	// A request that started before the stored one has no valid gap: the clock says nothing about the
 	// entry, so the phase is left to the usage (accountant#16). Hot from a negative gap would be a guess.
-	if prev != nil && f.TTL > 0 && c.s.Cache.Extent != nil && !c.r.Meta.At.Before(prev.At) {
-		gap := c.r.Meta.At.Sub(prev.At)
+	if prev != nil && f.TTL > 0 && c.s.Cache.Extent != nil && !c.r.meta.At.Before(prev.At) {
+		gap := c.r.meta.At.Sub(prev.At)
 		last := prev.At
 		if f.LastPing.After(last) {
 			last = f.LastPing
 		}
-		entryGap := c.r.Meta.At.Sub(last)
+		entryGap := c.r.meta.At.Sub(last)
 		segs := c.entrySegments(entryTTL)
 		longest := segs[0].ttl
 		for _, sg := range segs {
@@ -837,21 +837,21 @@ func (c *calcState) phaseAndBoundary(res *Result) {
 				}
 			}
 		}
-	} else if prev != nil && c.r.Meta.At.Before(prev.At) {
+	} else if prev != nil && c.r.meta.At.Before(prev.At) {
 		// Out of order: the clock says nothing about the entry, so the phase is left to the usage below.
-	} else if prev != nil && f.TTL > 0 && c.r.Meta.At.Sub(prev.At) <= entryTTL && c.s.Cache.CachePhase == PhaseCold {
+	} else if prev != nil && f.TTL > 0 && c.r.meta.At.Sub(prev.At) <= entryTTL && c.s.Cache.CachePhase == PhaseCold {
 		c.phase = PhaseHot // the previous request cached nothing: hot with an empty extent (§5.2)
-	} else if prev != nil && f.TTL > 0 && f.Lifetime == LifetimeExact && c.r.Meta.At.Sub(prev.At) > entryTTL {
+	} else if prev != nil && f.TTL > 0 && f.Lifetime == LifetimeExact && c.r.meta.At.Sub(prev.At) > entryTTL {
 		c.phase = PhaseCold // the previous request cached nothing, and it would have expired anyway
 	}
 
 	if !c.skipsPricing() {
-		c.readEnd = extentWith(c.fwd, c.ratio, c.usage.CacheRead, c.candidates(), c.r.Facts.Provider)
+		c.readEnd = extentWith(c.fwd, c.ratio, c.usage.CacheRead, c.candidates(), c.r.facts.Provider)
 		cached := c.usage.CacheRead + c.usage.CacheWrite
-		if len(c.fwdBPs) == 0 && c.usage.Input+c.usage.CacheRead+c.usage.CacheWrite >= c.r.Facts.MinCacheable { // CacheWrite1h is part of CacheWrite
+		if len(c.fwdBPs) == 0 && c.usage.Input+c.usage.CacheRead+c.usage.CacheWrite >= c.r.facts.MinCacheable { // CacheWrite1h is part of CacheWrite
 			cached += c.usage.Input // no breakpoint: the provider caches the whole prompt it processed (only when the whole prompt reaches the minimum cacheable length, §5.1)
 		}
-		c.cachedFwd = extentWith(c.fwd, c.ratio, cached, c.candidates(), c.r.Facts.Provider)
+		c.cachedFwd = extentWith(c.fwd, c.ratio, cached, c.candidates(), c.r.facts.Provider)
 	}
 
 	switch c.phase {
@@ -891,7 +891,7 @@ func (c *calcState) phaseAndBoundary(res *Result) {
 		}
 	}
 	res.Phase = c.phase
-	if c.r.Facts.Provider.StorageBilled && !c.skipsPricing() {
+	if c.r.facts.Provider.StorageBilled && !c.skipsPricing() {
 		res.StorageTokens = c.usage.CacheWrite
 	}
 	if c.bstar >= 0 {
@@ -906,7 +906,7 @@ func (c *calcState) phaseAndBoundary(res *Result) {
 // from the last ping, up to what the ping read (accountant#56). The head was alive without the ping, so the
 // rescue is the tail only.
 func (c *calcState) pingedTail(segs []entrySeg, gap, entryGap time.Duration, live int) {
-	f := c.r.Facts
+	f := c.r.facts
 	if f.LastPing.IsZero() || f.Lifetime == LifetimeUnknown || c.pingRead() == nil {
 		return
 	}
@@ -981,7 +981,7 @@ func liveExtent(segs []entrySeg, gap time.Duration, read func(at int) bool) (int
 // byte ratio of this request, its media at the fixed media price. It is the one tolerance for the read-beats-the-clock rule and for the B* rule (decision 7).
 func (c *calcState) readReaches(b Body, i int) bool {
 	want := c.ratio.upTo(b, i)
-	return want > 0 && want <= c.usage.CacheRead+c.r.Facts.Provider.tolerance(c.usage.CacheRead)
+	return want > 0 && want <= c.usage.CacheRead+c.r.facts.Provider.tolerance(c.usage.CacheRead)
 }
 
 // readCoversExtent reports whether the tokens the provider read reach the previous request's cached extent.
@@ -1076,12 +1076,12 @@ func (c *calcState) cacheEffects(res *Result) {
 		return // nothing was cached, so nothing can have been lost
 	}
 	expect := readable(mustFlat(c.fwd, c.s.PrevPrint.Forwarded.position(c.prevExt)), c.fwdBPs)
-	if c.r.Meta.At.Sub(c.s.PrevPrint.At) > 5*time.Minute {
+	if c.r.meta.At.Sub(c.s.PrevPrint.At) > 5*time.Minute {
 		// past the 5m TTL only the entries held at 1h are still alive: a 5m part past the head expired
 		expect = min(expect, c.headEnd())
 	}
 	predicted := c.ratio.upTo(c.fwd, expect)
-	low := c.usage.CacheRead+c.r.Facts.Provider.tolerance(predicted) < predicted // the one-block tolerance (row 4)
+	low := c.usage.CacheRead+c.r.facts.Provider.tolerance(predicted) < predicted // the one-block tolerance (row 4)
 	if !low {
 		return
 	}
@@ -1095,7 +1095,7 @@ func (c *calcState) cacheEffects(res *Result) {
 	}
 	c.addBreak(res, c.readEnd, "") // row 4: the entry was lost early
 	c.inBaseline(res)
-	if prev := c.s.PrevPrint; prev.modelID() != "" && c.r.Meta.modelID() != "" && prev.modelID() != c.r.Meta.modelID() {
+	if prev := c.s.PrevPrint; prev.modelID() != "" && c.r.meta.modelID() != "" && prev.modelID() != c.r.meta.modelID() {
 		// the provider keeps a cache for each model, so this is not a loss nobody can explain
 		res.CacheEffects[len(res.CacheEffects)-1].Cause = CauseModelChanged
 	}
@@ -1186,10 +1186,10 @@ func (c *calcState) rescue(res *Result) {
 		return
 	}
 	n := min(c.ratio.upTo(c.fwd, mustFlat(c.fwd, *c.pingRead())), c.usage.CacheRead)
-	if w := c.r.Facts.SharedWarm; w != nil {
+	if w := c.r.facts.SharedWarm; w != nil {
 		i, ok := c.fwd.flat(*w)
 		if !ok { // a host bug: a doubtful figure may only lower a saving, so credit nothing (R54)
-			res.Checks = append(res.Checks, CheckFailure{Check: "shared_warm",
+			res.Checks = append(res.Checks, CheckFailure{Check: CheckSharedWarm,
 				Detail: fmt.Sprintf("section=%q index=%d is not in the forwarded body", w.Section, w.Index)})
 			return
 		}
@@ -1200,8 +1200,8 @@ func (c *calcState) rescue(res *Result) {
 	if n <= 0 {
 		return
 	}
-	e := CacheEffect{Kind: EffectRescue, ChangeID: c.r.Facts.PingWindow, To: c.pingRead(), Estimated: true}
-	addWrite(&e.Saved, ttlName(c.r.Facts.TTL), n)
+	e := CacheEffect{Kind: EffectRescue, ChangeID: c.r.facts.PingWindow, To: c.pingRead(), Estimated: true}
+	addWrite(&e.Saved, ttlName(c.r.facts.TTL), n)
 	e.Caused.CacheRead = n
 	c.addEffect(res, e)
 }
@@ -1209,7 +1209,7 @@ func (c *calcState) rescue(res *Result) {
 // rescueTail adds the keep-alive rescue of a mixed-TTL entry (accountant#56): only the part past the head
 // that the ping kept alive. The tokens are that part, less what the request did not read beyond the head.
 func (c *calcState) rescueTail(res *Result) {
-	if c.usage.CacheRead <= 0 || c.r.Facts.SharedWarm != nil {
+	if c.usage.CacheRead <= 0 || c.r.facts.SharedWarm != nil {
 		return
 	}
 	prev := c.s.PrevPrint.Forwarded
@@ -1219,7 +1219,7 @@ func (c *calcState) rescueTail(res *Result) {
 		return
 	}
 	to := prev.position(c.tailTo)
-	e := CacheEffect{Kind: EffectRescue, ChangeID: c.r.Facts.PingWindow, To: &to, Estimated: true}
+	e := CacheEffect{Kind: EffectRescue, ChangeID: c.r.facts.PingWindow, To: &to, Estimated: true}
 	addWrite(&e.Saved, ttlName(c.tailTTL), n)
 	e.Caused.CacheRead = n
 	c.addEffect(res, e)
@@ -1245,7 +1245,7 @@ func (c *calcState) headTTL(res *Result, premium *CacheEffect) {
 		return
 	}
 	prev := c.s.PrevPrint
-	if prev == nil || c.s.Cache.TTL != "1h" || c.r.Meta.At.Sub(prev.At) <= 5*time.Minute || c.usage.CacheRead == 0 {
+	if prev == nil || c.s.Cache.TTL != "1h" || c.r.meta.At.Sub(prev.At) <= 5*time.Minute || c.usage.CacheRead == 0 {
 		return
 	}
 	head := c.headEnd()
@@ -1284,7 +1284,7 @@ func (c *calcState) split(res *Result) {
 	e := CacheEffect{Kind: EffectSplit, ChangeID: id, Estimated: true}
 	to := c.fwd.position(c.fwdFD - 1)
 	e.To = &to
-	addWrite(&e.Saved, ttlName(c.r.Facts.TTL), n)
+	addWrite(&e.Saved, ttlName(c.r.facts.TTL), n)
 	e.Caused.CacheRead = n
 	c.addEffect(res, e)
 }
@@ -1515,7 +1515,7 @@ func (c *calcState) writeBP(body Body, bps []bp, p int) (ttl string, anyBP, ok b
 			continue
 		}
 		anyBP = true
-		if (best < 0 || x.at < best) && (c.r.Facts.MinCacheable <= 0 || c.ratio.upTo(body, x.at) >= c.r.Facts.MinCacheable) {
+		if (best < 0 || x.at < best) && (c.r.facts.MinCacheable <= 0 || c.ratio.upTo(body, x.at) >= c.r.facts.MinCacheable) {
 			best, ttl = x.at, x.ttl
 		}
 	}
@@ -1607,12 +1607,12 @@ func (c *calcState) badRatio() bool {
 // has a TTL that EntryFacts.Provider does not allow: by default "5m", "1h" or empty (empty is the 5m
 // default); Provider.TTLs can only narrow that list.
 func (c *calcState) badBreakpoints() bool {
-	if len(c.r.Breakpoints) > maxBreakpoints {
+	if len(c.r.breakpoints) > maxBreakpoints {
 		return true
 	}
-	for _, list := range [][]Breakpoint{c.r.ClientBreakpoints, c.r.Breakpoints} {
+	for _, list := range [][]Breakpoint{c.r.clientBreakpoints, c.r.breakpoints} {
 		for _, b := range list {
-			if !c.r.Facts.Provider.allowsTTL(b.TTL) {
+			if !c.r.facts.Provider.allowsTTL(b.TTL) {
 				return true
 			}
 		}
@@ -1628,17 +1628,17 @@ func (c *calcState) checkUsage(res *Result) {
 		case it.ended || it.active:
 		case it.bad == ReasonSizeRange:
 			sz, _ := bigSize(it.op, l)
-			res.Checks = append(res.Checks, CheckFailure{Check: ReasonSizeRange, Operator: it.op.Operator,
+			res.Checks = append(res.Checks, CheckFailure{Check: CheckSizeRange, Operator: it.op.Operator,
 				Detail: fmt.Sprintf("size bytes=%d/%d limits=%d/%d: the operation is not priced", sz[0].Bytes, sz[1].Bytes, l.before, l.after)})
 		case it.bad == ReasonBadUsage:
-			res.Checks = append(res.Checks, CheckFailure{Check: ReasonBadUsage, Operator: it.op.Operator, Detail: callDetail(it.op)})
+			res.Checks = append(res.Checks, CheckFailure{Check: CheckBadUsage, Operator: it.op.Operator, Detail: callDetail(it.op)})
 		}
 	}
 	if c.invalid == "" {
 		return
 	}
 	detail := fmt.Sprintf("usage=%d/%d/%d/%d breakpoints=%d forwarded bytes=%d", c.usage.Input, c.usage.CacheRead,
-		c.usage.CacheWrite, c.usage.CacheWrite1h, len(c.r.Breakpoints), c.ratio.bytes)
+		c.usage.CacheWrite, c.usage.CacheWrite1h, len(c.r.breakpoints), c.ratio.bytes)
 	res.Checks = append(res.Checks, CheckFailure{Check: c.invalid, Detail: detail})
 }
 
@@ -1670,7 +1670,7 @@ func (c *calcState) price(res *Result) {
 				bt, bx, bbad := c.sizeTokens(sp.before, bm)
 				at, ax, abad := c.sizeTokens(sp.after, am)
 				if bbad || abad {
-					res.Checks = append(res.Checks, CheckFailure{Check: "size_tokens", Operator: it.op.Operator,
+					res.Checks = append(res.Checks, CheckFailure{Check: CheckSizeTokens, Operator: it.op.Operator,
 						Detail: fmt.Sprintf("tokens=%d/%d bytes=%d/%d: outside %g..%g tokens a byte, bytes used",
 							sp.before.Tokens, sp.after.Tokens, sp.before.Bytes, sp.after.Bytes, minTokensPerByte, maxTokensPerByte)})
 				}
@@ -1759,7 +1759,7 @@ func (c *calcState) interaction(res *Result, from Position, d int) {
 	if len(c.clientBPs) == 0 { // no breakpoint, no write tier: the interaction is write -> read, so none (§6.2)
 		return
 	}
-	if !c.pingHot || c.r.Facts.SharedWarm != nil || c.pingRead() == nil || c.usage.CacheRead <= 0 {
+	if !c.pingHot || c.r.facts.SharedWarm != nil || c.pingRead() == nil || c.usage.CacheRead <= 0 {
 		return
 	}
 	rescued := false
@@ -1775,7 +1775,7 @@ func (c *calcState) interaction(res *Result, from Position, d int) {
 	if t.CacheRead != d {
 		return
 	}
-	addWrite(&res.Interaction, ttlName(c.r.Facts.TTL), d)
+	addWrite(&res.Interaction, ttlName(c.r.facts.TTL), d)
 	res.InteractionCaused.CacheRead += d
 }
 
@@ -1800,7 +1800,7 @@ func (c *calcState) conservation(res *Result) {
 	net -= c.hostGap   // the ratio's figure: host tokens are exact and the bodies are not
 	want -= c.mediaGap // those operations are unpriced: their tokens are in the bill difference only
 	if d := want - net; d > tol+1 || d < -(tol+1) {
-		res.Checks = append(res.Checks, CheckFailure{Check: "conservation",
+		res.Checks = append(res.Checks, CheckFailure{Check: CheckConservation,
 			Detail: fmt.Sprintf("bill difference=%d ops=%d tokens", want, net)})
 	}
 }
@@ -1817,7 +1817,7 @@ func (c *calcState) checks(res *Result) {
 			note = "nothing is priced"
 		}
 		media := c.fwd.cumMedia(len(c.fwd.Pos)-1) / mediaBytesPerToken
-		res.Checks = append(res.Checks, CheckFailure{Check: "media_tokens",
+		res.Checks = append(res.Checks, CheckFailure{Check: CheckMediaTokens,
 			Detail: fmt.Sprintf("media price=%d tokens billed=%d: the bill is below the media price: the media is cut to %d tokens: %s",
 				media, c.usage.Input+c.usage.CacheRead+c.usage.CacheWrite, c.ratio.mediaTok, note)})
 	}
@@ -1830,7 +1830,7 @@ func (c *calcState) checks(res *Result) {
 		op := it.op
 		if (op.Kind == KindRewrite || op.Kind == KindSetting) && op.ChangeID != "" {
 			if seen[op.ChangeID] {
-				res.Checks = append(res.Checks, CheckFailure{Check: "unique_change", Operator: op.Operator})
+				res.Checks = append(res.Checks, CheckFailure{Check: CheckUniqueChange, Operator: op.Operator})
 			}
 			seen[op.ChangeID] = true
 		}
@@ -1843,7 +1843,7 @@ func (c *calcState) checks(res *Result) {
 				b, a = b+s.SizeBefore.Bytes, a+s.SizeAfter.Bytes
 			}
 			if b != op.SizeBefore.Bytes || a != op.SizeAfter.Bytes {
-				res.Checks = append(res.Checks, CheckFailure{Check: "spans", Operator: op.Operator,
+				res.Checks = append(res.Checks, CheckFailure{Check: CheckSpans, Operator: op.Operator,
 					Detail: fmt.Sprintf("spans=%d/%d op=%d/%d bytes", b, a, op.SizeBefore.Bytes, op.SizeAfter.Bytes)})
 			}
 		}
@@ -1859,7 +1859,7 @@ func (c *calcState) checks(res *Result) {
 	for s := range 3 {
 		want := c.client.sectionBytes(s) - c.fwd.sectionBytes(s)
 		if got[s] != want {
-			res.Checks = append(res.Checks, CheckFailure{Check: "sum",
+			res.Checks = append(res.Checks, CheckFailure{Check: CheckSum,
 				Detail: fmt.Sprintf("section=%s ops=%d bodies=%d bytes", sections[s], got[s], want)})
 		}
 	}
@@ -1889,10 +1889,10 @@ func (c *calcState) activeOps() []Operation {
 // space, this request's fingerprint, and what it left cached (§4.6, §6.1).
 func (c *calcState) nextState() ThreadState {
 	next := ThreadState{Version: c.s.Version, Active: c.activeOps()}
-	fp := &Fingerprint{Thread: c.r.Thread.ID, Model: c.r.Meta.Model, ModelKey: c.r.Meta.ModelKey, At: c.r.Meta.At, Client: c.client, Forwarded: c.fwd,
-		ClientBreakpoints: c.r.ClientBreakpoints, ForwardedBreakpoints: c.r.Breakpoints}
+	fp := &Fingerprint{Thread: c.r.thread.ID, Model: c.r.meta.Model, ModelKey: c.r.meta.ModelKey, At: c.r.meta.At, Client: c.client, Forwarded: c.fwd,
+		ClientBreakpoints: c.r.clientBreakpoints, ForwardedBreakpoints: c.r.breakpoints}
 	if c.downgraded() { // the entry was written at 5m: the next request must not judge it by the 1h it asked for
-		fp.ForwardedBreakpoints = append([]Breakpoint(nil), c.r.Breakpoints...)
+		fp.ForwardedBreakpoints = append([]Breakpoint(nil), c.r.breakpoints...)
 		for i := range fp.ForwardedBreakpoints {
 			fp.ForwardedBreakpoints[i].TTL = "5m"
 		}
@@ -1906,17 +1906,17 @@ func (c *calcState) nextState() ThreadState {
 	case c.skipsPricing():
 		next.Cache = CacheState{} // unknown
 	case c.cachedFwd < 0:
-		next.Cache = CacheState{CachePhase: PhaseCold, EntryTTL: c.r.Facts.TTL}
+		next.Cache = CacheState{CachePhase: PhaseCold, EntryTTL: c.r.facts.TTL}
 	default:
 		fp.Cached = c.fwd.position(c.cachedFwd)
 		ext := fp.Cached
-		ttl := ttlName(c.r.Facts.TTL)
+		ttl := ttlName(c.r.facts.TTL)
 		for _, b := range c.fwdBPs { // a 1h breakpoint under the extent holds the head at 1h whatever Facts.TTL says
 			if b.ttl == "1h" && b.at <= c.cachedFwd {
 				ttl = "1h"
 			}
 		}
-		next.Cache = CacheState{CachePhase: PhaseHot, Extent: &ext, TTL: ttl, EntryTTL: c.r.Facts.TTL}
+		next.Cache = CacheState{CachePhase: PhaseHot, Extent: &ext, TTL: ttl, EntryTTL: c.r.facts.TTL}
 	}
 	next.PrevPrint = fp
 	if p := c.s.PrevPrint; p != nil && !c.seeded && fp.At.Before(p.At) {

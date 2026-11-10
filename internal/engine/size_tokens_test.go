@@ -164,7 +164,7 @@ func TestBilledBelowMediaPriceIsAFailedCheck(t *testing.T) {
 		SizeBefore: Size{Bytes: 40}, SizeAfter: Size{Bytes: 40}}
 	res, _ := priceOne(t, body, body, op, Usage{Input: 100})
 	for _, c := range res.Checks {
-		if c.Check == "media_tokens" {
+		if c.Check == CheckMediaTokens {
 			return
 		}
 	}
@@ -196,7 +196,7 @@ func TestImplausibleHostTokensFailACheckAndUseBytes(t *testing.T) {
 	res, p := priceOne(t, client, fwd, op, Usage{Input: 12500})
 	found := false
 	for _, c := range res.Checks {
-		found = found || c.Check == "size_tokens"
+		found = found || c.Check == CheckSizeTokens
 	}
 	if !found {
 		t.Fatalf("Checks = %+v, want size_tokens", res.Checks)
@@ -267,7 +267,7 @@ func TestHostTokensOnAnAfterSizeOverMediaAreNotRejected(t *testing.T) {
 	billed := 1600 + (len(after)-400000)/4
 	res, p := priceOne(t, [][]byte{before}, [][]byte{after}, op, Usage{Input: billed})
 	for _, c := range res.Checks {
-		if c.Check == "size_tokens" {
+		if c.Check == CheckSizeTokens {
 			t.Fatalf("size_tokens failed: %+v", c)
 		}
 	}
@@ -311,7 +311,7 @@ func TestBillBelowTheMediaPriceCapsTheMedia(t *testing.T) {
 		t.Fatalf("Checks = %v, want media_tokens first", got)
 	}
 	for _, g := range got {
-		if g == "ratio_range" {
+		if g == CheckRatioRange {
 			t.Fatalf("Checks = %v, ratio_range must not fail", got)
 		}
 	}

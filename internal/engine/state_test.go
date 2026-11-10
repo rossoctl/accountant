@@ -167,7 +167,7 @@ func TestTwoRewritesWithOneChangeIDFailTheCheck(t *testing.T) {
 	c := rewrite("c", "context-guru.coref", "same", msg(1), 1000, 100)
 	res := req{at: t0, client: mk(nil, nil, msgs(2, 1000)), ops: []Operation{a, c},
 		fwd: mk(nil, nil, []blk{b("x0", 100), b("x1", 100)}), usage: Usage{Input: 200}}.run(NewTrackers())
-	if len(res.Checks) != 1 || res.Checks[0].Check != "unique_change" {
+	if len(res.Checks) != 1 || res.Checks[0].Check != CheckUniqueChange {
 		t.Fatalf("Checks = %+v, want one unique_change failure", res.Checks)
 	}
 }

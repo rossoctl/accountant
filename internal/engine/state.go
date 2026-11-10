@@ -122,16 +122,16 @@ func (ts *Trackers) trim() {
 type Request struct {
 	trackers *Trackers
 
-	Meta              RequestMeta
-	Client            Body
-	ClientBreakpoints []Breakpoint
-	Ops               []Operation // as reported, in pipeline order
+	meta              RequestMeta
+	client            Body
+	clientBreakpoints []Breakpoint
+	ops               []Operation // as reported, in pipeline order
 
 	// Set by EndRequest.
-	Thread      Thread
-	Forwarded   Body
-	Breakpoints []Breakpoint
-	Facts       EntryFacts
+	thread      Thread
+	forwarded   Body
+	breakpoints []Breakpoint
+	facts       EntryFacts
 	start       ThreadState // the thread's state when EndRequest ran; start.Version is the lock
 	ended       bool
 }
@@ -142,11 +142,11 @@ func (ts *Trackers) BeginRequest(meta RequestMeta, client Body, clientBreakpoint
 	ts.mu.Lock()
 	ts.trim()
 	ts.mu.Unlock()
-	return &Request{trackers: ts, Meta: meta, Client: client, ClientBreakpoints: clientBreakpoints}
+	return &Request{trackers: ts, meta: meta, client: client, clientBreakpoints: clientBreakpoints}
 }
 
 // Add records one reported operation. The framework sets Operator and DryRun first.
-func (r *Request) Add(op Operation) { r.Ops = append(r.Ops, op) }
+func (r *Request) Add(op Operation) { r.ops = append(r.ops, op) }
 
 // EndRequest names the thread, records the forwarded body, its breakpoints and the facts only the
 // host knows, and takes a copy of the thread's ThreadState. Call it after the last plugin.
@@ -158,12 +158,12 @@ func (r *Request) Add(op Operation) { r.Ops = append(r.Ops, op) }
 // second time: a reported operation replaces the active one with its ChangeID. When the stored list
 // would not change (a retry that reports the same change), nothing is written and Version stays.
 func (r *Request) EndRequest(thread Thread, forwarded Body, breakpoints []Breakpoint, facts EntryFacts) {
-	r.Thread = thread
-	r.Forwarded = forwarded
-	r.Breakpoints = breakpoints
-	r.Facts = facts
+	r.thread = thread
+	r.forwarded = forwarded
+	r.breakpoints = breakpoints
+	r.facts = facts
 	r.ended = true
-	t := r.trackers.tracker(ThreadKey(r.Meta.Session, thread), r.Meta.At)
+	t := r.trackers.tracker(ThreadKey(r.meta.Session, thread), r.meta.At)
 	for {
 		s := t.snapshot()
 		active, changed := r.withReported(s)
@@ -188,7 +188,7 @@ func (r *Request) EndRequest(thread Thread, forwarded Body, breakpoints []Breakp
 func (r *Request) withReported(s ThreadState) ([]Operation, bool) {
 	reported := map[string]bool{}
 	l := r.limits(s)
-	for _, op := range r.Ops {
+	for _, op := range r.ops {
 		if isChange(op, l) {
 			reported[op.ChangeID] = true
 		}
@@ -233,34 +233,34 @@ func (t *Tracker) replace(version uint64, next ThreadState) bool {
 // Otherwise the thread stays unknown, and a read in the usage still makes it hot. The active operations
 // are not inherited.
 func (r *Request) seededFromParent(s ThreadState) (ThreadState, bool) {
-	if s.PrevPrint != nil || r.Thread.Parent == "" || r.Thread.Parent == r.Thread.ID || r.Facts.TTL <= 0 {
+	if s.PrevPrint != nil || r.thread.Parent == "" || r.thread.Parent == r.thread.ID || r.facts.TTL <= 0 {
 		return s, false
 	}
 	r.trackers.mu.Lock()
-	pt := r.trackers.m[ThreadKey(r.Meta.Session, Thread{ID: r.Thread.Parent})]
+	pt := r.trackers.m[ThreadKey(r.meta.Session, Thread{ID: r.thread.Parent})]
 	r.trackers.mu.Unlock()
 	if pt == nil {
 		return s, false
 	}
 	ps := pt.snapshot()
 	p := ps.PrevPrint
-	if p == nil || ps.Cache.Extent == nil || p.modelID() != r.Meta.modelID() {
+	if p == nil || ps.Cache.Extent == nil || p.modelID() != r.meta.modelID() {
 		return s, false
 	}
 	ttl := ps.Cache.EntryTTL // the parent's entry lives as long as the parent wrote it for
 	if ttl <= 0 {
-		ttl = r.Facts.TTL
+		ttl = r.facts.TTL
 	}
 	if ps.Cache.Extent != nil { // the longest part decides, as in phaseAndBoundary: a 1h head outlives a 5m tail
 		for _, sg := range entrySegs(ps, ttl) {
 			ttl = max(ttl, sg.ttl)
 		}
 	}
-	if gap := r.Meta.At.Sub(p.At); gap < 0 || gap > ttl {
+	if gap := r.meta.At.Sub(p.At); gap < 0 || gap > ttl {
 		return s, false
 	}
 	i, ok := p.Forwarded.flat(*ps.Cache.Extent)
-	if !ok || firstDiff(p.Forwarded, r.Forwarded) <= i {
+	if !ok || firstDiff(p.Forwarded, r.forwarded) <= i {
 		return s, false
 	}
 	s.PrevPrint, s.Cache = p, ps.Cache
