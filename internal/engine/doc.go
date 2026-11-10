@@ -22,7 +22,7 @@
 //     with ReasonNoUsage. The fixed fallback ratio of §4.2 rule 7 is not used.
 //  3. Extents from usage. The provider reports token counts, not positions. The read extent is the
 //     last candidate position whose prefix, converted with the ratio, fits in Usage.CacheRead, with
-//     a tolerance of 128 tokens plus 2%. The candidates are the breakpoints of this and the previous
+//     a tolerance of one read step (EntryFacts.Provider.ReadGranularity, default 128) tokens plus 2%. The candidates are the breakpoints of this and the previous
 //     request and the previous extent; with no forwarded breakpoint in this request, every position. The
 //     extent this request leaves cached (Fingerprint.Cached) is found the same way from CacheRead +
 //     CacheWrite, plus Input when this request has no forwarded breakpoint and its whole prompt (Input +

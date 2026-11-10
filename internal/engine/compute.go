@@ -766,7 +766,7 @@ func (c *calcState) pingRead() *Position {
 		r := newRatio(u.CacheRead+u.CacheWrite, prev.Forwarded)
 		i := -1
 		if r.tokens > 0 { // a usage that bills no prompt token proves nothing about the extent
-			i = extent(prev.Forwarded, r, u.CacheRead+u.CacheWrite, nil)
+			i = extentWith(prev.Forwarded, r, u.CacheRead+u.CacheWrite, nil, f.Provider)
 		}
 		p := Position{}
 		if i >= 0 {
@@ -846,12 +846,12 @@ func (c *calcState) phaseAndBoundary(res *Result) {
 	}
 
 	if !c.skipsPricing() {
-		c.readEnd = extent(c.fwd, c.ratio, c.usage.CacheRead, c.candidates())
+		c.readEnd = extentWith(c.fwd, c.ratio, c.usage.CacheRead, c.candidates(), c.r.Facts.Provider)
 		cached := c.usage.CacheRead + c.usage.CacheWrite
 		if len(c.fwdBPs) == 0 && c.usage.Input+c.usage.CacheRead+c.usage.CacheWrite >= c.r.Facts.MinCacheable { // CacheWrite1h is part of CacheWrite
 			cached += c.usage.Input // no breakpoint: the provider caches the whole prompt it processed (only when the whole prompt reaches the minimum cacheable length, §5.1)
 		}
-		c.cachedFwd = extent(c.fwd, c.ratio, cached, c.candidates())
+		c.cachedFwd = extentWith(c.fwd, c.ratio, cached, c.candidates(), c.r.Facts.Provider)
 	}
 
 	switch c.phase {
@@ -891,6 +891,9 @@ func (c *calcState) phaseAndBoundary(res *Result) {
 		}
 	}
 	res.Phase = c.phase
+	if c.r.Facts.Provider.StorageBilled && !c.skipsPricing() {
+		res.StorageTokens = c.usage.CacheWrite
+	}
 	if c.bstar >= 0 {
 		p := c.client.position(c.bstar)
 		res.Boundary = &p
@@ -974,11 +977,11 @@ func liveExtent(segs []entrySeg, gap time.Duration, read func(at int) bool) (int
 }
 
 // readReaches reports whether Usage.CacheRead covers the first bytes bytes of the previous forwarded
-// body up to position i, with the tolerance of extent (128 tokens plus 2%). The prefix is priced at the
+// body up to position i, with the tolerance of extent (one read step plus 2%; the step is Provider.ReadGranularity, default 128). The prefix is priced at the
 // byte ratio of this request, its media at the fixed media price. It is the one tolerance for the read-beats-the-clock rule and for the B* rule (decision 7).
 func (c *calcState) readReaches(b Body, i int) bool {
 	want := c.ratio.upTo(b, i)
-	return want > 0 && want <= c.usage.CacheRead+128+c.usage.CacheRead/50
+	return want > 0 && want <= c.usage.CacheRead+c.r.Facts.Provider.tolerance(c.usage.CacheRead)
 }
 
 // readCoversExtent reports whether the tokens the provider read reach the previous request's cached extent.
@@ -1078,7 +1081,7 @@ func (c *calcState) cacheEffects(res *Result) {
 		expect = min(expect, c.headEnd())
 	}
 	predicted := c.ratio.upTo(c.fwd, expect)
-	low := c.usage.CacheRead+128+predicted/50 < predicted // the one-block tolerance (row 4)
+	low := c.usage.CacheRead+c.r.Facts.Provider.tolerance(predicted) < predicted // the one-block tolerance (row 4)
 	if !low {
 		return
 	}
@@ -1601,14 +1604,15 @@ func (c *calcState) badRatio() bool {
 }
 
 // badBreakpoints says whether the forwarded body has more than 4 breakpoints, or any breakpoint
-// has a TTL other than "5m", "1h" or empty (empty is the 5m default).
+// has a TTL that EntryFacts.Provider does not allow: by default "5m", "1h" or empty (empty is the 5m
+// default); Provider.TTLs can only narrow that list.
 func (c *calcState) badBreakpoints() bool {
 	if len(c.r.Breakpoints) > maxBreakpoints {
 		return true
 	}
 	for _, list := range [][]Breakpoint{c.r.ClientBreakpoints, c.r.Breakpoints} {
 		for _, b := range list {
-			if b.TTL != "" && b.TTL != "5m" && b.TTL != "1h" {
+			if !c.r.Facts.Provider.allowsTTL(b.TTL) {
 				return true
 			}
 		}
@@ -1944,8 +1948,8 @@ func (c *calcState) splitDelivered() bool {
 // splitChangedSystem says a delivered cachesplit sits on a system section whose client text changed since
 // the previous request, and the read stopped at the split. The split exists for that case: the volatile tail
 // moved, the client body would have missed from the system block on, and the forwarded body read only the
-// stable half. A read that comes within the tolerance of the previous extent (a short turn adds less than 128
-// tokens plus 2%) is then no proof that nothing broke: the read is the stable half, and the extent is the
+// stable half. A read that comes within the tolerance of the previous extent (a short turn adds less than one read
+// step, 128 tokens by default, plus 2%) is then no proof that nothing broke: the read is the stable half, and the extent is the
 // whole previous entry (context-guru#909).
 //
 // A read that passes the forwarded first difference is different. It read text the hashes call changed, so

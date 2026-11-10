@@ -21,6 +21,10 @@ type Result struct {
 	// (RequestMeta.Compaction). It is a record for the host, which closes its own epoch on it. It
 	// changes no figure.
 	Compaction *CompactionRecord
+	// StorageTokens is the tokens this request wrote into a cache that the provider bills by storage
+	// (Provider.StorageBilled). 0 when storage is not billed or nothing was priced. The host prices
+	// the hours; the library does not know how long the cache is kept.
+	StorageTokens int
 }
 
 // CompactionRecord is what the library recorded for a client compaction.

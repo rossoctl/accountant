@@ -1,6 +1,9 @@
 package engine
 
-import "time"
+import (
+	"slices"
+	"time"
+)
 
 // RequestOps is the operations of one request, or of one call made outside a request.
 type RequestOps struct {
@@ -195,6 +198,46 @@ type EntryFacts struct {
 	// MinCacheable is the model's minimum cacheable length in tokens (512, 1024, 2048 or 4096). A write at a
 	// breakpoint whose prefix is shorter is priced as input (§5.1). 0 = not set: no minimum applies.
 	MinCacheable int `json:"minCacheable,omitempty"`
+	// Provider describes the provider facts that differ by provider and model. The zero value keeps the
+	// Anthropic behaviour.
+	Provider Provider `json:"provider,omitzero"`
+}
+
+// Provider is the provider profile of a request. Every field has a zero value that keeps today's behaviour.
+type Provider struct {
+	// ReadGranularity is the step in tokens of the cached count the provider reports (OpenAI before
+	// GPT-5.6 rounds down to a multiple of 128). The extent search allows one step plus 2%. 0 = 128.
+	// Use 1 for a provider that reports the exact count. A negative value counts as 0.
+	ReadGranularity int `json:"readGranularity,omitempty"`
+	// TTLs narrows the breakpoint TTL strings the model accepts, besides the empty one. It may list
+	// "5m" and "1h" only: the engine prices no other lifetime, so a string outside them is refused by
+	// check "breakpoints" even if listed. A breakpoint with an unlisted TTL fails that check.
+	// Nil = "5m" and "1h". An empty non-nil list allows only the empty TTL.
+	TTLs []string `json:"ttls,omitempty"`
+	// StorageBilled says the provider bills the storage of a cache entry by token and hour (Gemini
+	// explicit caching). Result.StorageTokens then holds the tokens the request wrote. The host
+	// multiplies it by the hours it keeps the cache and by its rate: the library knows neither.
+	StorageBilled bool `json:"storageBilled,omitempty"`
+}
+
+// tolerance is the extent search slack in tokens for a read of n tokens.
+func (p Provider) tolerance(n int) int {
+	g := p.ReadGranularity
+	if g <= 0 {
+		g = 128
+	}
+	return g + n/50
+}
+
+// allowsTTL says whether a breakpoint TTL string is valid for this provider.
+func (p Provider) allowsTTL(ttl string) bool {
+	if ttl == "" {
+		return true
+	}
+	if p.TTLs == nil {
+		return ttl == "5m" || ttl == "1h"
+	}
+	return (ttl == "5m" || ttl == "1h") && slices.Contains(p.TTLs, ttl)
 }
 
 // The enums are strings, not integers, so an unknown value from a newer operator survives a
