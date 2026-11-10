@@ -10,7 +10,8 @@
 // # Building Usage from a response
 //
 // [Usage] counts each token once, in one tier. [Usage.Input] is the uncached input only. Providers do
-// not agree on this, so a host must convert before it calls Compute.
+// not agree on this, so a host must convert before it calls Compute. Output and thinking tokens go in
+// [CallUsage.Output], not in Usage.
 //
 // Anthropic: the usage fields are already apart. Copy them.
 //
@@ -24,22 +25,24 @@
 //
 // OpenAI: prompt_tokens (Responses API: input_tokens) includes the cached tokens. Subtract them.
 //
-//	CacheRead  = usage.prompt_tokens_details.cached_tokens
+//	CacheRead  = usage.prompt_tokens_details.cached_tokens   (Responses API: input_tokens_details.cached_tokens)
 //	CacheWrite = usage.cache_write_tokens              (GPT-5.6 and later; 0 before)
 //	Input      = usage.prompt_tokens - CacheRead - CacheWrite   (CacheWrite is 0 before GPT-5.6)
 //
 // Example: prompt_tokens 9,000, cached_tokens 8,000, no writes gives
-// Usage{Input: 1000, CacheRead: 8000}. If Input is not reduced, the 8,000 cached tokens count twice
-// and the sum check fails. OpenAI has no 1h tier: leave CacheWrite1h at 0.
+// Usage{Input: 1000, CacheRead: 8000}. If Input is not reduced, the 8,000 cached tokens count twice.
+// No check reports this: the ratio and every saving come out too high, so the host must subtract.
+// Limits: this rule assumes that prompt_tokens includes the write tokens, which docs/ does not yet
+// state. Usage has no 12-hour tier. Put all writes in CacheWrite and leave CacheWrite1h at 0. The
+// library then books them at the 5m tier, so the extra price of a 12-hour write is not tracked.
 //
-// Gemini: promptTokenCount includes the cached tokens. Subtract them.
+// Gemini (not yet recorded in docs/cached-prefix.md): promptTokenCount includes the cached tokens. Subtract them.
 //
 //	CacheRead = usageMetadata.cachedContentTokenCount
 //	Input     = usageMetadata.promptTokenCount - CacheRead
 //
 // Example: promptTokenCount 9,000, cachedContentTokenCount 8,000 gives
 // Usage{Input: 1000, CacheRead: 8000}. Gemini bills no cache write per request, so CacheWrite is 0.
-// Output and thinking tokens go in [CallUsage.Output], not in Usage.
 //
 // The module imports only the standard library. Its design is in docs/design.md, and a complete
 // program is in the package example.
