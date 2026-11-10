@@ -350,6 +350,16 @@ numbers are not used: those requirements were dropped.
 - <a id="r52"></a>**R52.** The library never returns one token total. It returns tokens for each tier. Tiers differ in
   price by up to 20 times (a 1h cache write against a cache read), so a sum across them is not an invariant. A host that wants one figure
   prices the tiers and sums dollars. This is the rule of the tool-prune accounting (cortex#952).
+- <a id="r56"></a>**R56.** A host that defers tools with `defer_loading` leaves each definition in the body it forwards. The
+  provider keeps a deferred tool out of the prompt and bills a stub for it. The host builds the forwarded `Body` as the
+  prompt the provider bills: a deferred tool has the size of its stub. The deferral is then a `rewrite` that shrinks
+  `tools` positions, and the library prices it as any other shrink, with no new field. The host reports it once, with a
+  `ChangeID`, and the library applies it again on later requests (R22). A host that builds the forwarded `Body` from the
+  wire bytes reports a shrink that the bodies do not show. The `sum` check fails and names the section
+  ([§6.5](design.md#65-checks)). The library still prices the operation. When a deferred tool is loaded later, its definition enters the messages. That is
+  a `rewrite` that makes the context larger (R33), reported by the host as a cost. A host that removes tool
+  definitions from the body itself, for a model that ignores `defer_loading`, reports the removal as a `rewrite` in the
+  usual way. The body shrinks, and nothing in R56 applies.
 - <a id="r55"></a>**R55.** A host that knows a request is the first one after a client compaction says so in
   `RequestMeta.Compaction` (`manual`, `auto` or `unknown`). The library records the verdict in
   `Result.Compaction` with the `ChangeID` of each change that ended on that request. It prices nothing from the
