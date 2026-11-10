@@ -20,15 +20,29 @@ type RequestOps struct {
 	Ops []Operation `json:"ops"` // in pipeline order
 }
 
+// modelID is the string that identifies the model in a comparison: ModelKey when the host gave one,
+// else Model as written.
+func (m RequestMeta) modelID() string {
+	if m.ModelKey != "" {
+		return m.ModelKey
+	}
+	return m.Model
+}
+
 // RequestMeta is what the host knows about the request before the pass: the fields of RequestOps
 // that are not operations.
 type RequestMeta struct {
-	RequestID string            `json:"requestId"`
-	Session   string            `json:"session"`
-	Model     string            `json:"model,omitempty"`
-	Params    map[string]string `json:"params,omitempty"`
-	At        time.Time         `json:"at"`
-	Billing   Billing           `json:"billing"`
+	RequestID string `json:"requestId"`
+	Session   string `json:"session"`
+	Model     string `json:"model,omitempty"`
+	// ModelKey names the model apart from the spelling of its id. Two ids with the same ModelKey are one
+	// model: a dated id (claude-sonnet-4-5-20250929), an alias (claude-sonnet-4-5) and a vendor prefix
+	// (aws/..., anthropic/...) of one model share a key. The library compares ModelKey, so a change of
+	// spelling is not reported as a model change. Empty = compare Model as written.
+	ModelKey string            `json:"modelKey,omitempty"`
+	Params   map[string]string `json:"params,omitempty"`
+	At       time.Time         `json:"at"`
+	Billing  Billing           `json:"billing"`
 	// Compaction is the host's verdict that this request is the first one after a client compaction.
 	// The library cannot tell a compaction from another client edit: both end the changes at or after
 	// the first difference (§4.3). Empty means the host says nothing. The library records the verdict

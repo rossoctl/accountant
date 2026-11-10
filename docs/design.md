@@ -84,6 +84,7 @@ type RequestOps struct {
     Session   string
     Thread    Thread
     Model     string            // the model the request was sent for
+    ModelKey  string            // the model apart from the spelling of its id; compared instead of Model when set (§4.4)
     Params    map[string]string // other settings that change the cost: effort, thinking, max_output, ...
     At        time.Time
     // Billing prices every operation of the request, a `spend` included (R41, R42, §7.1).
@@ -1400,6 +1401,15 @@ type CacheEffect struct {
 
 `Cause` is "model_changed" when row 4 (§5.2) finds a loss and the model differs from the previous
 request's: the provider keeps a cache for each model, so the loss is explained. It is empty otherwise.
+
+"The model differs" compares `RequestMeta.ModelKey` when the host sets it, and `RequestMeta.Model` as written
+otherwise. The library treats ids as opaque strings. A dated id (`claude-sonnet-4-5-20250929`), an alias
+(`claude-sonnet-4-5`) and a vendor prefix (`aws/...`, `anthropic/...`) of one model are different strings, so
+a host that wants them to count as one model gives all of them the same `ModelKey`. The host knows its model
+catalog and the library does not. The key is stored with the fingerprint, so a restart keeps it. A request
+with a key is compared with the key of the previous one: if only one of the two has a key, the key is
+compared with the other id as written. The same comparison decides whether a forked thread can use its
+parent's entry (§6.1). Only the label and the fork rule use it: no price depends on the model id.
 
 `Saved` and `Caused` are separate and both non-negative, because the money layer rejects negative
 values (`pricing.MicrosFromUSD`). Cortex prices each side with the existing code.

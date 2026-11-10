@@ -69,6 +69,7 @@ func fromWireBody(w wireBody) (Body, error) {
 type wirePrint struct {
 	Thread               string          `json:"thread,omitempty"`
 	Model                string          `json:"model,omitempty"`
+	ModelKey             string          `json:"modelKey,omitempty"`
 	At                   time.Time       `json:"at"`
 	Client               wireBody        `json:"client"`
 	Forwarded            wireBody        `json:"forwarded"`
@@ -92,7 +93,7 @@ func (ts *Trackers) Snapshot() ([]byte, error) {
 		s := t.snapshot()
 		wt := wireThread{Key: k, Created: t.created, Active: s.Active, Cache: s.Cache, Version: s.Version}
 		if p := s.PrevPrint; p != nil {
-			wt.PrevPrint = &wirePrint{Thread: p.Thread, Model: p.Model, At: p.At, Client: toWireBody(p.Client),
+			wt.PrevPrint = &wirePrint{Thread: p.Thread, Model: p.Model, ModelKey: p.ModelKey, At: p.At, Client: toWireBody(p.Client),
 				Forwarded: toWireBody(p.Forwarded), ClientBreakpoints: p.ClientBreakpoints,
 				ForwardedBreakpoints: p.ForwardedBreakpoints, Cached: p.Cached, Splices: p.splices}
 		}
@@ -139,7 +140,7 @@ func (ts *Trackers) Restore(data []byte) error {
 			if err != nil {
 				return fmt.Errorf("accountant: restore: %w", err)
 			}
-			st.PrevPrint = &Fingerprint{Thread: p.Thread, Model: p.Model, At: p.At, Client: c, Forwarded: f,
+			st.PrevPrint = &Fingerprint{Thread: p.Thread, Model: p.Model, ModelKey: p.ModelKey, At: p.At, Client: c, Forwarded: f,
 				ClientBreakpoints: p.ClientBreakpoints, ForwardedBreakpoints: p.ForwardedBreakpoints,
 				Cached: p.Cached, splices: p.Splices}
 		}
