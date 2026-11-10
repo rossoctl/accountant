@@ -42,6 +42,7 @@ type Unpriced struct {
 }
 
 // The names of the checks in CheckFailure.Check (§6.5). A host that switches on a check uses these.
+// The five that equal a Reason are the same string by design (§6.5: the check name equals the reason).
 const (
 	CheckSum          = "sum"
 	CheckUniqueChange = "unique_change"

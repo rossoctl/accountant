@@ -85,3 +85,25 @@ func TestEveryUnpricedReasonIsInTheDesign(t *testing.T) {
 		}
 	}
 }
+
+// The check names are machine-stable strings that a host switches on (design §6.5). Each constant
+// has the literal value here, and the design names it as written.
+func TestEveryCheckNameIsPinnedAndInTheDesign(t *testing.T) {
+	doc, err := os.ReadFile("../../docs/design.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for got, want := range map[string]string{
+		CheckSum: "sum", CheckUniqueChange: "unique_change", CheckSpans: "spans", CheckConservation: "conservation",
+		CheckSharedWarm: "shared_warm", CheckBadUsage: "bad_usage", CheckRatioRange: "ratio_range",
+		CheckBreakpoints: "breakpoints", CheckMediaTokens: "media_tokens", CheckSizeTokens: "size_tokens",
+		CheckSizeRange: "size_range",
+	} {
+		if got != want {
+			t.Errorf("check constant = %q, want %q", got, want)
+		}
+		if !strings.Contains(string(doc), `"`+want+`"`) && !strings.Contains(string(doc), "`"+want+"`") {
+			t.Errorf("check %q is not named in docs/design.md", want)
+		}
+	}
+}

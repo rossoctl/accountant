@@ -132,7 +132,7 @@ and a ping rescue.
 | ID | Scenario | What it tests | cg |
 |---|---|---|---|
 | H1 | `mask`, then a summary of the same content, in both orders. | The total is equal. Credit follows pipeline order (Q12). | Not covered. |
-| H2 | A `MessageSplice` before a later operation. | Position mapping and the order check. | Not covered. |
+| H2 | A `MessageSplice` before a later operation. | Position mapping through the splice. | Not covered. |
 | H3 | The main thread behind four subagent requests. | It compares with its own previous request. | Not covered. |
 | H4 | Two requests of one thread in flight. | `Recomputed`. | Not applicable. |
 | H5 | An unknown kind, a negative size, an unreported body edit. | `Unpriced` and the `sum` check. | Not applicable. |

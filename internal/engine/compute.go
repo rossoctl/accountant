@@ -81,7 +81,7 @@ func ComputeStandalone(ops RequestOps) Result {
 			res.Unpriced = append(res.Unpriced, Unpriced{OpID: op.ID, Reason: ReasonPingResultUnknown})
 		} else if badCall(op) {
 			res.Unpriced = append(res.Unpriced, Unpriced{OpID: op.ID, Reason: ReasonBadUsage})
-			res.Checks = append(res.Checks, CheckFailure{Check: ReasonBadUsage, Operator: op.Operator, Detail: callDetail(op)})
+			res.Checks = append(res.Checks, CheckFailure{Check: CheckBadUsage, Operator: op.Operator, Detail: callDetail(op)})
 		}
 	}
 	return res
@@ -1628,10 +1628,10 @@ func (c *calcState) checkUsage(res *Result) {
 		case it.ended || it.active:
 		case it.bad == ReasonSizeRange:
 			sz, _ := bigSize(it.op, l)
-			res.Checks = append(res.Checks, CheckFailure{Check: ReasonSizeRange, Operator: it.op.Operator,
+			res.Checks = append(res.Checks, CheckFailure{Check: CheckSizeRange, Operator: it.op.Operator,
 				Detail: fmt.Sprintf("size bytes=%d/%d limits=%d/%d: the operation is not priced", sz[0].Bytes, sz[1].Bytes, l.before, l.after)})
 		case it.bad == ReasonBadUsage:
-			res.Checks = append(res.Checks, CheckFailure{Check: ReasonBadUsage, Operator: it.op.Operator, Detail: callDetail(it.op)})
+			res.Checks = append(res.Checks, CheckFailure{Check: CheckBadUsage, Operator: it.op.Operator, Detail: callDetail(it.op)})
 		}
 	}
 	if c.invalid == "" {
