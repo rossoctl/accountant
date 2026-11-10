@@ -1409,7 +1409,7 @@ a host that wants them to count as one model gives all of them the same `ModelKe
 catalog and the library does not. The key is stored with the fingerprint, so a restart keeps it. A request
 with a key is compared with the key of the previous one: if only one of the two has a key, the key is
 compared with the other id as written. The same comparison decides whether a forked thread can use its
-parent's entry (§6.1). Only the label and the fork rule use it: no price depends on the model id.
+parent's entry (§5.2, "A fork reads its parent's entry"). Only the label and the fork rule use it: no price depends on the model id.
 
 `Saved` and `Caused` are separate and both non-negative, because the money layer rejects negative
 values (`pricing.MicrosFromUSD`). Cortex prices each side with the existing code.

@@ -392,7 +392,7 @@ numbers are not used: those requirements were dropped.
 - <a id="r18"></a>**R18.** Each request carries request ID, session, thread (if known), **model** (and, when the host has one, a **model key** that names the model apart from the spelling of its id) and
   **params**. The model, and the parameters that change what a call costs, are facts of the
   request. Examples of params: `effort`, `thinking` (the thinking budget), `max_output`,
-  `service_tier`. The library does not fix the list. A key it does not know is kept and passed on,
+  `service_tier`. The library does not fix the list. A params key it does not know is kept and passed on,
   and it is never dropped (R19).
 - <a id="r46"></a>**R46.** Each recorded saving names the version of the `accountant` rules that computed it
   (`Saving.OpsVersion`). A context operator can then trace a figure to the rules and the case list that
