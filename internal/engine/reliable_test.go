@@ -1,6 +1,12 @@
 package engine
 
-import "testing"
+import (
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"strings"
+	"testing"
+)
 
 // Every check name has a decided class. A new check added to result.go fails here until its class
 // is chosen, so it cannot gate nothing by accident.
@@ -9,6 +15,42 @@ func TestEveryCheckHasAFatalClass(t *testing.T) {
 		CheckSum: true, CheckUniqueChange: true, CheckSpans: true,
 		CheckConservation: false, CheckSharedWarm: false, CheckBadUsage: false, CheckRatioRange: false,
 		CheckBreakpoints: false, CheckMediaTokens: false, CheckSizeTokens: false, CheckSizeRange: false,
+	}
+	// The map above must cover every Check constant of result.go, so a new check cannot be non-fatal
+	// by default: the test fails until its class is chosen here.
+	f, err := parser.ParseFile(token.NewFileSet(), "result.go", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	covered := map[string]bool{}
+	for name := range want {
+		covered[name] = true
+	}
+	for _, d := range f.Decls {
+		g, ok := d.(*ast.GenDecl)
+		if !ok || g.Tok != token.CONST {
+			continue
+		}
+		for _, sp := range g.Specs {
+			v := sp.(*ast.ValueSpec)
+			for i, n := range v.Names {
+				if !strings.HasPrefix(n.Name, "Check") || n.Name == "CheckFailure" || i >= len(v.Values) {
+					continue
+				}
+				val := ""
+				switch x := v.Values[i].(type) {
+				case *ast.BasicLit:
+					val = strings.Trim(x.Value, `"`)
+				case *ast.Ident: // CheckBadUsage = ReasonBadUsage: the value is the reason's
+					val = map[string]string{"ReasonBadUsage": CheckBadUsage, "ReasonRatioRange": CheckRatioRange,
+						"ReasonBreakpoints": CheckBreakpoints, "ReasonMediaTokens": CheckMediaTokens,
+						"ReasonSizeRange": CheckSizeRange}[x.Name]
+				}
+				if val == "" || !covered[val] {
+					t.Errorf("%s (%q) has no class in the table above: choose fatal or not", n.Name, val)
+				}
+			}
+		}
 	}
 	for name, fatal := range want {
 		if got := (CheckFailure{Check: name}).Fatal(); got != fatal {

@@ -1431,6 +1431,10 @@ A `break` with no `ChangeID` is in this sum only when the context operators caus
 body would have had too (an entry lost early, a client edit) is on the record and cancels out. A break
 that a context operator left behind, after its change ended, is not in the baseline, so it counts.
 
+`TierTokens` has `Add`, `Sub` and `IsZero`, and `CacheEffect` has `Net` (Saved minus Caused, signed). A host that adds token
+counts uses these, so a tier added later is counted by every host. `Net` of a break is negative (a cost). Sum `Net`
+over effects without `InBaseline` only.
+
 ### 6.4 Unknown boundary
 
 If the boundary is unknown (`Result.Boundary` is nil), the library uses the extent `cache_read` covers as the boundary, charges no
@@ -1537,6 +1541,8 @@ wrong. `CheckFailure.Fatal` reports this, and `Result.Reliable` is false when an
 an unmeasured figure reads these two, and it keeps no list of check names. Every other check is informational. A check
 that the library adds later is classified in `Fatal` only, so it gates every host at once. `order` and `attribution`
 have no check: attribution holds by construction, and the library does not test the order.
+`conservation` is informational on purpose: with `sum` passing it differs only by the ratio's rounding beyond its
+tolerance, so `Reliable` can be true while `conservation` is reported. A host that wants that signal reads `Result.Checks`.
 
 ## 7. Billing plans
 

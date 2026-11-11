@@ -169,9 +169,11 @@ type CacheEffect struct {
 }
 
 // Net is the effect as one signed flow of tokens: Saved minus Caused, tier by tier. A host prices
-// it with its rates and gets the dollar value of the effect with its sign: a break (a cost) and a
-// markPremium come out negative, a rescue, a split and a markPayback positive. The host does not
-// need the sign rule for each kind.
+// it with its rates and gets the dollar value of the effect with its sign: a break (a cost), a
+// markPremium and a ttlPremium come out negative; a rescue, a split, a markPayback and a ttlRescue
+// positive. The host does not need the sign rule for each kind. A host that sums Net over a Result
+// skips an effect with InBaseline set: the client body would have had that break too, so it is not
+// part of the bill difference (design §5.2, §6.3).
 func (e CacheEffect) Net() TierTokens { return e.Saved.Sub(e.Caused) }
 
 // CacheEffectCause is the reason the library can give for a break that no operation reported.

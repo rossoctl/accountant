@@ -103,7 +103,7 @@ A position that is not in the forwarded body is a host bug: the library adds a `
 (`Result.Checks`) and credits no rescue.
 The host chooses the siblings (the other threads, inside the TTL, not later than this request) and keeps their last
 forwarded body and breakpoints. `SharedWarmFrom(fwd, siblings)` then returns the position: the last breakpoint that a
-sibling sent inside the prefix it shares with this request. A shared prefix with no such breakpoint was not kept warm. The
+sibling sent inside the prefix it shares with this request. A shared prefix with no such breakpoint was not kept warm. A sibling that sent no breakpoint at all (automatic prefix caching) kept the whole shared prefix warm: with no breakpoint every position is one (design §5.1). The
 function reads `Body` only, so a host does not read `Body.Start` or `Body.Pos`.
 
 ```go

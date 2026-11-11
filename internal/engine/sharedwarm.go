@@ -15,14 +15,21 @@ type Sibling struct {
 // request). This function decides only where the shared prefix ends. The provider caches at
 // breakpoints, so a prefix counts as warm up to the last breakpoint the sibling sent inside the
 // prefix both bodies share. A shared prefix with no breakpoint of the sibling in it was not kept
-// warm. With many siblings, the one that reaches furthest wins.
+// warm. A sibling whose body has no breakpoint (automatic prefix caching, for example OpenAI) is the
+// exception: with no breakpoint every position counts as one (design §5.1, §6.2), so the whole shared
+// prefix was warm. With many siblings, the one that reaches furthest wins.
 //
 // It is pure: it reads the bodies and changes nothing.
 func SharedWarmFrom(fwd Body, siblings []Sibling) *Position {
 	best := -1
 	for _, s := range siblings {
 		common := firstDiff(s.Body, fwd) - 1 // the last index at which the two bodies agree
-		for _, b := range s.Body.breakpoints(s.Breakpoints) {
+		bps := s.Body.breakpoints(s.Breakpoints)
+		if len(bps) == 0 { // no breakpoint in the body: every position is one
+			best = max(best, common)
+			continue
+		}
+		for _, b := range bps {
 			if b.at <= common && b.at > best {
 				best = b.at
 			}
