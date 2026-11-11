@@ -266,7 +266,7 @@ func (r *Request) notEnded() Result {
 }
 
 func priced(op Operation, id string) PricedOp {
-	return PricedOp{OpID: id, Operator: op.Operator, ChangeID: op.ChangeID, DryRun: op.DryRun, Call: op.Call}
+	return PricedOp{OpID: id, Kind: op.Kind, Operator: op.Operator, ChangeID: op.ChangeID, DryRun: op.DryRun, Call: op.Call}
 }
 
 // item is one operation of the request: reported now, or active from an earlier request.

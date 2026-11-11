@@ -1368,6 +1368,7 @@ type CheckFailure struct {
 // applied again gets "active:" + its ChangeID, so it cannot collide with the IDs of this request (R6).
 type PricedOp struct {
     OpID      string
+    Kind      Kind // copied from the operation: rewrite, spend or setting
     Operator  string
     ChangeID  string
     DryRun    bool
@@ -1380,6 +1381,9 @@ type PricedOp struct {
 type TierTokens struct {
     Input, CacheWrite5m, CacheWrite1h, CacheRead int
 }
+
+// The hook for a host's metrics (Observer, Observation, Multi) is not part of this library. It lives in
+// the metrics module: see [metrics.md](metrics.md).
 
 type CacheEffectKind string // break | rescue | split | ttlPremium | ttlRescue | markPremium | markPayback
 
