@@ -1748,8 +1748,7 @@ def c17():
                 "operator did is involved: no operation, no operator gets a saving, and the break has an empty ChangeID. "
                 "What the client removes is not counted as saved.",
                 DIMS("none", "tools", "break", **{"break": "client"}), [s0, s1],
-                open_=[BSTAR_SNAP, "Issue 584 option 2 (credit a removal our own "
-                       "recommendation caused) needs a reporter for that and is not covered"])
+                open_=[BSTAR_SNAP])
 
 
 # Case 18 (#696): two operations whose bytes the library converts to tokens.

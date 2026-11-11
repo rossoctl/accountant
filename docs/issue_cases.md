@@ -416,10 +416,9 @@ no operator. The decision of #583 and #584 is that what the client removes is no
   write), or nothing if the client edited after B\*. In both cases nobody's saving rises.
 - The thread total counts no saving for the 8,000 removed tokens.
 
-**Variant (option 2 of #584).** The client removed them because a recommendation said so, and a
-`ChangeID` of kind `setting` or `rewrite` is reported by the recommender. Expected: the saving appears
-under that `ChangeID` and not under the operator. That depends on which option the repo owner picks, so
-only the first half is `ready`.
+**Decision.** The repo owner chose option 1 of #584 on 2026-11-10. No recommendation gets credit for a
+removal the client makes by itself. A variant that credits such a removal to a `ChangeID` is not part of
+this case.
 
 ### Case 18: the estimated size is off from what the provider billed (#696)
 
