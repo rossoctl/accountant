@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"reflect"
 	"testing"
 	"time"
 )
@@ -49,5 +50,38 @@ func TestLowerTTLOnlyLowersAndKeepsTheHostsSlice(t *testing.T) {
 	}
 	if oneHour[0].TTL != "1h" {
 		t.Fatalf("the host's slice was changed: %q", oneHour[0].TTL)
+	}
+}
+
+// A gateway bills a 1h ask as 5m. The replay of a change 30 minutes later is cold, and its tokens are
+// written again. LowerTTL after EndRequest must give the whole Result that the lower TTL given up
+// front gives: the saving is booked at the 5m tier, not at the 1h tier of the client's own mark.
+func TestLowerTTLGivesTheWholeResultOfTheLowerTTLUpFront(t *testing.T) {
+	oneHour := func(p Position) []Breakpoint { return []Breakpoint{bpTTL(p, "1h")} }
+	run := func(lower bool) Result {
+		ts := NewTrackers()
+		f1 := ttlFacts(5 * time.Minute)
+		req{at: t0, client: mk(nil, nil, []blk{b("a", 2000), b("b", 3000), b("c", 2000)}), clientBPs: bps5(msg(2)),
+			ops: []Operation{rewrite("o", "mask", "c1", msg(1), 3000, 1000)},
+			fwd: mk(nil, nil, []blk{b("a", 2000), b("b2", 1000), b("c", 2000)}), fwdBPs: bps5(msg(2)),
+			facts: f1, usage: Usage{CacheWrite: 5000}}.run(ts)
+		q := req{at: t0.Add(30 * time.Minute),
+			client: mk(nil, nil, []blk{b("a", 2000), b("b", 3000), b("c", 2000), b("d", 500)}), clientBPs: oneHour(msg(3)),
+			fwd: mk(nil, nil, []blk{b("a", 2000), b("b2", 1000), b("c", 2000), b("d", 500)}), fwdBPs: oneHour(msg(3)),
+			facts: ttlFacts(5 * time.Minute), usage: Usage{CacheWrite: 5500}}
+		if !lower {
+			return q.run(ts)
+		}
+		q.facts = ttlFacts(time.Hour)
+		r := q.begin(ts)
+		r.LowerTTL(5 * time.Minute)
+		return r.Compute(q.usage)
+	}
+	up, late := run(false), run(true)
+	if op := opC1(up); op.Saved != (TierTokens{CacheWrite5m: 2000}) {
+		t.Fatalf("up front: saved %+v, want 2000 at the 5m write tier (the control)", op.Saved)
+	}
+	if !reflect.DeepEqual(up, late) {
+		t.Fatalf("LowerTTL differs from the TTL given up front:\n up   %+v\n late %+v", up, late)
 	}
 }
