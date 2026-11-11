@@ -12,8 +12,7 @@
  },
  "rates": "fixture-v1",
  "open": [
-  "design \u00a75.1 snaps B* to the last client breakpoint at or before the previous body's end, and the client's breakpoints are the current request's own: system and the new last message. Read literally that gives the end of system, not the end of the previous body. The examples, and this case, take the end of the previous body.",
-  "Issue 584 option 2 (credit a removal our own recommendation caused) needs a reporter for that and is not covered"
+  "design \u00a75.1 snaps B* to the last client breakpoint at or before the previous body's end, and the client's breakpoints are the current request's own: system and the new last message. Read literally that gives the end of system, not the end of the previous body. The examples, and this case, take the end of the previous body."
  ],
  "steps": [
   {
