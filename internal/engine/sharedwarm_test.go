@@ -53,13 +53,11 @@ func TestSharedWarmFromTakesTheWholeSharedPrefixOfASiblingWithoutBreakpoints(t *
 
 func TestSharedWarmFromIsNilWithoutABreakpointInTheSharedPrefix(t *testing.T) {
 	sib := swBody(0, 1, 4)
-	fwd := swBody(0, 1, 6)
-	_ = fwd
 	diverged := NewBody(nil, [][]byte{[]byte("sa")}, [][]byte{[]byte("zz"), []byte("mb")})
 	if got := SharedWarmFrom(diverged, []Sibling{{Body: sib, Breakpoints: []Breakpoint{swBreak(SectionMessages, 2)}}}); got != nil {
 		t.Fatalf("breakpoint after the first diff: SharedWarmFrom = %v, want nil", got)
 	}
-	if got := SharedWarmFrom(fwd, nil); got != nil {
+	if got := SharedWarmFrom(swBody(0, 1, 6), nil); got != nil {
 		t.Fatalf("no siblings: SharedWarmFrom = %v, want nil", got)
 	}
 }
