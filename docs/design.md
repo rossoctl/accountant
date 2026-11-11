@@ -1532,6 +1532,12 @@ reason `bad_usage`, `ratio_range` or `breakpoints` (the first check that fails, 
 added, and the cache state for the next request is unknown, as for a response with no usage (§8). The check name
 equals the reason. A check on a request with no usage is not run: that request is `no_usage`.
 
+**Which failures are fatal.** `sum`, `unique_change` and `spans` mean that the list of operations or its attribution is
+wrong. `CheckFailure.Fatal` reports this, and `Result.Reliable` is false when any failure is fatal. A host that must not show
+an unmeasured figure reads these two, and it keeps no list of check names. Every other check is informational. A check
+that the library adds later is classified in `Fatal` only, so it gates every host at once. `order` and `attribution`
+have no check: attribution holds by construction, and the library does not test the order.
+
 ## 7. Billing plans
 
 How a host records the result, the size limit on recorded changes, and the totals over a session
