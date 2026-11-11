@@ -182,6 +182,39 @@ func (r *Request) EndRequest(thread Thread, forwarded Body, breakpoints []Breakp
 	}
 }
 
+// LowerTTL tells the library that the response billed a shorter cache lifetime than the request asked
+// for, when the host learns it after EndRequest: a gateway that bills a 1h ask as 5m. Call it before
+// Compute. It lowers EntryFacts.TTL to ttl and, for a ttl below one hour, sets every 1h breakpoint to
+// 5m, in the forwarded body and in the client body alike: the library judges each part of an entry by
+// the TTL of the breakpoint that wrote it, and the client body is billed through the same gateway
+// (accountant#56). A ttl between 5m and 1h counts as 5m for the breakpoints, because the engine knows
+// only 5m and 1h; that can only lower a saving (R45). The host's own breakpoint slices are not changed.
+// It does nothing before EndRequest, for a ttl that is not shorter than the TTL in EntryFacts, or for a
+// ttl of 0 or less: it only lowers. It leaves EntryFacts.Lifetime alone, so the host passes
+// LifetimeExact for a lifetime it read from the bill.
+func (r *Request) LowerTTL(ttl time.Duration) {
+	if !r.ended || ttl <= 0 || ttl >= r.facts.TTL {
+		return
+	}
+	r.facts.TTL = ttl
+	if ttl >= time.Hour {
+		return
+	}
+	r.breakpoints = lowerOneHour(r.breakpoints)
+	r.clientBreakpoints = lowerOneHour(r.clientBreakpoints)
+}
+
+// lowerOneHour returns a copy of bps with every 1h breakpoint set to 5m.
+func lowerOneHour(bps []Breakpoint) []Breakpoint {
+	out := append([]Breakpoint(nil), bps...)
+	for i := range out {
+		if out[i].TTL == "1h" {
+			out[i].TTL = "5m"
+		}
+	}
+	return out
+}
+
 // withReported returns s.Active with this request's reported rewrite and setting operations in it,
 // in client space (§4.3), and whether that differs from s.Active. A reported operation replaces the
 // active one with its ChangeID. The other active operations stay: whether they ended is for Compute.
