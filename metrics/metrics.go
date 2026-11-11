@@ -339,6 +339,8 @@ func effectName(k accountant.CacheEffectKind) string {
 		return "ttl_rescue"
 	case accountant.EffectMarkPremium:
 		return "mark_premium"
+	case accountant.EffectMarkPayback:
+		return "mark_payback"
 	case accountant.EffectBreak, accountant.EffectRescue, accountant.EffectSplit:
 		return string(k)
 	}

@@ -195,6 +195,24 @@ func TestCacheEffectGoesToItsOwnCounterOnly(t *testing.T) {
 	}
 }
 
+// markPayback is the return on a breakpoint the host added earlier. It has its own label value; it
+// must not fall into "other".
+func TestMarkPaybackHasItsOwnEffectName(t *testing.T) {
+	s, r := newSink(t)
+	o := obs("m")
+	o.Result.CacheEffects = []accountant.CacheEffect{
+		{ID: "ce:1", Kind: accountant.EffectMarkPayback, Saved: accountant.TierTokens{Input: 1000}, Caused: accountant.TierTokens{CacheRead: 1000}},
+	}
+	s.Observe(o)
+	seen := map[string]bool{}
+	for _, p := range collect(t, r)["llm.savings.cache_effect.usd"] {
+		seen[p.attrs["effect"]] = true
+	}
+	if !seen["mark_payback"] || seen["other"] {
+		t.Errorf("effect names = %v, want mark_payback and no other", seen)
+	}
+}
+
 func TestComponentIsBounded(t *testing.T) {
 	s, r := newSink(t, WithComponents("mask", "dedup"))
 	for _, op := range []string{"cg.mask", "cg.dedup", "cg.surprise", "tool-prune"} {

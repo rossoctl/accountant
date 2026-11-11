@@ -67,7 +67,7 @@ OTel names use dots. The collector converts them to Prometheus names (`llm_savin
    - Unset mode: treated as `unknown`.
 5. **Cache effects.** An effect that is `InBaseline` is skipped. An effect with `Estimated` set, or priced from a
    fallback rate, marks the request estimated. The camel case kinds map to snake case values. `markPremium`
-   becomes `mark_premium`.
+   becomes `mark_premium`, and `markPayback` becomes `mark_payback`.
 6. **Interaction.** The operations already book `InteractionCaused` (the read). The sink books the difference,
    `Interaction` minus `InteractionCaused`, as `direction=saved` when it is positive and `added` when it is negative.
 7. **Component label.** The name is the operator without its prefix (`context-guru.mask` gives `mask`). With
