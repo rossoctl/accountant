@@ -109,7 +109,7 @@ function reads `Body` only, so a host does not read `Body.Start` or `Body.Pos`.
 **The billed lifetime.** `EntryFacts.TTL` is written at `EndRequest`, before the response, so it holds the lifetime the
 request asked for. A gateway can bill a 1h ask as 5m. When the host learns this from the usage, it calls
 `Request.LowerTTL(5 * time.Minute)` before `Compute`. The library lowers the TTL of the facts and of every 1h
-breakpoint of the forwarded body, so the entry is a 5m entry (accountant#56). `LowerTTL` only lowers, and it does
+breakpoint, in the forwarded body and in the client body, so the entry is a 5m entry (accountant#56). `LowerTTL` only lowers, and it does
 nothing before `EndRequest`. A host cannot change the record in any other way, because `Request` has no exported fields.
 
 ```go

@@ -480,8 +480,10 @@ host's own `EntryFacts.TTL` must agree.
 
 A host that learns the billed lifetime only from the response can state it directly: `Request.LowerTTL(ttl)`, called
 after `EndRequest` and before `Compute`. The library lowers `EntryFacts.TTL` and every 1h breakpoint, in the forwarded
-body and in the client body, to the same result as if the host had passed the lower `EntryFacts.TTL` at `EndRequest`. The
-inference gates above do not apply, because the host speaks from the bill. A `ttl` between 5m and 1h sets the
+body and in the client body, so the request is priced as one whose breakpoints and `EntryFacts.TTL` were the lower ones.
+The inference gates above do not apply, because the host speaks from the bill: with a cache read or a 1h write in the
+usage, the host's call still lowers, where the inferred rule would not. The host calls it only for a downgrade it has
+proved. A `ttl` between 5m and 1h sets the
 breakpoints to 5m, which can only lower a saving (R45). `LowerTTL` leaves `EntryFacts.Lifetime` alone.
 
 What the request wrote does not enter the rule. An earlier version also required that the provider read
