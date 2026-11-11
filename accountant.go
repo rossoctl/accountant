@@ -74,6 +74,12 @@ func ComputeStandalone(ops RequestOps) Result { return engine.ComputeStandalone(
 // returns the [PingFacts] the thread's next real request passes in [EntryFacts].
 func PingOps(p Ping, b Billing) (RequestOps, PingFacts) { return engine.PingOps(p, b) }
 
+// SharedWarmFrom returns the [EntryFacts].SharedWarm of a request that forwarded fwd: the last
+// position that one of the siblings kept warm (R54). The host chooses the [Sibling] list.
+func SharedWarmFrom(fwd Body, siblings []Sibling) *Position {
+	return engine.SharedWarmFrom(fwd, siblings)
+}
+
 // NewBody hashes the content of one request body, one entry for each position of each section.
 func NewBody(tools, system, messages [][]byte) Body { return engine.NewBody(tools, system, messages) }
 
@@ -93,6 +99,7 @@ type (
 	CallUsage   = engine.CallUsage
 	Ping        = engine.Ping
 	PingFacts   = engine.PingFacts
+	Sibling     = engine.Sibling
 )
 
 // Parts of an operation.

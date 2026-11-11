@@ -64,6 +64,30 @@ type CheckFailure struct {
 	Detail   string // numbers only, no content
 }
 
+// Fatal reports whether this failure means the list of operations or their attribution is wrong:
+// sum, unique_change and spans. The figures of such a request follow whichever operation comes
+// first, or add up to bytes the bodies do not hold, so a host must not show them as measured.
+// Every other check is informational. The library decides this in one place, so a new fatal check
+// gates every host and no host keeps a list of its own.
+func (c CheckFailure) Fatal() bool {
+	switch c.Check {
+	case CheckSum, CheckUniqueChange, CheckSpans:
+		return true
+	}
+	return false
+}
+
+// Reliable reports whether no check of the Result is Fatal. An unreliable Result still has
+// figures, but they come from a wrong list of operations.
+func (r Result) Reliable() bool {
+	for _, c := range r.Checks {
+		if c.Fatal() {
+			return false
+		}
+	}
+	return true
+}
+
 // PricedOp is one operation in tokens for each tier.
 type PricedOp struct {
 	OpID      string
@@ -83,6 +107,22 @@ type TierTokens struct {
 	CacheWrite1h int `json:"cacheWrite1h,omitempty"`
 	CacheRead    int `json:"cacheRead,omitempty"`
 }
+
+// Add returns t plus o, tier by tier. Use it, not a copy of the four fields, so a new tier is
+// counted by every host that adds tokens.
+func (t TierTokens) Add(o TierTokens) TierTokens {
+	return TierTokens{Input: t.Input + o.Input, CacheWrite5m: t.CacheWrite5m + o.CacheWrite5m,
+		CacheWrite1h: t.CacheWrite1h + o.CacheWrite1h, CacheRead: t.CacheRead + o.CacheRead}
+}
+
+// Sub returns t minus o, tier by tier. The result can be negative.
+func (t TierTokens) Sub(o TierTokens) TierTokens {
+	return TierTokens{Input: t.Input - o.Input, CacheWrite5m: t.CacheWrite5m - o.CacheWrite5m,
+		CacheWrite1h: t.CacheWrite1h - o.CacheWrite1h, CacheRead: t.CacheRead - o.CacheRead}
+}
+
+// IsZero reports whether every tier is 0.
+func (t TierTokens) IsZero() bool { return t == TierTokens{} }
 
 // CacheEffectKind says what a CacheEffect is. The host needs it to settle the effect: a break goes to
 // the change that caused it, a rescue goes to the keeper by its window.
@@ -127,6 +167,14 @@ type CacheEffect struct {
 	// has no ChangeID and is not InBaseline: it counts.
 	InBaseline bool `json:"inBaseline,omitempty"`
 }
+
+// Net is the effect as one signed flow of tokens: Saved minus Caused, tier by tier. A host prices
+// it with its rates and gets the dollar value of the effect with its sign: a break (a cost), a
+// markPremium and a ttlPremium come out negative; a rescue, a split, a markPayback and a ttlRescue
+// positive. The host does not need the sign rule for each kind. A host that sums Net over a Result
+// skips an effect with InBaseline set: the client body would have had that break too, so it is not
+// part of the bill difference (design §5.2, §6.3).
+func (e CacheEffect) Net() TierTokens { return e.Saved.Sub(e.Caused) }
 
 // CacheEffectCause is the reason the library can give for a break that no operation reported.
 type CacheEffectCause string
