@@ -464,7 +464,7 @@ check either way. A content class would add a second expected column.
 | 14 | #45 | No `split` effect when the breakpoint does not move | ready |
 | 15 | #567 | Marker absent from `system` | ready |
 | 16 | #481 | A restore that grows the body | ready |
-| 17 | #584 | A client-made shrink credits nobody | ready, variant needs a decision |
+| 17 | #584 | A client-made shrink credits nobody | ready |
 | 18 | #696 | Estimated size against billed | needs decision (Q3) |
 
 **Open questions these cases touch.** Q3 (estimates, case 18). Q12 (end of a change, cases 5 and 12).
