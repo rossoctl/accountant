@@ -1668,7 +1668,8 @@ Where a question has test cases, a host that compares them with its own code mar
       item, and whose size before is not the client's own bytes there, measured an earlier operator's
       output: a chain, and the change stays. This holds also when that change reports spans or a wider
       range. The rule applies to a change on a whole item (no spans, no splice, not a `DryRun`). It does not
-      run while a non-ended splice is in the state, because positions are then in different spaces. It
+      run while a splice that `toFwd` applies is in the state, because positions are then in different spaces.
+      In such a session, and for a change with spans, a stale change still stays and the sum check still fails. It
       repeats until no change ends, because ending one can free the one before it in a chain. It also clears
       a stale change that is already in a saved state. When two changes give the item the same forwarded
       size, the library cannot tell which one ran, and both stay;
