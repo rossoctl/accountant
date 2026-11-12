@@ -687,6 +687,29 @@ The deferral is then a shrink of `tools` positions. No new field is needed. Each
 The unit tests in `internal/engine/deferral_test.go` cover two more situations. A host that builds the forwarded
 `Body` from the wire bytes fails the `sum` check. A deferral with no `ChangeID` is not carried to the next request.
 
+## 9h. Cases from accountant#70 (an in-place change that another operator took over)
+
+Operator X shortens a message in place. Later, operator Y shortens the same message from the client's own size,
+and X is no longer applied or reported. The forwarded message has Y's size: not the client's, and not X's size
+after. X must end (design Q12). If it stays, the `sum` check counts both savings and fails on every later
+request of the session.
+
+| Case ID | What the spec requires |
+|---|---|
+| `inplace/taken-over-by-another-operator/cold-hot/5m` | Extract shortens m9 from 8,000 to 7,000 tokens (request 1). On request 2, after the entry expired, a sweep shortens m9 to 500 tokens. Only the sweep is priced (7,500 tokens written), and no check fails. On request 3 the sweep is applied again and is the only change left (7,500 tokens read). |
+
+Cause B of the same issue has the same shape. A tail mark and a tool deferral rewrite one message (17,073 bytes).
+The host keys the deferral's `ChangeID` on a hash of the message it read, in
+`context-guru/proxy/accountant_envelope.go` (`messageOps`). When the mark moves, the deferral reads another
+message, gets another `ChangeID`, and does not replace the old one. The mark, the old deferral and the new one
+stay active, and on `main` the `sum` check reads `ops=-824 bodies=-381`: 443 bytes too many, the mark's 72 and
+the old deferral's 371. The fix ends the old deferral, then the mark. `internal/engine/causeb_test.go` holds both
+shapes: the same `ChangeID` (the mark stays) and the hashed `ChangeID`s.
+
+The unit tests in `internal/engine/stale_inplace_test.go` cover the rest of the rule. A change in a chain stays,
+also when the second operator reports spans or a wider range. Ending the last change of a chain ends every link.
+The rule does not run when a splice is in the state.
+
 ## 10. Limits of this document
 
 - **The expected figures were computed by hand** from the spec's rules and the issue text. Cases 1, 3,

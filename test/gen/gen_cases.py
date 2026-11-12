@@ -1158,6 +1158,44 @@ def c_client_rewrite_in_place_ends_replay():
           "client-edit-rewrite-in-place-ends-replay")
 
 
+# accountant#70: operator X rewrites m9 in place and is reported once. Later operator Y rewrites the same m9 from the
+# same client size, and X is never reported as ended. The forwarded item then has Y's size: not the client's (so the
+# restore check does not fire) and not X's SizeAfter. X must end, or the sum check counts both savings and fails
+# on every later request of the session.
+def c_inplace_taken_over_by_another_operator():
+    C1, F1 = M_BASE + [("m9", 8000)], M_BASE + [("m9x", 7000)]
+    C2, F2 = C1 + [("m10", 500)], M_BASE + [("m9y", 500), ("m10", 500)]
+    C3, F3 = C2 + [("m11", 500)], F2 + [("m11", 500)]
+    CX, CY = "cg:extract:7c1d", "cg:sweep:e9a4"
+    opx = rewrite("o1", "context-guru.extract", "messages", 9, 8000, 7000, CX)
+    opy = rewrite("o2", "context-guru.extract_llm_sweep", "messages", 9, 8000, 500, CY)
+    steps = [
+        sim(0, "r0", ([], SYS1, M_BASE), ([], SYS1, M_BASE), [], "unknown"),
+        sim(10, "r1", ([], SYS1, C1), ([], SYS1, F1), [eop(CX, saved=TT(cacheWrite5m=1000),
+            note="new content, would have been written")], "hot", add=[opx], prev=(30000, 30000),
+            boundary=P("messages", 8)),
+        # r2: the entry expired. The sweep cuts m9 from 8,000 to 500 tokens. Extract is not reported and not applied:
+        # the forwarded m9 is 500 tokens, which is neither the client's 8,000 nor extract's 7,000. Only the sweep
+        # is priced: 7,500 tokens written less than the client body would have written.
+        sim(1270, "r2", ([], SYS1, C2), ([], SYS1, F2), [eop(CY, saved=TT(cacheWrite5m=7500),
+            note="the entry expired; written again")], "cold", add=[opy]),
+        # r3: nothing is reported. The sweep is applied again and is the only change left.
+        sim(1330, "r3", ([], SYS1, C3), ([], SYS1, F3), [eop(CY, saved=TT(cacheRead=7500),
+            note="applied again; the client's prefix would be cached")], "hot", prev=(38500, 31000),
+            boundary=P("messages", 10)),
+    ]
+    write(case("inplace/taken-over-by-another-operator/cold-hot/5m",
+               "Extract shortens m9 from 8,000 to 7,000 tokens on request 1. On request 2, after the entry expired, a "
+               "sweep shortens the same m9 from 8,000 to 500 tokens, and extract is no longer applied or reported. The "
+               "forwarded m9 has the sweep's size: it is not the client's size, so the restore check does not end "
+               "extract, and it is not extract's SizeAfter. The library must end extract (accountant#70). Only the "
+               "sweep is priced, with 7,500 tokens, and no check fails. On request 3 the sweep is applied again and "
+               "is the only change in the state. Before the fix extract stayed active, the sum check counted "
+               "1,000 tokens too many, and the host booked nothing for every request of the session.",
+               ISSUES + "#70", DIMS("rewrite", "afterBStarToL", "miss-hit"), steps),
+          "inplace-taken-over-by-another-operator")
+
+
 # The host reports a compaction on a thread that has no change at all. The record exists and lists nothing.
 def c_client_compaction_before_any_change():
     C1 = M_BASE + [("m9", 500)]
@@ -3529,7 +3567,7 @@ if __name__ == "__main__":
     for old in os.listdir(OUT):  # the generator owns this directory: drop cases that no longer exist
         if old.endswith(".json"):
             os.remove(os.path.join(OUT, old))
-    for f in (ex12, ex3, ex4, ex5, ex67, ex8, shared_prefix_cases, ex9, c01, c02, c03_04, c05, c06, c07, c08, c09, c10, c11, c12, c_threads, c_client_compaction, c_client_trim_keeps_head, c_client_rewrite_in_place_ends_replay, c_client_compaction_before_any_change, c_client_tail_edit_keeps_replay, c_client_tail_compaction_ends_replay, c_client_two_compactions, c_clock, c_ttl, c_mix,
+    for f in (ex12, ex3, ex4, ex5, ex67, ex8, shared_prefix_cases, ex9, c01, c02, c03_04, c05, c06, c07, c08, c09, c10, c11, c12, c_threads, c_client_compaction, c_client_trim_keeps_head, c_client_rewrite_in_place_ends_replay, c_client_compaction_before_any_change, c_inplace_taken_over_by_another_operator, c_client_tail_edit_keeps_replay, c_client_tail_compaction_ends_replay, c_client_two_compactions, c_clock, c_ttl, c_mix,
               c14, s909, r909_system_hash, c15, c16, c17, c18, a1, a2, a3, a4_b3, b1_b2, b4, b5, c1_, c2_, c2b, c3_, c5, d2, d3, d4,
               d5, d6, e2, e345, f245, h2, h5, r9, i53, i54, i56, i55_split, i55_no_cache, i55_media_one_side, r14, r21, r20, r20b, c42, c42b, c42c, c42d, c43, i44, c49, i52_all, d60, d60_1h, d60_loaded):
         f()
