@@ -603,6 +603,15 @@ func (c *calcState) forwardPositions() {
 			}
 		}
 	}
+	// A change that ended can free the one before it in a chain, so repeat until none ends.
+	for ended := true; ended; {
+		ended = false
+		for k, it := range c.items {
+			if it.active && !it.ended && c.takenOver(k, it) {
+				it.ended, ended = true, true
+			}
+		}
+	}
 }
 
 // clientEdited says whether the client changed something at or before flat position i, compared with
@@ -634,6 +643,54 @@ func (c *calcState) restored(it *item, sp span, fp Position) bool {
 		return false
 	}
 	return c.client.Pos[ci].Bytes == c.fwd.Pos[fi].Bytes
+}
+
+// takenOver says whether another operator now shapes the item that an active in-place change edited
+// (accountant#70). The forwarded item has neither the client's size (restored ends that) nor the size the
+// change gave it, and no later operator took the change's output. The change no longer shapes the item,
+// and keeping it would count the same bytes twice in the sum check. This also frees a state that already
+// holds such a change.
+//
+// Two cases are not decided here. A change in a chain stays: an operator that rewrote the output of this
+// change has this change's SizeAfter as its SizeBefore. A change that a splice removed ends through the
+// splice (toFwd).
+func (c *calcState) takenOver(k int, it *item) bool {
+	if it.op.Kind != KindRewrite || it.op.DryRun || it.op.MessageSplice != nil || len(it.op.Spans) > 0 {
+		return false // a partial span says nothing about the whole item's size
+	}
+	sp := it.spans[0]
+	if sp.before.Bytes == 0 || sp.from != sp.to || c.insideSplice(sp.from) {
+		return false
+	}
+	fp, ok := c.toFwd(k, sp.from)
+	if !ok {
+		return false
+	}
+	fi, ok := c.fwd.flat(fp)
+	if !ok || int(c.fwd.Pos[fi].Bytes) == sp.after.Bytes {
+		return false
+	}
+	for j, o := range c.items {
+		if j == k || o.ended || o.bad != "" || o.op.Kind != KindRewrite || o.op.DryRun || o.op.MessageSplice != nil || len(o.op.Spans) > 0 {
+			continue
+		}
+		if os := o.spans[0]; os.from == sp.from && os.to == sp.to && os.before.Bytes == sp.after.Bytes {
+			return false
+		}
+	}
+	return true
+}
+
+// insideSplice says whether a non-ended splice replaced the client item at p.
+func (c *calcState) insideSplice(p Position) bool {
+	for _, j := range c.splicers {
+		it := c.items[j]
+		if sp := it.op.MessageSplice; !it.ended && it.bad == "" && !it.op.DryRun && p.Section == SectionMessages &&
+			p.Index >= sp.At && p.Index < sp.At+sp.Removed {
+			return true
+		}
+	}
+	return false
 }
 
 // insertionPoint is the flat client position where content added at p sits: the position itself, or

@@ -1661,6 +1661,14 @@ Where a question has test cases, a host that compares them with its own code mar
       the client item's size again, although the change made it smaller or larger. This is a restore
       in place. The size is compared, not the hash, because the hashes are cumulative and differ when
       another change sits earlier in the body. A `DryRun` is exempt, because it forwards the client's item by design;
+    - **another operator took the item over** (accountant#70). The forwarded item is not the client's and
+      not the size the change gave it, and no other change at that position has this change's size after
+      as its size before (a change in a chain stays). Then the change no longer shapes the item. Keeping it
+      would count the same bytes twice in the sum check, on every later request. The rule applies to a
+      change on a whole item (no spans, no splice, not a `DryRun`), and it repeats until no change ends,
+      because ending one can free the one before it in a chain. It also clears a stale change that is
+      already in a saved state. When two changes give the item the same forwarded size, the library cannot
+      tell which one ran, and both stay;
     - **for content the operator added** (a size before of zero), the client edited something before
       its position. Its position is in forwarded space, so the client body having nothing there does not
       end it.
