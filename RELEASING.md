@@ -22,9 +22,9 @@ Say in the PR title which kind a change is, so the release notes show it.
 4. Push the tag: `git push origin vX.Y.Z`.
 5. Wait for the Release workflow. It does these things:
    - It fails if the tag is not semver or the commit is not on `main`.
-   - It runs the same checks as `ci.yaml`.
+   - It runs the same checks as `ci.yaml`, for the root module and for the nested `metrics` module.
+   - It asks the Go module proxy for the tag before it creates the release. A tag that Go rejects as a version fails here, and no release is made.
    - It creates the GitHub Release with generated notes. A tag with a `-suffix` is a pre-release.
-   - It asks the Go module proxy for the tag, so hosts can resolve it at once.
 6. Bump each host: `go get github.com/rossoctl/accountant@vX.Y.Z && go mod tidy`.
    The hosts are context-guru and Cortex.
 
