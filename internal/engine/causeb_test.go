@@ -7,7 +7,7 @@ import (
 
 // accountant#70, cause B: a tail mark and a tool deferral rewrite messages[1]. On the next request the
 // deferral is reported again with the same ChangeID, and the mark is not. The re-reported deferral
-// replaces the active one, but the mark stays active.
+// replaces the active one. On main the mark stays active; with the fix it ends.
 func TestCauseBStaleTailMarkSameChangeID(t *testing.T) {
 	ts := NewTrackers()
 	client := with(msgs(3, 3000))
@@ -32,18 +32,18 @@ func TestCauseBStaleTailMarkSameChangeID(t *testing.T) {
 	r[0].run(ts)
 	noSumFailure(t, r[1].run(ts))
 	res := r[2].run(ts)
-	t.Logf("r2 checks %+v active %v", res.Checks, activeIDs(ts))
 	noSumFailure(t, res)
-	res = r[3].run(ts)
-	t.Logf("r3 checks %+v active %v", res.Checks, activeIDs(ts))
-	noSumFailure(t, res)
+	if got := activeIDs(ts); len(got) != 1 || got[0] != "cg:tooldefer:msg-rewritten" {
+		t.Fatalf("Active = %v, want only the deferral", got)
+	}
+	noSumFailure(t, r[3].run(ts))
 }
 
-// accountant#70, cause B in full. The host keys a deferral's ChangeID on a hash of the message it read
-// (context-guru proxy/accountant_envelope.go, messageOps). When the tail mark moves, the deferral reads
-// another message, gets another ChangeID, and does not replace the old one. Three changes stay active at
-// messages[1]: the mark, the old deferral and the new one. The sum check is off by 443 bytes, the
-// 72 of the mark and the 371 of the old deferral, as on the hosted proxy.
+// accountant#70, cause B in full (docs/issue_cases.md 9h). A host that keys a deferral's ChangeID on a
+// hash of the message it read gives the deferral a new ChangeID when the tail mark moves, so the new
+// one does not replace the old. Three changes stay active at messages[1]: the mark, the old deferral and
+// the new one. On main the sum check is off by 443 bytes, the 72 of the mark and the 371 of the old
+// deferral.
 func TestCauseBStaleMarkAndStaleDeferral(t *testing.T) {
 	ts := NewTrackers()
 	client := with(msgs(3, 3000))
