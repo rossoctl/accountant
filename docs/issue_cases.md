@@ -687,6 +687,21 @@ The deferral is then a shrink of `tools` positions. No new field is needed. Each
 The unit tests in `internal/engine/deferral_test.go` cover two more situations. A host that builds the forwarded
 `Body` from the wire bytes fails the `sum` check. A deferral with no `ChangeID` is not carried to the next request.
 
+## 9h. Cases from accountant#70 (an in-place change that another operator took over)
+
+Operator X shortens a message in place. Later, operator Y shortens the same message from the client's own size,
+and X is no longer applied or reported. The forwarded message has Y's size: not the client's, and not X's size
+after. X must end (design Q12). If it stays, the `sum` check counts both savings and fails on every later
+request of the session.
+
+| Case ID | What the spec requires |
+|---|---|
+| `inplace/taken-over-by-another-operator/cold-hot/5m` | Extract shortens m9 from 8,000 to 7,000 tokens (request 1). On request 2, after the entry expired, a sweep shortens m9 to 500 tokens. Only the sweep is priced (7,500 tokens written), and no check fails. On request 3 the sweep is applied again and is the only change left (7,500 tokens read). |
+
+The unit tests in `internal/engine/stale_inplace_test.go` cover the rest of the rule. A change in a chain stays,
+also when the second operator reports spans or a wider range. Ending the last change of a chain ends every link.
+The rule does not run when a splice is in the state.
+
 ## 10. Limits of this document
 
 - **The expected figures were computed by hand** from the spec's rules and the issue text. Cases 1, 3,

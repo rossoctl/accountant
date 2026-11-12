@@ -647,19 +647,22 @@ func (c *calcState) restored(it *item, sp span, fp Position) bool {
 
 // takenOver says whether another operator now shapes the item that an active in-place change edited
 // (accountant#70). The forwarded item has neither the client's size (restored ends that) nor the size the
-// change gave it, and no later operator took the change's output. The change no longer shapes the item,
-// and keeping it would count the same bytes twice in the sum check. This also frees a state that already
-// holds such a change.
+// change gave it, and no other change could have used the change's output. The change no longer shapes the
+// item, and keeping it would count the same bytes twice in the sum check. This also frees a stale change
+// that is already in a saved state.
 //
-// Two cases are not decided here. A change in a chain stays: an operator that rewrote the output of this
-// change has this change's SizeAfter as its SizeBefore. A change that a splice removed ends through the
-// splice (toFwd).
+// The rule ends a change only on proof, and keeps it when it cannot tell:
+//   - Another change whose range covers the item and whose SizeBefore is not the client's own bytes there
+//     saw an earlier operator's output, so it may have used this change's. That is a chain, and it stays.
+//     The partner can be a rewrite with spans or a wider range.
+//   - With a splice in the state, positions of the changes are in different spaces. The rule does not run.
+//   - A change with spans or a splice, or a DryRun, says nothing about the whole item's size.
 func (c *calcState) takenOver(k int, it *item) bool {
 	if it.op.Kind != KindRewrite || it.op.DryRun || it.op.MessageSplice != nil || len(it.op.Spans) > 0 {
-		return false // a partial span says nothing about the whole item's size
+		return false
 	}
 	sp := it.spans[0]
-	if sp.before.Bytes == 0 || sp.from != sp.to || c.insideSplice(sp.from) {
+	if sp.before.Bytes == 0 || c.hasSplice() {
 		return false
 	}
 	fp, ok := c.toFwd(k, sp.from)
@@ -671,26 +674,38 @@ func (c *calcState) takenOver(k int, it *item) bool {
 		return false
 	}
 	for j, o := range c.items {
-		if j == k || o.ended || o.bad != "" || o.op.Kind != KindRewrite || o.op.DryRun || o.op.MessageSplice != nil || len(o.op.Spans) > 0 {
+		if j == k || o.ended || o.bad != "" || o.op.Kind != KindRewrite || o.op.DryRun {
 			continue
 		}
-		if os := o.spans[0]; os.from == sp.from && os.to == sp.to && os.before.Bytes == sp.after.Bytes {
-			return false
+		for _, os := range o.spans {
+			if os.from.Section == sp.from.Section && os.from.Index <= sp.from.Index && sp.from.Index <= os.to.Index &&
+				!c.sawClientBytes(os) {
+				return false // it measured another operator's output: a chain
+			}
 		}
 	}
 	return true
 }
 
-// insideSplice says whether a non-ended splice replaced the client item at p.
-func (c *calcState) insideSplice(p Position) bool {
+// hasSplice says whether a change that is not ended replaced a range of messages.
+func (c *calcState) hasSplice() bool {
 	for _, j := range c.splicers {
-		it := c.items[j]
-		if sp := it.op.MessageSplice; !it.ended && it.bad == "" && !it.op.DryRun && p.Section == SectionMessages &&
-			p.Index >= sp.At && p.Index < sp.At+sp.Removed {
+		if it := c.items[j]; !it.ended && it.bad == "" && !it.op.DryRun {
 			return true
 		}
 	}
 	return false
+}
+
+// sawClientBytes says whether the span measured the client's own bytes over its range. It says no when
+// the sizes cannot be compared, so a caller that wants proof keeps the change.
+func (c *calcState) sawClientBytes(sp span) bool {
+	f, ok1 := c.client.flat(sp.from)
+	t, ok2 := c.client.flat(sp.to)
+	if !ok1 || !ok2 || t < f {
+		return false
+	}
+	return sp.before.Bytes == c.client.cumBytes(t)-c.client.cumBytes(f-1)
 }
 
 // insertionPoint is the flat client position where content added at p sits: the position itself, or
