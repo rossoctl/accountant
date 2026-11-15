@@ -169,12 +169,11 @@ func (b Body) cumOpaque(i int) int {
 	return n
 }
 
-// opaqueBytesPerToken is the fixed price of opaque bytes (a thinking signature): about one token for
-// each 250 bytes. The provider bills them as few tokens. On older Claude models they cost nothing, and
-// newer ones bill the thinking the signature holds. On measured traffic any price from 0 to 0.04 tokens
-// a byte gives the same text ratio. The price is the same as
-// the media price, and it is above 0 on purpose: a price of 0 would give the text the tokens of the
-// thinking, and so raise every saving. A doubtful figure may only lower a saving (§4.2 rule 7).
+// opaqueBytesPerToken is the fixed price of opaque bytes (a thinking signature): one token for each
+// 250 bytes, the media price. It is a fallback, not a measurement (design D15). Older Claude models strip
+// signatures and bill 0 tokens. Newer ones bill the thinking a signature holds, maybe 0.04 to 0.08 tokens
+// a byte. A price above 0 that cannot fail a check removes the large error in the text ratio. A host
+// count for each thinking block is the next step (design Q16).
 const opaqueBytesPerToken = 250
 
 // ratio converts forwarded text bytes to tokens with the request's own ratio (§5.3). The bytes and
