@@ -37,15 +37,16 @@ type wireBody struct {
 }
 
 type wirePos struct {
-	Hash  string `json:"hash"`
-	Bytes int32  `json:"bytes"`
-	Media int32  `json:"media,omitempty"`
+	Hash   string `json:"hash"`
+	Bytes  int32  `json:"bytes"`
+	Media  int32  `json:"media,omitempty"`
+	Opaque int32  `json:"opaque,omitempty"`
 }
 
 func toWireBody(b Body) wireBody {
 	w := wireBody{Start: b.Start, Pos: make([]wirePos, len(b.Pos))}
 	for i, p := range b.Pos {
-		w.Pos[i] = wirePos{Hash: strconv.FormatUint(p.Hash, 10), Bytes: p.Bytes, Media: p.Media}
+		w.Pos[i] = wirePos{Hash: strconv.FormatUint(p.Hash, 10), Bytes: p.Bytes, Media: p.Media, Opaque: p.Opaque}
 	}
 	return w
 }
@@ -60,7 +61,7 @@ func fromWireBody(w wireBody) (Body, error) {
 		if err != nil {
 			return Body{}, err
 		}
-		b.Pos[i] = PosHash{Hash: h, Bytes: p.Bytes, Media: p.Media}
+		b.Pos[i] = PosHash{Hash: h, Bytes: p.Bytes, Media: p.Media, Opaque: p.Opaque}
 	}
 	b.buildPrefix()
 	return b, nil

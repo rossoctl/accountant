@@ -36,6 +36,8 @@ type Body struct {
 	cum []int
 	// cumMed[i+1] is the media bytes of positions 0..i, each clamped to 0..Bytes. Built with cum.
 	cumMed []int
+	// cumOpq[i+1] is the opaque bytes of positions 0..i, each clamped to 0..Bytes-Media. Built with cum.
+	cumOpq []int
 }
 
 // PosHash holds hashes and sizes only (R2).
@@ -45,6 +47,10 @@ type PosHash struct {
 	// Media is the part of Bytes that is a base64 image or document block. NewBody finds it. The
 	// token ratio leaves it out (§4.2 rule 7). It is not in the hash.
 	Media int32 `json:"media,omitempty"`
+	// Opaque is the part of Bytes that is an opaque string the client sends back and the provider
+	// bills as few tokens: a thinking signature. NewBody finds it. The token ratio leaves it out, and it
+	// has a fixed price of 1 token for each 250 bytes (§4.2 rule 7). It is not in the hash.
+	Opaque int32 `json:"opaque,omitempty"`
 }
 
 // Breakpoint is a cache breakpoint in a body.
@@ -65,7 +71,7 @@ func NewBody(tools, system, messages [][]byte) Body {
 				h = (h ^ uint64(c)) * 1099511628211
 			}
 			h = (h ^ 0xff) * 1099511628211 // position separator
-			b.Pos = append(b.Pos, PosHash{Hash: h, Bytes: clamp32(len(p)), Media: clamp32(mediaBytes(p))})
+			b.Pos = append(b.Pos, PosHash{Hash: h, Bytes: clamp32(len(p)), Media: clamp32(mediaBytes(p)), Opaque: clamp32(opaqueBytes(p))})
 		}
 	}
 	b.buildPrefix()
@@ -196,6 +202,90 @@ func escapeMightSpellMarker(p []byte) bool {
 		}
 		off = i + 6
 	}
+}
+
+// opaqueBytes counts the opaque strings in one position (R2: it keeps only the count). Two forms
+// count, both from the Anthropic Messages API (also Claude on Bedrock and Vertex):
+//   - a "thinking" block: the length of its "signature" string;
+//   - a "redacted_thinking" block: the length of its "data" string.
+//
+// The provider bills these strings as few tokens, so they stay out of the text ratio. The
+// thinking text itself is text. Other providers' opaque fields (OpenAI "encrypted_content", Gemini
+// "thoughtSignature") are not counted until their billing is known. A position that is not valid
+// JSON counts what was read before the error.
+func opaqueBytes(p []byte) int {
+	if !mightHoldOpaque(p) {
+		return 0
+	}
+	dec := json.NewDecoder(bytes.NewReader(p))
+	n := 0
+	for {
+		if _, ok := walkOpaque(dec, &n); !ok {
+			return n
+		}
+	}
+}
+
+// mightHoldOpaque is a byte-level pre-filter for opaqueBytes. It returns false only when the exact
+// count is 0. Every count needs the key "signature" or the value "redacted_thinking". An escape could
+// hide either one, so an escape that could spell an ASCII letter makes the answer true
+// (escapeMightSpellMarker).
+func mightHoldOpaque(p []byte) bool {
+	return bytes.Contains(p, []byte(`"signature"`)) || bytes.Contains(p, []byte(`"redacted_thinking"`)) ||
+		escapeMightSpellMarker(p)
+}
+
+// walkOpaque reads one JSON value and adds the opaque bytes it holds to *n. It returns the value
+// when it is a string. false means the input ended or is not valid JSON.
+func walkOpaque(dec *json.Decoder, n *int) (str string, ok bool) {
+	tok, err := dec.Token()
+	if err != nil {
+		return "", false
+	}
+	switch v := tok.(type) {
+	case string:
+		return v, true
+	case json.Delim:
+		if v == '[' {
+			for dec.More() {
+				if _, ok := walkOpaque(dec, n); !ok {
+					return "", false
+				}
+			}
+			_, err := dec.Token()
+			return "", err == nil
+		}
+		var typ, sig, data string
+		for dec.More() {
+			kt, err := dec.Token()
+			if err != nil {
+				return "", false
+			}
+			key, _ := kt.(string)
+			child, ok := walkOpaque(dec, n)
+			if !ok {
+				return "", false
+			}
+			switch key {
+			case "type":
+				typ = child
+			case "signature":
+				sig = child
+			case "data":
+				data = child
+			}
+		}
+		if _, err := dec.Token(); err != nil {
+			return "", false
+		}
+		switch typ {
+		case "thinking":
+			*n += len(sig)
+		case "redacted_thinking":
+			*n += len(data)
+		}
+	}
+	return "", true
 }
 
 // valueInfo is what a parent needs to know about one parsed value.
