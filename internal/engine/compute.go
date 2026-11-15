@@ -588,8 +588,10 @@ func (c *calcState) forwardPositions() {
 		for _, sp := range it.spans {
 			if sp.before.Bytes == 0 {
 				// Content the operator added: its position is in forwarded space, and the client body has
-				// nothing there. It ends only when the client edited what precedes it (§4.3).
-				if c.clientEdited(c.insertionPoint(sp.from) - 1) {
+				// nothing there. It ends only when the client edited what precedes it (§4.3). That item is
+				// measured in the previous client body: when the client removed it, the new body has no
+				// item there to compare (accountant#70, case A).
+				if c.clientEdited(c.prevInsertionPoint(sp.from) - 1) {
 					it.ended = true
 				}
 			} else if i, ok := c.client.flat(sp.from); !ok || c.clientEdited(i) {
@@ -708,14 +710,25 @@ func (c *calcState) sawClientBytes(sp span) bool {
 	return sp.before.Bytes == c.client.cumBytes(t)-c.client.cumBytes(f-1)
 }
 
-// insertionPoint is the flat client position where content added at p sits: the position itself, or
-// the end of its section when the client body has fewer items there.
-func (c *calcState) insertionPoint(p Position) int {
+// insertionPoint is the flat position in client body b where content added at p sits: the position itself,
+// or the end of its section when b has fewer items there.
+func insertionPoint(b Body, p Position) int {
 	s := sectionIndex(p.Section)
 	if s < 0 {
 		return 0
 	}
-	return min(c.client.Start[s]+max(p.Index, 0), c.client.sectionEnd(s))
+	return min(b.Start[s]+max(p.Index, 0), b.sectionEnd(s))
+}
+
+// prevInsertionPoint is the insertion point in the previous request's client body. The client items before
+// it are the ones the added content followed there. clientFD is a flat index that both bodies share up to
+// the first difference, so it can be compared with this point. Without a previous body it is the point in
+// the current client body.
+func (c *calcState) prevInsertionPoint(p Position) int {
+	if c.s.PrevPrint == nil {
+		return insertionPoint(c.client, p)
+	}
+	return insertionPoint(c.s.PrevPrint.Client, p)
 }
 
 // toFwdSkipping is toFwd without item k's own splice. Content that k inserted is already at its
