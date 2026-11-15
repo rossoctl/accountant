@@ -588,10 +588,13 @@ func (c *calcState) forwardPositions() {
 		for _, sp := range it.spans {
 			if sp.before.Bytes == 0 {
 				// Content the operator added: its position is in forwarded space, and the client body has
-				// nothing there. It ends only when the client edited what precedes it (§4.3). That item is
-				// measured in the previous client body: when the client removed it, the new body has no
-				// item there to compare (accountant#70, case A).
-				if c.clientEdited(c.prevInsertionPoint(sp.from) - 1) {
+				// nothing there. It ends only when the client edited what precedes it (design Q12, §4.3). That
+				// item is measured in the previous client body: when the client removed it, the new body has no
+				// item there to compare (accountant#70, case A). The position counts the content added before it
+				// in its section, which the client body does not have. In the first position of a section the
+				// item before it is the last one of the section before, and that one precedes it in the
+				// provider's order too, so an edit there ends the change.
+				if c.clientEdited(c.prevInsertionPoint(c.clientSide(sp.from)) - 1) {
 					it.ended = true
 				}
 			} else if i, ok := c.client.flat(sp.from); !ok || c.clientEdited(i) {
@@ -718,6 +721,27 @@ func insertionPoint(b Body, p Position) int {
 		return 0
 	}
 	return min(b.Start[s]+max(p.Index, 0), b.sectionEnd(s))
+}
+
+// clientSide takes out of an added content's forwarded position the items that other changes added before
+// it in the same section. The messages section is not mapped here: its positions go through the splices.
+func (c *calcState) clientSide(p Position) Position {
+	if p.Section == SectionMessages {
+		return p
+	}
+	n := 0
+	for _, it := range c.items {
+		if it.op.Kind != KindRewrite || it.op.DryRun || it.bad != "" {
+			continue
+		}
+		for _, sp := range it.spans {
+			if sp.before.Bytes == 0 && sp.from.Section == p.Section && sp.from.Index < p.Index {
+				n++
+			}
+		}
+	}
+	p.Index -= n
+	return p
 }
 
 // prevInsertionPoint is the insertion point in the previous request's client body. The client items before

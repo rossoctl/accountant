@@ -7,7 +7,7 @@ import (
 
 // accountant#70, repro case A: the host adds two tool declarations after the client's 7. On the next request
 // the client sends no tools. The client removed what precedes the added declarations, so both changes end
-// (§4.3). On main they stayed active, and the sum check failed by -1285 bytes (340 + 945) on every later
+// (design Q12). On main they stayed active, and the sum check failed by -1285 bytes (340 + 945) on every later
 // request of the thread.
 func TestAddedToolsEndWhenTheClientDropsItsTools(t *testing.T) {
 	ts := NewTrackers()
@@ -34,7 +34,7 @@ func TestAddedToolsEndWhenTheClientDropsItsTools(t *testing.T) {
 }
 
 // The client removes only its last tool, the one just before the added declaration. That is an edit of what
-// precedes the added content, so the change ends (§4.3). On main the end rule measured the insertion point in
+// precedes the added content, so the change ends (design Q12). On main the end rule measured the insertion point in
 // the new, shorter section and missed the edit.
 func TestAnAddedToolEndsWhenTheClientRemovesTheToolBeforeIt(t *testing.T) {
 	ts := NewTrackers()
@@ -69,5 +69,29 @@ func TestAnAddedToolStaysWhenTheClientAppendsATool(t *testing.T) {
 	noSumFailure(t, res)
 	if got := activeIDs(ts); len(got) != 1 {
 		t.Fatalf("Active = %v, want the added declaration", got)
+	}
+}
+
+// The added declaration's position is in forwarded space. With another added declaration before it in the
+// same section, the same index is one further along in the client body. The client edits the tool after the
+// one the declaration followed, so nothing before the declaration changed and the change stays.
+func TestAnAddedToolStaysWhenTheClientEditsAfterItWithAnotherAddedBefore(t *testing.T) {
+	ts := NewTrackers()
+	tools := msgs(5, 1000) // c0..c4
+	system := []blk{b("s0", 2000)}
+	ms := []blk{b("m0", 5000), b("m1", 5000)}
+	x := rewrite("x", "context-guru.expand", "cg:expand:decl-x", tool(2), 0, 300)
+	y := rewrite("y", "context-guru.expand", "cg:expand:decl-y", tool(4), 0, 400)
+	fwd := func(c3 blk) []blk { // c0 c1 X c2 Y c3 c4
+		return []blk{tools[0], tools[1], b("x", 300), tools[2], b("y", 400), c3, tools[4]}
+	}
+	noSumFailure(t, req{at: t0, client: mk(tools, system, ms), clientBPs: bps5(sys(0), msg(1)), facts: exact5m,
+		ops: []Operation{x, y}, fwd: mk(fwd(tools[3]), system, ms), usage: Usage{CacheWrite: 3500}}.run(ts))
+	edited := []blk{tools[0], tools[1], tools[2], b("e3", 1000), tools[4]}
+	res := req{at: t0.Add(10 * time.Second), client: mk(edited, system, ms), clientBPs: bps5(sys(0), msg(1)),
+		facts: exact5m, fwd: mk(fwd(b("e3", 1000)), system, ms), usage: Usage{CacheWrite: 3500}}.run(ts)
+	noSumFailure(t, res)
+	if got := activeIDs(ts); len(got) != 2 {
+		t.Fatalf("Active = %v, want both added declarations", got)
 	}
 }
