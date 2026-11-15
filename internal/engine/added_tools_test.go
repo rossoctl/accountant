@@ -95,3 +95,27 @@ func TestAnAddedToolStaysWhenTheClientEditsAfterItWithAnotherAddedBefore(t *test
 		t.Fatalf("Active = %v, want both added declarations", got)
 	}
 }
+
+// One change adds two declarations as a single span, and another change adds one after them. The client
+// edits a tool after the one the second change followed, so both changes stay. The span counts as two items.
+func TestAnAddedToolStaysWhenTheClientEditsAfterItWithASpanBefore(t *testing.T) {
+	ts := NewTrackers()
+	tools := msgs(5, 1000) // c0..c4
+	system := []blk{b("s0", 2000)}
+	ms := []blk{b("m0", 5000), b("m1", 5000)}
+	x := rewrite("x", "context-guru.expand", "cg:expand:decl-x", tool(2), 0, 700)
+	x.Spans = []Span{{Section: SectionTools, From: 2, To: 3, SizeAfter: Size{Bytes: 700}}}
+	y := rewrite("y", "context-guru.expand", "cg:expand:decl-y", tool(5), 0, 400)
+	fwd := func(c3 blk) []blk { // c0 c1 X1 X2 c2 Y c3 c4
+		return []blk{tools[0], tools[1], b("x1", 350), b("x2", 350), tools[2], b("y", 400), c3, tools[4]}
+	}
+	noSumFailure(t, req{at: t0, client: mk(tools, system, ms), clientBPs: bps5(sys(0), msg(1)), facts: exact5m,
+		ops: []Operation{x, y}, fwd: mk(fwd(tools[3]), system, ms), usage: Usage{CacheWrite: 3500}}.run(ts))
+	edited := []blk{tools[0], tools[1], tools[2], b("e3", 1000), tools[4]}
+	res := req{at: t0.Add(10 * time.Second), client: mk(edited, system, ms), clientBPs: bps5(sys(0), msg(1)),
+		facts: exact5m, fwd: mk(fwd(b("e3", 1000)), system, ms), usage: Usage{CacheWrite: 3500}}.run(ts)
+	noSumFailure(t, res)
+	if got := activeIDs(ts); len(got) != 2 {
+		t.Fatalf("Active = %v, want both added declarations", got)
+	}
+}

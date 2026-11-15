@@ -736,7 +736,7 @@ func (c *calcState) clientSide(p Position) Position {
 		}
 		for _, sp := range it.spans {
 			if sp.before.Bytes == 0 && sp.from.Section == p.Section && sp.from.Index < p.Index {
-				n++
+				n += min(sp.to.Index, p.Index-1) - sp.from.Index + 1 // a span can add several items
 			}
 		}
 	}
