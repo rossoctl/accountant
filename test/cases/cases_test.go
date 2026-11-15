@@ -89,7 +89,7 @@ func checkStep(t *testing.T, c Case, i int, s Step) {
 	// states the media_tokens check has a bill below the library price of its media: the library cut
 	// the media to the bill (design §6.5, check 11), so the fixture price does not apply to it.
 	billed := s.Usage.Input + s.Usage.CacheRead + s.Usage.CacheWrite
-	if fwd := Tokens(s.End.Forwarded); billed != fwd && !slices.Contains(s.Expected.Checks, "media_tokens") {
+	if fwd := Tokens(s.End.Forwarded); billed != fwd && !billNotInBody(s.Expected.Checks) {
 		at("billed %d tokens but the forwarded body holds %d (fixtures use 4 bytes/token)", billed, fwd)
 	}
 	// The baseline is the client body's tokens.
@@ -98,7 +98,7 @@ func checkStep(t *testing.T, c Case, i int, s Step) {
 		return
 	}
 	b := *s.Expected.BaselineUsage
-	if client := Tokens(s.Begin.Client); b.Input+b.CacheRead+b.CacheWrite != client && !slices.Contains(s.Expected.Checks, "media_tokens") {
+	if client := Tokens(s.Begin.Client); b.Input+b.CacheRead+b.CacheWrite != client && !billNotInBody(s.Expected.Checks) {
 		at("baseline %d tokens but the client body holds %d", b.Input+b.CacheRead+b.CacheWrite, client)
 	}
 
@@ -320,7 +320,7 @@ func roundDoc(picos int64) int64 {
 func TestClientSizeFollowsFromResult(t *testing.T) {
 	for _, c := range All() {
 		for i, s := range c.Steps {
-			if s.IsStandalone() || slices.Contains(s.Expected.Checks, "conservation") || slices.Contains(s.Expected.Checks, "media_tokens") {
+			if s.IsStandalone() || slices.Contains(s.Expected.Checks, "conservation") || billNotInBody(s.Expected.Checks) {
 				continue
 			}
 			var saved, caused int
@@ -406,4 +406,13 @@ func compareCompaction(t *testing.T, i int, want *ExpectedCompaction, got *accou
 	case want != nil && (got.Trigger != want.Trigger || !slices.Equal(got.Ended, want.Ended)):
 		t.Errorf("step %d: compaction %+v, want %+v", i, *got, *want)
 	}
+}
+
+// billNotInBody says whether a step states a check that means the bill is not the fixture price of the
+// body: media_tokens (the bill is below the media price), media_unseen (media with no bytes in the body)
+// or ratio_range (the tokens are out of range for the bytes).
+func billNotInBody(checks []string) bool {
+	return slices.ContainsFunc(checks, func(c string) bool {
+		return c == "media_tokens" || c == "media_unseen" || c == "ratio_range"
+	})
 }

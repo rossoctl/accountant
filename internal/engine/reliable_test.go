@@ -13,7 +13,7 @@ import (
 func TestEveryCheckHasAFatalClass(t *testing.T) {
 	want := map[string]bool{
 		CheckSum: true, CheckUniqueChange: true, CheckSpans: true,
-		CheckConservation: false, CheckSharedWarm: false, CheckBadUsage: false, CheckRatioRange: false,
+		CheckConservation: false, CheckSharedWarm: false, CheckBadUsage: false, CheckRatioRange: false, CheckMediaUnseen: false,
 		CheckBreakpoints: false, CheckMediaTokens: false, CheckSizeTokens: false, CheckSizeRange: false,
 	}
 	// The map above must cover every Check constant of result.go, so a new check cannot be non-fatal
@@ -42,7 +42,7 @@ func TestEveryCheckHasAFatalClass(t *testing.T) {
 				case *ast.BasicLit:
 					val = strings.Trim(x.Value, `"`)
 				case *ast.Ident: // CheckBadUsage = ReasonBadUsage: the value is the reason's
-					val = map[string]string{"ReasonBadUsage": CheckBadUsage, "ReasonRatioRange": CheckRatioRange,
+					val = map[string]string{"ReasonBadUsage": CheckBadUsage, "ReasonRatioRange": CheckRatioRange, "ReasonMediaUnseen": CheckMediaUnseen,
 						"ReasonBreakpoints": CheckBreakpoints, "ReasonMediaTokens": CheckMediaTokens,
 						"ReasonSizeRange": CheckSizeRange}[x.Name]
 				}

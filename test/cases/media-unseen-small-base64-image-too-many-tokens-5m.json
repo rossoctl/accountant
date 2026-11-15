@@ -1,0 +1,148 @@
+{
+ "id": "media/unseen-small-base64-image-too-many-tokens/5m",
+ "description": "One request: a small base64 image, 1,000 bytes, priced at 4 tokens. Forwarded text = 2,000 + 2,000 = 4,000 bytes. The bill is 12,000 tokens: 3.0 tokens a text byte, above the limit 2.0. The block has bytes, and they are priced at 1 token for 250 bytes. The bill is not explained by media, so the check ratio_range fails and nothing is priced. The reason is the same as before the fix.",
+ "source": "issue_cases.md#accountant-70",
+ "dims": {
+  "kind": "rewrite",
+  "position": "media",
+  "cache": "unknown",
+  "ttl": "5m",
+  "lifetime": "exact",
+  "media": "unseen-small-base64-image"
+ },
+ "rates": "fixture-v1",
+ "steps": [
+  {
+   "begin": {
+    "meta": {
+     "requestId": "r0",
+     "session": "s1",
+     "model": "agent-model",
+     "at": "2026-03-02T09:00:00Z",
+     "billing": {
+      "mode": "api"
+     }
+    },
+    "client": {
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "pos": [
+      {
+       "hash": 625792648282977192,
+       "bytes": 2000
+      },
+      {
+       "hash": 17956178250200053669,
+       "bytes": 1000,
+       "media": 1000,
+       "unseen": 0
+      },
+      {
+       "hash": 11100004509484968826,
+       "bytes": 8000
+      }
+     ]
+    },
+    "clientBreakpoints": [
+     {
+      "pos": {
+       "section": "messages",
+       "index": 2
+      },
+      "ttl": "5m"
+     }
+    ]
+   },
+   "add": [
+    {
+     "id": "o1",
+     "kind": "rewrite",
+     "operator": "context-guru.cmdfilter",
+     "at": {
+      "section": "messages",
+      "index": 2
+     },
+     "sizeBefore": {
+      "bytes": 8000
+     },
+     "sizeAfter": {
+      "bytes": 2000
+     },
+     "changeId": "cg:cmdfilter:c70d-small-base64-image"
+    }
+   ],
+   "end": {
+    "thread": {
+     "id": "main"
+    },
+    "forwarded": {
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "pos": [
+      {
+       "hash": 625792648282977192,
+       "bytes": 2000
+      },
+      {
+       "hash": 17956178250200053669,
+       "bytes": 1000,
+       "media": 1000,
+       "unseen": 0
+      },
+      {
+       "hash": 11100004509484968826,
+       "bytes": 2000
+      }
+     ]
+    },
+    "breakpoints": [
+     {
+      "pos": {
+       "section": "messages",
+       "index": 2
+      },
+      "ttl": "5m"
+     }
+    ],
+    "facts": {
+     "ttl": "5m",
+     "lifetime": "exact"
+    }
+   },
+   "usage": {
+    "input": 0,
+    "cacheRead": 0,
+    "cacheWrite": 12000,
+    "cacheWrite1h": 0
+   },
+   "expected": {
+    "phase": "unknown",
+    "baselineUsage": {
+     "input": 0,
+     "cacheRead": 0,
+     "cacheWrite": 12000,
+     "cacheWrite1h": 0
+    },
+    "ops": [],
+    "unpriced": [
+     {
+      "opId": "o1",
+      "reason": "ratio_range"
+     },
+     {
+      "reason": "penalty_unknown"
+     }
+    ],
+    "checks": [
+     "ratio_range"
+    ]
+   }
+  }
+ ]
+}

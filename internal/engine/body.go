@@ -29,6 +29,15 @@ func (b Body) sectionEnd(i int) int {
 	return len(b.Pos)
 }
 
+// unseen is the number of media blocks in b whose tokens the bytes do not show (PosHash.Unseen).
+func (b Body) unseen() int {
+	n := 0
+	for _, p := range b.Pos {
+		n += int(p.Unseen)
+	}
+	return n
+}
+
 // flat returns the flat index of p, and false when p is not in the body.
 func (b Body) flat(p Position) (int, bool) {
 	s := sectionIndex(p.Section)

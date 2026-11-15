@@ -710,6 +710,25 @@ The unit tests in `internal/engine/stale_inplace_test.go` cover the rest of the 
 also when the second operator reports spans or a wider range. Ending the last change of a chain ends every link.
 The rule does not run when a splice is in the state.
 
+## 9i. Cases from accountant#70 (case D: media with no bytes)
+
+A body can hold an image by url, an image by file id, or a PDF. Such a block has no payload bytes. The provider
+bills it tokens all the same. The bill is then too high for the text bytes, and check 9 fails. Before the fix, the
+reason was `ratio_range`, which says the bill is wrong. The bill was right. The host marks these blocks in
+`PosHash.Unseen`. The library then fails `media_unseen`, and prices nothing, as before.
+
+Each case has one request. Forwarded text is 4,000 bytes. The bill is 12,000 tokens: 3.0 tokens a text byte, above 2.0.
+
+| Case ID | What the spec requires |
+|---|---|
+| `media/unseen-url-image-too-many-tokens/5m` | An image by url. Check and reason: `media_unseen`. |
+| `media/unseen-file-id-image-too-many-tokens/5m` | An image by file id. Check and reason: `media_unseen`. |
+| `media/unseen-pdf-page-too-many-tokens/5m` | A PDF page, billed by page. Check and reason: `media_unseen`. |
+| `media/unseen-small-base64-image-too-many-tokens/5m` | A small base64 image (1,000 bytes, 4 tokens). Its bytes are in the body, so the bill is not explained. Check and reason stay `ratio_range`. |
+
+The exit for a host that knows the real count is `Size.Tokens` on the sizes of the range. The unit tests are in
+`internal/engine/media_unseen_test.go`.
+
 ## 10. Limits of this document
 
 - **The expected figures were computed by hand** from the spec's rules and the issue text. Cases 1, 3,

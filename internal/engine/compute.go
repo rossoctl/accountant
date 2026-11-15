@@ -19,6 +19,7 @@ const (
 	ReasonNotSpend          = "not_spend"       // a standalone RequestOps holds only spend operations (§6.1)
 	ReasonBadUsage          = "bad_usage"       // a usage count is negative: nothing is priced (§6.5, check 8)
 	ReasonRatioRange        = "ratio_range"     // tokens per byte is outside the range: nothing is priced (§6.5, check 9)
+	ReasonMediaUnseen       = "media_unseen"    // tokens per byte is too high and the body holds media that its bytes do not price: nothing is priced (§6.5, check 9)
 	ReasonMediaTokens       = "media_tokens"    // the operation covers media, and the bill is below the media price: only this operation is unpriced (§6.5, check 11)
 	ReasonBreakpoints       = "breakpoints"     // more than 4 breakpoints, or an unknown TTL: nothing is priced (§6.5, check 10)
 	ReasonSizeRange         = "size_range"      // an operation reports more bytes than the client body holds: that operation is not priced (§6.5, check 13)
@@ -1648,6 +1649,9 @@ func (c *calcState) validate(u Usage) string {
 	case badUsage(u):
 		return ReasonBadUsage
 	case c.badRatio():
+		if c.ratioTooHigh() && c.fwd.unseen() > 0 {
+			return ReasonMediaUnseen // the extra tokens may be that media: say so, not that the usage is wrong
+		}
 		return ReasonRatioRange
 	case c.badBreakpoints():
 		return ReasonBreakpoints
@@ -1673,6 +1677,12 @@ func (c *calcState) badRatio() bool {
 		return true
 	}
 	return t < minTokensPerByte*n || t > maxTokensPerByte*n
+}
+
+// ratioTooHigh says whether the text carries more than 2.0 tokens a byte (the upper limit of check 9).
+func (c *calcState) ratioTooHigh() bool {
+	n := float64(c.ratio.bytes)
+	return n > 0 && float64(c.ratio.tokens) > maxTokensPerByte*n
 }
 
 // badBreakpoints says whether the forwarded body has more than 4 breakpoints, or any breakpoint
@@ -1711,6 +1721,9 @@ func (c *calcState) checkUsage(res *Result) {
 	}
 	detail := fmt.Sprintf("usage=%d/%d/%d/%d breakpoints=%d forwarded bytes=%d", c.usage.Input, c.usage.CacheRead,
 		c.usage.CacheWrite, c.usage.CacheWrite1h, len(c.r.breakpoints), c.ratio.bytes)
+	if c.invalid == ReasonMediaUnseen {
+		detail += fmt.Sprintf(" unseen media blocks=%d: their tokens are not in the bytes", c.fwd.unseen())
+	}
 	res.Checks = append(res.Checks, CheckFailure{Check: c.invalid, Detail: detail})
 }
 
