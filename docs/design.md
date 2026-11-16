@@ -309,7 +309,10 @@ and can be reported as unpriced ([R19](spec.md#r19)).
      fail a check. A host that builds a `Body` itself sets `PosHash.Opaque`. A host marks opaque bytes inside a
      `Size` with `Size.OpaqueBytes`. When a size marks neither media nor opaque bytes, the library takes both from
      the body, as for media: the size's bytes beyond the range's text go to the media first, then to the opaque
-     bytes. When a size marks either one, the library uses both marks as they are.
+     bytes. Each mark a size sets wins for its own kind, and a kind it leaves at 0 comes from the body: the
+     size's bytes beyond the range's text and beyond the host's mark, clamped to what the body holds of that kind.
+     So a host that marks only `MediaBytes`, as hosts did before `OpaqueBytes`, still gets the opaque price for a
+     signature in the range, and the size agrees with check 6, which takes the opaque bytes from the body.
    - **The host may pass tokens.** If a host knows the tokens of a range (a tokenizer, or a
      count_tokens call), it sets `Size.Tokens`. The library uses them as they are, and does not mark
      that size `Estimated`. `Tokens` 0 means not measured, and the bytes are converted.

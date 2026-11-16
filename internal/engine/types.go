@@ -172,7 +172,7 @@ type Size struct {
 // invalid says whether a size cannot be real: a negative figure, or more media and opaque bytes than
 // bytes.
 func (s Size) invalid() bool {
-	return s.Bytes < 0 || s.Tokens < 0 || s.MediaBytes < 0 || s.OpaqueBytes < 0 || s.MediaBytes+s.OpaqueBytes > s.Bytes
+	return s.Bytes < 0 || s.Tokens < 0 || s.MediaBytes < 0 || s.OpaqueBytes < 0 || s.MediaBytes > s.Bytes || s.OpaqueBytes > s.Bytes-s.MediaBytes
 }
 
 // MessageSplice describes a change to the message list.

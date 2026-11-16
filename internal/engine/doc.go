@@ -16,7 +16,8 @@
 //     those are used as they are and are not Estimated. The ratio is the billed prompt tokens
 //     (input + cache read + cache write) divided by the bytes of the forwarded body, because the
 //     billed tokens bill the forwarded body (§5.3). Base64 media (PosHash.Media, Size.MediaBytes)
-//     is left out of the ratio and priced at a fixed 250 bytes a token. Every priced rewrite that
+//     and opaque bytes such as thinking signatures (PosHash.Opaque, Size.OpaqueBytes) are left out
+//     of the ratio and priced at a fixed 250 bytes a token. Every priced rewrite that
 //     converts bytes and every effect that uses the ratio is Estimated.
 //  2. No usage. A response with no usage prices nothing (§8): every operation goes to Unpriced
 //     with ReasonNoUsage. The fixed fallback ratio of §4.2 rule 7 is not used.

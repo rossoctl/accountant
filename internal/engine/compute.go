@@ -441,16 +441,38 @@ func plausible(s Size, nt nonText) bool {
 // nonText is the media and the opaque bytes of a range: the bytes the text ratio does not price.
 type nonText struct{ media, opaque int }
 
-// rangeMedia is the media and opaque bytes a size covers. The host's MediaBytes and OpaqueBytes win:
-// when the host marks either one, the library uses both as they are. When it marks neither, they
-// come from the body that holds the range: the client body for a "before" size, and the forwarded
-// body, over the range mapped by toFwd, for an "after" size. They are the size's bytes beyond the
-// range's text: the media first, clamped to 0..media, then the opaque bytes, clamped to 0..opaque.
-// Without this an unmarked size over an image would price its base64 at the text ratio.
+// rangeMedia is the media and opaque bytes a size covers. Each mark the host sets (MediaBytes,
+// OpaqueBytes) wins for its own kind. A kind the host leaves at 0 comes from the body that holds the
+// range: the client body for a "before" size, and the forwarded body, over the range mapped by toFwd,
+// for an "after" size. The body's part is the size's bytes beyond the range's text and beyond the
+// host's mark: with no mark, the media first, clamped to 0..media, then the opaque bytes, clamped to
+// 0..opaque. So a host that marks only its media, as hosts did before OpaqueBytes, still gets the
+// opaque price for a signature in the range, and the conservation check (which takes the opaque bytes
+// from the body) agrees with the size. Without this an unmarked size over an image would price its
+// base64 at the text ratio.
 func (c *calcState) rangeMedia(k int, s Size, sp span, isBefore bool) nonText {
-	if s.MediaBytes > 0 || s.OpaqueBytes > 0 || s.Bytes == 0 {
-		return nonText{s.MediaBytes, s.OpaqueBytes}
+	host := nonText{s.MediaBytes, s.OpaqueBytes}
+	if (s.MediaBytes > 0 && s.OpaqueBytes > 0) || s.Bytes == 0 {
+		return host
 	}
+	media, opaque, text, ok := c.rangeBody(k, sp, isBefore)
+	if !ok {
+		return host
+	}
+	switch {
+	case s.MediaBytes > 0:
+		return nonText{s.MediaBytes, min(max(s.Bytes-text-s.MediaBytes, 0), opaque)}
+	case s.OpaqueBytes > 0:
+		return nonText{min(max(s.Bytes-text-s.OpaqueBytes, 0), media), s.OpaqueBytes}
+	}
+	extra := max(s.Bytes-text, 0)
+	m := min(extra, media)
+	return nonText{m, min(extra-m, opaque)}
+}
+
+// rangeBody is the media, opaque and text bytes of a range in the body that holds it (see
+// rangeMedia). ok is false when the range does not map onto that body.
+func (c *calcState) rangeBody(k int, sp span, isBefore bool) (media, opaque, text int, ok bool) {
 	body, from, to := c.client, sp.from, sp.to
 	if !isBefore {
 		body = c.fwd
@@ -463,20 +485,18 @@ func (c *calcState) rangeMedia(k int, s Size, sp span, isBefore bool) nonText {
 			to, ok2 = c.toFwd(k, sp.to)
 		}
 		if !ok1 || !ok2 {
-			return nonText{}
+			return 0, 0, 0, false
 		}
 	}
 	f, ok1 := body.flat(from)
 	t, ok2 := body.flat(to)
 	if !ok1 || !ok2 || t < f {
-		return nonText{}
+		return 0, 0, 0, false
 	}
-	media := body.cumMedia(t) - body.cumMedia(f-1)
-	opaque := body.cumOpaque(t) - body.cumOpaque(f-1)
-	text := body.cumBytes(t) - body.cumBytes(f-1) - media - opaque
-	extra := max(s.Bytes-text, 0)
-	m := min(extra, media)
-	return nonText{m, min(extra-m, opaque)}
+	media = body.cumMedia(t) - body.cumMedia(f-1)
+	opaque = body.cumOpaque(t) - body.cumOpaque(f-1)
+	text = body.cumBytes(t) - body.cumBytes(f-1) - media - opaque
+	return media, opaque, text, true
 }
 
 // sizeTokens converts one reported size to tokens. A plausible size the host counted (Tokens > 0) is

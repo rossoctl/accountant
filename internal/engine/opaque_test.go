@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"math"
 	"strings"
 	"testing"
 )
@@ -24,8 +25,8 @@ func TestOpaqueShapesAreDetected(t *testing.T) {
 		{"thinking in a message", `{"role":"assistant","content":[{"type":"thinking","thinking":"hm","signature":"` + s + `"}]}`, 25000},
 		{"redacted thinking", `{"type":"redacted_thinking","data":"` + s + `"}`, 25000},
 		{"two blocks", `[{"type":"thinking","signature":"` + s + `"},{"type":"redacted_thinking","data":"` + s + `"}]`, 50000},
-		{"escaped key", `{"type":"thinking","signature":"` + s + `"}`, 25000},
-		{"escaped type", `{"type":"thinking","signature":"` + s + `"}`, 25000},
+		{"escaped key", `{"type":"thinking","\u0073ignature":"` + s + `"}`, 25000},
+		{"escaped type", `{"type":"redacted\u005fthinking","data":"` + s + `"}`, 25000},
 		{"signature outside a thinking block", `{"type":"tool_use","input":{"signature":"` + s + `"}}`, 0},
 		{"data outside a redacted block", `{"type":"text","data":"` + s + `"}`, 0},
 		{"text that quotes the words", `{"type":"text","text":"\"signature\" and redacted_thinking"}`, 0},
@@ -97,7 +98,7 @@ func TestSignatureBytesStayOutOfTheRatio(t *testing.T) {
 
 // A removal of a whole thinking block saves its text at the ratio and its signature at the opaque
 // price (25,000 / 250 = 100 tokens). A host that marks OpaqueBytes gets the same figure.
-func TestRemovedSignatureCostsNoToken(t *testing.T) {
+func TestRemovedSignatureCostsTheOpaquePrice(t *testing.T) {
 	think := thinkingBlock("t", 25000)
 	marker := []byte(`{"role":"assistant","content":[{"type":"text","text":"ok"}]}`)
 	client := [][]byte{text("m0", 80000), think, text("m2", 20000)}
@@ -117,9 +118,49 @@ func TestRemovedSignatureCostsNoToken(t *testing.T) {
 	}
 }
 
+// A size that marks only one kind of non-text bytes gets the other kind from the body. A host built
+// before OpaqueBytes marks only its media; before this rule the signature in its range was priced at
+// the text ratio, and the saving was about 40 times too high. Each way to mark the size books the
+// same saving.
+func TestSizeWithOneMarkTakesTheOtherFromTheBody(t *testing.T) {
+	sig := `{"type":"thinking","thinking":"t","signature":"` + strings.Repeat("S", 25000) + `"}`
+	mixed := []byte(`{"role":"user","content":[` + string(imageBlock(25000)) + `,` + sig + `]}`)
+	marker := []byte(`{"role":"user","content":[{"type":"text","text":"[removed]"}]}`)
+	client := [][]byte{text("m0", 80000), mixed, text("m2", 20000)}
+	fwd := [][]byte{text("m0", 80000), marker, text("m2", 20000)}
+	fb := NewBody(nil, nil, fwd)
+	billed := fb.cumBytes(2) * 2 / 5 // the forwarded body holds no media and no signature
+	sizes := []Size{
+		{Bytes: len(mixed)},
+		{Bytes: len(mixed), MediaBytes: 25000},
+		{Bytes: len(mixed), OpaqueBytes: 25000},
+		{Bytes: len(mixed), MediaBytes: 25000, OpaqueBytes: 25000},
+	}
+	want := -1
+	for _, before := range sizes {
+		op := Operation{ID: "o1", Kind: KindRewrite, Operator: "strip", ChangeID: "c", At: msg(1),
+			SizeBefore: before, SizeAfter: Size{Bytes: len(marker)}}
+		res := priceBP(client, fwd, op, billed)
+		noChecks(t, res)
+		got := tierSum(findOp(t, res, "o1").Saved)
+		if want < 0 {
+			want = got
+		}
+		if got != want {
+			t.Fatalf("before %+v: saved = %d, want %d (the same as an unmarked size)", before, got, want)
+		}
+	}
+	if want > 1000 {
+		t.Fatalf("saved = %d: the media and the signature must not be priced at the text ratio", want)
+	}
+}
+
 func TestSizeWithTooManyNonTextBytesIsInvalid(t *testing.T) {
 	if !(Size{Bytes: 10, MediaBytes: 6, OpaqueBytes: 5}).invalid() || !(Size{Bytes: 10, OpaqueBytes: -1}).invalid() {
 		t.Fatal("media + opaque above Bytes, or a negative opaque count, must be invalid")
+	}
+	if !(Size{Bytes: 10, MediaBytes: math.MaxInt, OpaqueBytes: math.MaxInt}).invalid() {
+		t.Fatal("media + opaque that wraps past MaxInt must be invalid")
 	}
 	if (Size{Bytes: 10, MediaBytes: 5, OpaqueBytes: 5}).invalid() {
 		t.Fatal("media + opaque equal to Bytes is valid")

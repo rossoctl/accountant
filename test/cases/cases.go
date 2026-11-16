@@ -247,7 +247,11 @@ func SectionTokens(b accountant.Body) (tools, system, messages int) {
 	for i, p := range b.Pos {
 		// The text is 4 bytes a token. Base64 media and opaque bytes are 1 token for each 250 bytes
 		// (design §4.2 rule 7).
-		t := (int(p.Bytes)-int(p.Media)-int(p.Opaque))/4 + int(p.Media)/250 + int(p.Opaque)/250
+		// Media and opaque are clamped as the library clamps them, so a host fixture with too many
+		// non-text bytes never gives a negative text part.
+		m := min(max(int(p.Media), 0), int(p.Bytes))
+		o := min(max(int(p.Opaque), 0), int(p.Bytes)-m)
+		t := (int(p.Bytes)-m-o)/4 + m/250 + o/250
 		switch {
 		case i < b.Start[1]:
 			tools += t
