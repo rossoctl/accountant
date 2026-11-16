@@ -58,6 +58,7 @@ and §6 the `R` numbers are written bare, to keep the comments short; they are t
 | <a id="d12"></a>D12 | Where does the thread ID come from? | **From the engine's `internal/thread`, in both hosts**, carried on the request. The host keeps one fingerprint per thread, keyed by `thread.Key`, and compares each request with its own thread's previous request (wiring document, W5.2). |
 | <a id="d13"></a>D13 | How does the model serve a subscription user? | **The library does not change.** It already returns tokens for each tier (D3). The request carries a `Billing` fact. The host converts tokens to dollars for an API user, and to usage-limit units for a subscription user, with an API-equivalent dollar figure beside it, marked as such (§7.1). |
 | <a id="d14"></a>D14 | Is `Compute` stateful? | **The library is stateful. `Compute` is deterministic.** A context operator reports a change once, on the first request. `Compute` applies it again on later requests until it ends, so a result depends on earlier requests. The state is a `ThreadState`, kept by the Tracker, one for each thread. `Compute` is a method of the request record. The record takes a copy of the `ThreadState` in `EndRequest`, because the thread is known only after the plugins ran (§6.1). As its last step `Compute` replaces the thread's `ThreadState` with the new one, so the host has nothing to commit and cannot forget to. A failure or a panic leaves the old `ThreadState` (see [§4.6, a request that does not reach `Compute`](#46-replays-who-remembers-past-changes)). Two requests of one thread at the same time (a retry, parallel calls of one agent) are safe: the replace is guarded by the `Version` of the `ThreadState` (optimistic locking, [R53](spec.md#r53), §6.1). `Preview` does the same calculation and stores nothing (it can differ from `Compute` only for a fork's first request, if the parent's state moved in between, [R26](spec.md#r26)), for pricing an old request again and for a look that must not move the thread forward. A second `Compute` of the same request prices against the state the first call stored (the result is usually phase `hot`), so a host must not call `Compute` again to retry after a transient error; it calls `Preview`. A test case is a sequence of requests. Rejected alternatives are listed below the table. What the state holds is open (§11, question 11). How a change ends is decided (§11, question 12). |
+| <a id="d15"></a>D15 | How are thinking signatures priced? | **As opaque bytes, apart from the text ratio, at a fixed 1 token for 250 bytes, as a fallback** (accountant#73). A signature is a long sealed string that the client sends back in every later request. It is about 20% of the message bytes on Claude Code traffic. Older Claude models strip it and bill 0 tokens. Opus 4.5+ and Sonnet 4.6+ decrypt it and bill the thinking it holds, as input; the docs give no figure per byte. **The real price is not known.** Two samples of Claude Code traffic suggest 0.04 to 0.08 tokens a byte: R is 0.41 to 0.42 with signatures left out, and 0.394 to 0.396 in conversations with no thinking blocks. The samples are small and different, so the gap can be noise. **What the fallback does:** it removes the large error (R about 20% too low). It does not fix the small one. If the real price is 0.04 to 0.08, the fallback is 10 to 20 times too low, R comes out up to about 5% too high, and a removal of text books up to about 5% too much. A removal of a thinking block then books 10 to 20 times too little. **Why this price:** it is the media price, and it is above 0. **Why not media:** the media price can be cut to the bill and fail `media_tokens` (check 11). A signature must not fail that check or make an operation unpriced. **Scope:** only the Anthropic fields (`thinking.signature`, `redacted_thinking.data`). **Next:** the host gives each thinking block its own token count (§11, question 16). |
 
 **D14, rejected alternatives.**
 
@@ -180,9 +181,10 @@ type SettingChange struct {
 
 // Size is the bytes of a range, and optionally its tokens (§4.2 rule 7).
 type Size struct {
-    Bytes      int // required on rewrite; the sum check compares it with the Body sizes (§6.5)
-    Tokens     int // the host's count; 0 = not measured, so the library converts Bytes and marks it Estimated
-    MediaBytes int // the base64 part of Bytes; priced at a fixed 250 bytes a token, apart from the text ratio
+    Bytes       int // required on rewrite; the sum check compares it with the Body sizes (§6.5)
+    Tokens      int // the host's count; 0 = not measured, so the library converts Bytes and marks it Estimated
+    MediaBytes  int // the base64 part of Bytes; priced at a fixed 250 bytes a token, apart from the text ratio
+    OpaqueBytes int // the opaque part of Bytes (a thinking signature); priced at a fixed 250 bytes a token, apart from the text ratio
 }
 
 type MessageSplice struct{ At, Removed, Inserted int } // messages only
@@ -288,7 +290,7 @@ and can be reported as unpriced ([R19](spec.md#r19)).
    cache write). The provider bills the forwarded body, so the ratio is taken on it. If the request has no usage, the library uses a fixed fallback ratio. The library
    marks every priced result that uses this conversion as `Estimated`. No operator names a tokenizer,
    so two operators give the same tokens for the same bytes.
-   Two exceptions keep the ratio true (accountant#11):
+   Three exceptions keep the ratio true (accountant#11, accountant#73):
    - **Base64 media stays out of the ratio.** `NewBody` first skips, by a byte scan, a position that cannot hold media (no `base64` in any case, no `\u` escape that could spell a marker, none of the Gemini, audio or Bedrock key pairs); the count is the same as a full parse. It parses each remaining position and counts the `data`
      of an image or document block whose source has `type: base64`, and the payload of a `data:...;base64,` URL
      (OpenAI form), in `PosHash.Media`. It also counts the `data` string of a Gemini `inlineData` or `inline_data` object and of an OpenAI `input_audio` object, and the `source.bytes` string of a Bedrock Converse `image` or `document` block. The `data:` prefix and the `;base64,` marker match without regard to case (RFC 2045). Text that only quotes "base64" is not media. `Media` above `Bytes` is capped. The ratio uses the text bytes only, over the billed tokens
@@ -296,6 +298,21 @@ and can be reported as unpriced ([R19](spec.md#r19)).
      `Body` itself sets `PosHash.Media`. A host marks media inside a `Size` with `Size.MediaBytes`. If a size does not mark it, the library takes the
      media of the range from the client body for a before-size and from the forwarded body, over the mapped range, for an after-size (the size's bytes beyond the range's text), so an unmarked cut of an image
      message is not priced at the text ratio.
+   - **Opaque bytes stay out of the ratio** (D15, accountant#73). `NewBody` counts the `signature` string of a
+     `thinking` block and the `data` string of a `redacted_thinking` block (Anthropic Messages, also Claude on
+     Bedrock and Vertex) in `PosHash.Opaque`. A byte scan first skips a position with no `"signature"`, no
+     `"redacted_thinking"` and no `\u` escape that could spell either. A `signature` key outside a `thinking`
+     block is text. The thinking text is text. `Opaque` is capped at `Bytes - Media`. The ratio uses the text
+     bytes only, over the billed tokens less the media price and the opaque price. Opaque bytes are priced at a
+     fixed 1 token for 250 bytes. The opaque price never takes the bill below the media price plus the least the
+     text can cost: if it would, it is cut to what is left. So opaque bytes never cut the media price and never
+     fail a check. A host that builds a `Body` itself sets `PosHash.Opaque`. A host marks opaque bytes inside a
+     `Size` with `Size.OpaqueBytes`. When a size marks neither media nor opaque bytes, the library takes both from
+     the body, as for media: the size's bytes beyond the range's text go to the media first, then to the opaque
+     bytes. Each mark a size sets wins for its own kind, and a kind it leaves at 0 comes from the body: the
+     size's bytes beyond the range's text and beyond the host's mark, clamped to what the body holds of that kind.
+     So a host that marks only `MediaBytes`, as hosts did before `OpaqueBytes`, still gets the opaque price for a
+     signature in the range, and the size agrees with check 6, which takes the opaque bytes from the body.
    - **The host may pass tokens.** If a host knows the tokens of a range (a tokenizer, or a
      count_tokens call), it sets `Size.Tokens`. The library uses them as they are, and does not mark
      that size `Estimated`. `Tokens` 0 means not measured, and the bytes are converted.
@@ -873,9 +890,10 @@ type Body struct {
 }
 
 type PosHash struct {
-    Hash  uint64 // cumulative: equal hashes mean an equal prefix up to this position
-    Bytes int32
-    Media int32 // the base64 image/document part of Bytes (Anthropic source blocks and data URLs); not in the hash
+    Hash   uint64 // cumulative: equal hashes mean an equal prefix up to this position
+    Bytes  int32
+    Media  int32 // the base64 image/document part of Bytes (Anthropic source blocks and data URLs); not in the hash
+    Opaque int32 // the opaque part of Bytes (thinking signatures, D15); not in the hash
     Unseen int32 // media blocks that hold no bytes but are billed tokens: an image by url or file id, a PDF; not in the hash
 }
 ```
@@ -891,7 +909,7 @@ The fingerprint itself is built inside `Compute`. `Cached` comes from the usage,
 after the response, so no earlier call can build it. `Compute` keeps the result in
 `ThreadState.PrevPrint` for the next request.
 
-`PosHash` is 16 bytes in memory (8 for the hash, 4 for the size, 4 for the media size). It holds hashes and sizes only ([R2](spec.md#r2)).
+`PosHash` is 24 bytes in memory (8 for the hash, 4 for the size, 4 for the media size, 4 for the opaque size, and 4 of padding). It holds hashes and sizes only ([R2](spec.md#r2)).
 
 ### 5.2 Classifying a break
 
@@ -1497,8 +1515,8 @@ check, the operator, the detail, and the request, session and thread IDs). `Prev
    there `Output` must not be negative or above the cap, and `CostUSD` must not be negative, NaN or infinite. A spend
    whose `Call` fails goes to `Unpriced` with `bad_usage` (its other figures are not changed), also in `ComputeStandalone`.
    A valid `Call` is passed on as the host sent it.
-9. **Ratio range:** the tokens per forwarded text byte, `(Input + CacheRead + CacheWrite - media price) / (bytes - media bytes)`,
-   is from 0.05 to 2.0. When the bill is below the media price, the media price is first cut to the bill (check 11), so this check does not fail for that reason. Base64 media bytes are not in the denominator, and the media price (1 token per 250 bytes) is not in the numerator.
+9. **Ratio range:** the tokens per forwarded text byte, `(Input + CacheRead + CacheWrite - media price - opaque price) / (bytes - media bytes - opaque bytes)`,
+   is from 0.05 to 2.0. When the bill is below the media price, the media price is first cut to the bill (check 11), so this check does not fail for that reason. Base64 media bytes and opaque bytes are not in the denominator, and their prices (1 token per 250 bytes each; the opaque price cut so that the text keeps at least 0.05 tokens a byte, D15) are not in the numerator.
    If it is outside that range, the usage does not fit the body, and the check `ratio_range` fails. If the ratio is too high and the forwarded body holds media with no bytes (`PosHash.Unseen` above 0, §4.2 rule 7), the check `media_unseen` fails in its place (a body with no text bytes and tokens above the media price counts as too high): the tokens of that media are in the bill and not in the bytes. A ratio of 0
    (a body with text bytes and no billed prompt token) and an infinite ratio (billed tokens and an empty body) are outside
    the range too. A body of media only has no text bytes: it passes only when the bill is at most the media price (a smaller bill is cut, check 11). A bill above it fails this check, because the extra tokens fit no content. Without this
@@ -1721,6 +1739,23 @@ Where a question has test cases, a host that compares them with its own code mar
 - <a id="q15"></a>**Q15. Re-pricing with `Preview`.** `Preview` prices a request from the current `ThreadState`. To price
     an old request again it needs the state the thread had then (§4.6), which the Tracker does not
     keep. Open: whether `Preview` takes a stored `ThreadState`, or is only for the current request.
+
+- <a id="q16"></a>**Q16. Opaque bytes of other providers, and the real signature price** (accountant#73, D15). The library
+    counts only the Anthropic fields. Others need a measured bill first:
+    - OpenAI Responses `encrypted_content` (and xAI): the docs do not say how a sent-back item is billed.
+      GPT-5.6 keeps earlier reasoning by default.
+    - Gemini `thoughtSignature`: Google says it adds input tokens, but gives no tokens per byte.
+    - Bedrock Converse `reasoningContent` signature: not documented.
+    - `reasoning_content` (DeepSeek, Kimi, GLM, Qwen, Mistral) is plain text, not opaque. A provider ignores it
+      or bills it as input, depending on the model and a flag.
+
+    The signature price (1 token for 250 bytes) is a fallback, not a measurement (D15). A better input: the
+    host gives each thinking block its own token count. Anthropic reports `usage.output_tokens_details.thinking_tokens`
+    on the response that made the block. The host keys the count by a hash of the signature and passes it when the
+    block comes back. One response with several blocks has one count, so the host splits it by signature length.
+    Open: whether the input bill of a sent-back block equals its `thinking_tokens` (the count includes delimiter
+    tokens). To measure, send one conversation twice, with and without one earlier thinking block, and compare
+    the input totals with that block's `thinking_tokens`.
 
 ### Provider profile (`EntryFacts.Provider`, accountant#33)
 

@@ -3593,6 +3593,41 @@ def d60_loaded():
                 DIMS("rewrite", "tools", "unknown-hit-miss", spans="true"), [s0, s1, s2])
 
 
+
+# accountant#73: thinking signatures are opaque bytes. They stay out of the text ratio and have a fixed
+# price of 1 token for each 250 bytes (design §4.2 rule 7), as media does.
+OPAQUE_PER_TOKEN = 250
+
+
+def c73():
+    # A thinking signature of 25,000 bytes (100 tokens at the opaque price) beside text. Text: 1,000 + 2,000
+    # tokens in the client body; the operator cuts m2 to 500. The signature is 20% of the forwarded bytes.
+    SF = "cg:sweep:c73"
+    C = [("m0", 1000), ("think", 0), ("m2", 2000)]
+    F = [("m0", 1000), ("think", 0), ("m2", 500)]
+
+    def obody(msgs):
+        b = body([], [], msgs)
+        b["pos"][1]["bytes"] += 25000
+        b["pos"][1]["opaque"] = 25000
+        return b
+
+    op = rewrite("o1", "context-guru.sweep", "messages", 2, 2000, 500, SF)
+    billed = 1000 + 25000 // OPAQUE_PER_TOKEN + 500
+    e = expect("unknown", U(write=1000 + 25000 // OPAQUE_PER_TOKEN + 2000), [eop(SF, saved=TT(cacheWrite5m=1500))],
+               unpriced=[{"reason": "penalty_unknown"}])
+    cbp = [{"pos": P("messages", 2), "ttl": "5m"}]
+    s0 = step(0, "r0", obody(C), obody(F), cbp, cbp, [op], U(write=billed), e)
+    write_review("opaque/thinking-signature-beside-text/5m", 73,
+                 "One request. Message 1 holds a thinking signature of 25,000 bytes. The provider bills a signature as few "
+                 "tokens, so the library prices it at 1 token for 250 bytes: 100 tokens. The client body holds 1,000 + 2,000 "
+                 "text tokens and the signature. The operator cuts m2 from 2,000 to 500 tokens. The forwarded body is billed "
+                 "1,000 + 100 + 500 = 1,600 tokens. The text ratio leaves the signature out: (1,600 - 100) tokens over "
+                 "(4,000 + 2,000) forwarded text bytes = 0.25 tokens a byte. The cut removes 6,000 bytes: 6,000 x 0.25 = "
+                 "1,500 tokens saved, at the cache write tier. If the signature were counted as text, the ratio would be "
+                 "1,600 / 31,000 = 0.052 and the saving 309 tokens.",
+                 DIMS("rewrite", "opaque", "unknown", opaque="beside-text"), [s0])
+
 if __name__ == "__main__":
     os.makedirs(OUT, exist_ok=True)
     for old in os.listdir(OUT):  # the generator owns this directory: drop cases that no longer exist
@@ -3600,5 +3635,5 @@ if __name__ == "__main__":
             os.remove(os.path.join(OUT, old))
     for f in (ex12, ex3, ex4, ex5, ex67, ex8, shared_prefix_cases, ex9, c01, c02, c03_04, c05, c06, c07, c08, c09, c10, c11, c12, c_threads, c_client_compaction, c_client_trim_keeps_head, c_client_rewrite_in_place_ends_replay, c_client_compaction_before_any_change, c_inplace_taken_over_by_another_operator, c_client_tail_edit_keeps_replay, c_client_tail_compaction_ends_replay, c_client_two_compactions, c_clock, c_ttl, c_mix,
               c14, s909, r909_system_hash, c15, c16, c17, c18, a1, a2, a3, a4_b3, b1_b2, b4, b5, c1_, c2_, c2b, c3_, c5, d2, d3, d4,
-              d5, d6, e2, e345, f245, h2, h5, r9, i53, i54, i56, i55_split, i55_no_cache, i55_media_one_side, r14, r21, r20, r20b, c42, c42b, c42c, c42d, c70d, c43, i44, c49, i52_all, d60, d60_1h, d60_loaded):
+              d5, d6, e2, e345, f245, h2, h5, r9, i53, i54, i56, i55_split, i55_no_cache, i55_media_one_side, r14, r21, r20, r20b, c42, c42b, c42c, c42d, c70d, c43, c73, i44, c49, i52_all, d60, d60_1h, d60_loaded):
         f()

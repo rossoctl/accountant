@@ -429,24 +429,51 @@ func apply(p Position, s *MessageSplice, into bool) (Position, bool) {
 	return p, into
 }
 
-// plausible says whether host tokens fit the bytes of the range. media is the range's media bytes.
-func plausible(s Size, media int) bool {
-	text := s.Bytes - media
+// plausible says whether host tokens fit the bytes of the range. nt is the range's media and opaque
+// bytes.
+func plausible(s Size, nt nonText) bool {
+	text := s.Bytes - nt.media - nt.opaque
 	if float64(s.Tokens) > maxTokensPerByte*float64(s.Bytes) {
 		return false
 	}
 	return text <= 0 || float64(s.Tokens) >= minTokensPerByte*float64(text)
 }
 
-// rangeMedia is the media bytes a size covers. The host's MediaBytes wins. When it is 0, the media
-// comes from the body that holds the range: the client body for a "before" size, and the forwarded
-// body, over the range mapped by toFwd, for an "after" size. The media is the size's bytes beyond the
-// range's text, clamped to 0..media. Without this an unmarked size over an image would price its
+// nonText is the media and the opaque bytes of a range: the bytes the text ratio does not price.
+type nonText struct{ media, opaque int }
+
+// rangeMedia is the media and opaque bytes a size covers. Each mark the host sets (MediaBytes,
+// OpaqueBytes) wins for its own kind. A kind the host leaves at 0 comes from the body that holds the
+// range: the client body for a "before" size, and the forwarded body, over the range mapped by toFwd,
+// for an "after" size. The body's part is the size's bytes beyond the range's text and beyond the
+// host's mark: with no mark, the media first, clamped to 0..media, then the opaque bytes, clamped to
+// 0..opaque. So a host that marks only its media, as hosts did before OpaqueBytes, still gets the
+// opaque price for a signature in the range, and the conservation check (which takes the opaque bytes
+// from the body) agrees with the size. Without this an unmarked size over an image would price its
 // base64 at the text ratio.
-func (c *calcState) rangeMedia(k int, s Size, sp span, isBefore bool) int {
-	if s.MediaBytes > 0 || s.Bytes == 0 {
-		return s.MediaBytes
+func (c *calcState) rangeMedia(k int, s Size, sp span, isBefore bool) nonText {
+	host := nonText{s.MediaBytes, s.OpaqueBytes}
+	if (s.MediaBytes > 0 && s.OpaqueBytes > 0) || s.Bytes == 0 {
+		return host
 	}
+	media, opaque, text, ok := c.rangeBody(k, sp, isBefore)
+	if !ok {
+		return host
+	}
+	switch {
+	case s.MediaBytes > 0:
+		return nonText{s.MediaBytes, min(max(s.Bytes-text-s.MediaBytes, 0), opaque)}
+	case s.OpaqueBytes > 0:
+		return nonText{min(max(s.Bytes-text-s.OpaqueBytes, 0), media), s.OpaqueBytes}
+	}
+	extra := max(s.Bytes-text, 0)
+	m := min(extra, media)
+	return nonText{m, min(extra-m, opaque)}
+}
+
+// rangeBody is the media, opaque and text bytes of a range in the body that holds it (see
+// rangeMedia). ok is false when the range does not map onto that body.
+func (c *calcState) rangeBody(k int, sp span, isBefore bool) (media, opaque, text int, ok bool) {
 	body, from, to := c.client, sp.from, sp.to
 	if !isBefore {
 		body = c.fwd
@@ -459,31 +486,32 @@ func (c *calcState) rangeMedia(k int, s Size, sp span, isBefore bool) int {
 			to, ok2 = c.toFwd(k, sp.to)
 		}
 		if !ok1 || !ok2 {
-			return 0
+			return 0, 0, 0, false
 		}
 	}
 	f, ok1 := body.flat(from)
 	t, ok2 := body.flat(to)
 	if !ok1 || !ok2 || t < f {
-		return 0
+		return 0, 0, 0, false
 	}
-	media := body.cumMedia(t) - body.cumMedia(f-1)
-	text := body.cumBytes(t) - body.cumBytes(f-1) - media
-	return min(max(s.Bytes-text, 0), media)
+	media = body.cumMedia(t) - body.cumMedia(f-1)
+	opaque = body.cumOpaque(t) - body.cumOpaque(f-1)
+	text = body.cumBytes(t) - body.cumBytes(f-1) - media - opaque
+	return media, opaque, text, true
 }
 
 // sizeTokens converts one reported size to tokens. A plausible size the host counted (Tokens > 0) is
 // exact. Any other size is converted from its bytes with the request ratio, and so is an estimate. A
 // size of zero bytes is exactly zero tokens (§4.2 rule 7). bad is true when the host's tokens were
 // ignored as implausible.
-func (c *calcState) sizeTokens(s Size, media int) (tokens int, exact, bad bool) {
+func (c *calcState) sizeTokens(s Size, nt nonText) (tokens int, exact, bad bool) {
 	if s.Tokens > 0 {
-		if plausible(s, media) {
+		if plausible(s, nt) {
 			return s.Tokens, true, false
 		}
 		bad = true
 	}
-	return c.ratio.tokensOf(s.Bytes, media), s.Bytes == 0, bad
+	return c.ratio.sizeOf(s.Bytes, nt), s.Bytes == 0, bad
 }
 
 // calcState is the working state of one calculation.
@@ -1430,12 +1458,13 @@ func (c *calcState) premiums() (ttl, mark *CacheEffect) {
 		return nil, nil
 	}
 	lo := c.readEnd
-	type acc struct{ bytes, media, first, last int }
+	type acc struct{ bytes, media, opaque, first, last int }
 	var in5, in1, up acc // input -> 5m, input -> 1h, 5m -> 1h
 	in5.first, in1.first, up.first = -1, -1, -1
-	add := func(a *acc, i, b, m int) {
+	add := func(a *acc, i, b, m, o int) {
 		a.bytes += b
 		a.media += m
+		a.opaque += o
 		if a.first < 0 {
 			a.first = i
 		}
@@ -1458,9 +1487,10 @@ func (c *calcState) premiums() (ttl, mark *CacheEffect) {
 		counted := covered && c.countedBreak != nil
 		fb, cb := c.fwd.cumBytes(i)-c.fwd.cumBytes(i-1), c.client.cumBytes(j)-c.client.cumBytes(j-1)
 		fm, cm := c.fwd.cumMedia(i)-c.fwd.cumMedia(i-1), c.client.cumMedia(j)-c.client.cumMedia(j-1)
-		b, m := min(fb, cb), min(fm, cm)
+		fo, co := c.fwd.cumOpaque(i)-c.fwd.cumOpaque(i-1), c.client.cumOpaque(j)-c.client.cumOpaque(j-1)
+		b, m, o := min(fb, cb), min(fm, cm), min(fo, co)
 		if counted { // the break priced every forwarded token here as a write, the added ones too
-			b, m = fb, fm
+			b, m, o = fb, fm, fo
 		}
 		var ct string
 		var cok bool
@@ -1479,15 +1509,16 @@ func (c *calcState) premiums() (ttl, mark *CacheEffect) {
 		switch {
 		case !cok && len(c.clientBPs) > 0:
 			if ft == "1h" {
-				add(&in1, i, b, m)
+				add(&in1, i, b, m, o)
 			} else {
-				add(&in5, i, b, m)
+				add(&in5, i, b, m, o)
 			}
 		case cok && ct != "1h" && ft == "1h":
-			add(&up, i, b, m)
+			add(&up, i, b, m, o)
 		}
 	}
-	n5, n1, t := c.ratio.tokensOf(in5.bytes, in5.media), c.ratio.tokensOf(in1.bytes, in1.media), c.ratio.tokensOf(up.bytes, up.media)
+	n5, n1, t := c.ratio.tokensOf(in5.bytes, in5.media, in5.opaque), c.ratio.tokensOf(in1.bytes, in1.media, in1.opaque),
+		c.ratio.tokensOf(up.bytes, up.media, up.opaque)
 	if cut := n5 + n1 - c.usage.CacheWrite; cut > 0 {
 		d := min(cut, n5)
 		n5 -= d
@@ -1555,7 +1586,7 @@ func (c *calcState) markPayback(res *Result) {
 			return
 		}
 	}
-	var bytes, media, first, last = 0, 0, -1, -1
+	var bytes, media, opaque, first, last = 0, 0, 0, -1, -1
 	for i := c.bstarFwd + 1; i <= min(c.readEnd, len(c.fwd.Pos)-1); i++ {
 		j := mustFlat(c.client, c.fwdToClient(c.fwd.position(i)))
 		if j < 0 || mustFlat(c.fwd, c.clientToFwd(c.client.position(j))) != i {
@@ -1566,14 +1597,16 @@ func (c *calcState) markPayback(res *Result) {
 		}
 		fb, cb := c.fwd.cumBytes(i)-c.fwd.cumBytes(i-1), c.client.cumBytes(j)-c.client.cumBytes(j-1)
 		fm, cm := c.fwd.cumMedia(i)-c.fwd.cumMedia(i-1), c.client.cumMedia(j)-c.client.cumMedia(j-1)
+		fo, co := c.fwd.cumOpaque(i)-c.fwd.cumOpaque(i-1), c.client.cumOpaque(j)-c.client.cumOpaque(j-1)
 		bytes += min(fb, cb)
 		media += min(fm, cm)
+		opaque += min(fo, co)
 		if first < 0 {
 			first = i
 		}
 		last = i
 	}
-	n := min(c.ratio.tokensOf(bytes, media), c.usage.CacheRead)
+	n := min(c.ratio.tokensOf(bytes, media, opaque), c.usage.CacheRead)
 	if n <= 0 {
 		return
 	}
@@ -1810,7 +1843,7 @@ func (c *calcState) price(res *Result) {
 				if !it.op.DryRun {
 					// what the host's tokens add to the saving beyond the ratio's figure: the
 					// conservation check compares at the ratio (check 6)
-					c.hostGap += d - (c.ratio.tokensOf(sp.before.Bytes, bm) - c.ratio.tokensOf(sp.after.Bytes, am))
+					c.hostGap += d - (c.ratio.sizeOf(sp.before.Bytes, bm) - c.ratio.sizeOf(sp.after.Bytes, am))
 				}
 				if d > 0 {
 					c.addTier(&p.Saved, c.client, false, mustFlat(c.client, sp.from), c.bstar, c.clientBPs, d)
@@ -1853,7 +1886,7 @@ func (c *calcState) mediaUnpriced(k int, it *item) bool {
 	}
 	for _, sp := range it.spans {
 		bm, am := c.rangeMedia(k, sp.before, sp, true), c.rangeMedia(k, sp.after, sp, false)
-		if bm == 0 && am == 0 {
+		if bm.media == 0 && am.media == 0 {
 			continue
 		}
 		hostCounted := sp.before.Tokens > 0 && plausible(sp.before, bm) && sp.after.Tokens > 0 && plausible(sp.after, am)
@@ -1874,7 +1907,7 @@ func (c *calcState) leaveOutOfConservation(k int, it *item) {
 	}
 	for _, sp := range it.spans {
 		bm, am := c.rangeMedia(k, sp.before, sp, true), c.rangeMedia(k, sp.after, sp, false)
-		c.mediaGap += c.ratio.tokensOf(sp.before.Bytes, bm) - c.ratio.tokensOf(sp.after.Bytes, am)
+		c.mediaGap += c.ratio.sizeOf(sp.before.Bytes, bm) - c.ratio.sizeOf(sp.after.Bytes, am)
 	}
 }
 
