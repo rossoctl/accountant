@@ -292,7 +292,7 @@ and can be reported as unpriced ([R19](spec.md#r19)).
    - **Base64 media stays out of the ratio.** `NewBody` first skips, by a byte scan, a position that cannot hold media (no `base64` in any case, no `\u` escape that could spell a marker, none of the Gemini, audio or Bedrock key pairs); the count is the same as a full parse. It parses each remaining position and counts the `data`
      of an image or document block whose source has `type: base64`, and the payload of a `data:...;base64,` URL
      (OpenAI form), in `PosHash.Media`. It also counts the `data` string of a Gemini `inlineData` or `inline_data` object and of an OpenAI `input_audio` object, and the `source.bytes` string of a Bedrock Converse `image` or `document` block. The `data:` prefix and the `;base64,` marker match without regard to case (RFC 2045). Text that only quotes "base64" is not media. `Media` above `Bytes` is capped. The ratio uses the text bytes only, over the billed tokens
-     less the media tokens. Media is priced at a fixed 1 token for 250 bytes. This is not a provider rule: Anthropic bills about width x height / 750 tokens and shrinks a large image, OpenAI bills by tile, and a PDF is billed by page. So the price is right only for a medium image, and a large image shifts the text ratio for the whole request (a 2 MB PNG that Anthropic bills at 1,600 tokens is priced at 8,000, and the text ratio then absorbs the 6,400 tokens of difference: a 10,000-token saving shows as 9,358). The library cannot know the real count from the bytes. A host that needs the exact figure sets `Size.Tokens` on the range, and the library uses it as it is. If the bill is below the media price, the library cuts the media to the bill less the least the text can cost (0.05 tokens a byte, the lower limit of check 9), and prices the text at that lowest ratio, so a text saving is the lowest the bill allows. It fails the check `media_tokens`. An operation whose range covers media goes to `Unpriced` with the reason `media_tokens`, unless the host gave `Size.Tokens` on both of its sizes. Other operations are still priced and are `Estimated`. A host that builds a
+     less the media tokens. Media is priced at a fixed 1 token for 250 bytes. This is not a provider rule: Anthropic bills about width x height / 750 tokens and shrinks a large image, OpenAI bills by tile, and a PDF is billed by page. So the price is right only for a medium image, and a large image shifts the text ratio for the whole request (a 2 MB PNG that Anthropic bills at 1,600 tokens is priced at 8,000, and the text ratio then absorbs the 6,400 tokens of difference: a 10,000-token saving shows as 9,358). The library cannot know the real count from the bytes. A host that needs the exact figure sets `Size.Tokens` on the range, and the library uses it as it is. If the bill is below the media price, the library cuts the media to the bill less the least the text can cost (0.05 tokens a byte, the lower limit of check 9), and prices the text at that lowest ratio, so a text saving is the lowest the bill allows. It fails the check `media_tokens`. An operation whose range covers media goes to `Unpriced` with the reason `media_tokens`, unless the host gave `Size.Tokens` on both of its sizes. Other operations are still priced and are `Estimated`. **Media with no bytes** (accountant#70, case D): an image by url or file id, and a PDF, hold no payload in the body. The provider still bills them (a PDF by page). Their tokens are in the bill and not in the bytes, so the ratio can rise above 2.0. `NewBody` counts these blocks in `PosHash.Unseen`: an Anthropic `image` or `document` block with a `url` or `file` source, and a `document` block with a base64 PDF; an OpenAI chat `image_url` block whose url is not a data URL, and a `file` block with a `file_id` or a PDF data URL; an OpenAI Responses `input_image` block with a url that is not a data URL or a `file_id`, and an `input_file` block with a `file_id`, a `file_url` or a PDF data URL. Gemini (`fileData`, an `inlineData` PDF) and Bedrock (an `s3Location` source) are not read, so they stay `ratio_range`. When check 9 fails with too many tokens and the forwarded body has at least one such block, the check and the reason are `media_unseen`, not `ratio_range`. The cause is known: the bytes cannot show the tokens. Nothing is priced, as for `ratio_range`. The booked figures do not change. A body with no text bytes and tokens above the media price is too high too. The name says only that such media is present: it does not check that the media can explain the whole excess, so a wrong bill on a body with one url image is also named `media_unseen`. A host that builds its own `Body` sets `PosHash.Unseen` itself; with no `Unseen`, the reason stays `ratio_range`. A host that builds a
      `Body` itself sets `PosHash.Media`. A host marks media inside a `Size` with `Size.MediaBytes`. If a size does not mark it, the library takes the
      media of the range from the client body for a before-size and from the forwarded body, over the mapped range, for an after-size (the size's bytes beyond the range's text), so an unmarked cut of an image
      message is not priced at the text ratio.
@@ -876,6 +876,7 @@ type PosHash struct {
     Hash  uint64 // cumulative: equal hashes mean an equal prefix up to this position
     Bytes int32
     Media int32 // the base64 image/document part of Bytes (Anthropic source blocks and data URLs); not in the hash
+    Unseen int32 // media blocks that hold no bytes but are billed tokens: an image by url or file id, a PDF; not in the hash
 }
 ```
 
@@ -1360,13 +1361,13 @@ type CompactionRecord struct {
 type Unpriced struct {
     OpID   string
     Reason string // "unknown_kind", "negative_size", "penalty_unknown", "ping_result_unknown", "end_request_missing",
-                  // "no_usage", "not_spend", "bad_usage", "ratio_range", "media_tokens", "breakpoints", "size_range", ...; the host adds
+                  // "no_usage", "not_spend", "bad_usage", "ratio_range", "media_unseen", "media_tokens", "breakpoints", "size_range", ...; the host adds
                   // "operator_not_allowed" from its own allow-list (wiring document, W5.1)
 }
 
 type CheckFailure struct {
     Check    string // one of the Check constants: "sum" | "unique_change" | "spans" | "conservation" |
-                    // "shared_warm" | "bad_usage" | "ratio_range" | "breakpoints" |
+                    // "shared_warm" | "bad_usage" | "ratio_range" | "media_unseen" | "breakpoints" |
                     // "media_tokens" | "size_tokens" | "size_range" (§6.5)
     Operator string // "" when the check is not about one operator
     Detail   string // numbers only, no content
@@ -1498,7 +1499,7 @@ check, the operator, the detail, and the request, session and thread IDs). `Prev
    A valid `Call` is passed on as the host sent it.
 9. **Ratio range:** the tokens per forwarded text byte, `(Input + CacheRead + CacheWrite - media price) / (bytes - media bytes)`,
    is from 0.05 to 2.0. When the bill is below the media price, the media price is first cut to the bill (check 11), so this check does not fail for that reason. Base64 media bytes are not in the denominator, and the media price (1 token per 250 bytes) is not in the numerator.
-   If it is outside that range, the usage does not fit the body, and the check `ratio_range` fails. A ratio of 0
+   If it is outside that range, the usage does not fit the body, and the check `ratio_range` fails. If the ratio is too high and the forwarded body holds media with no bytes (`PosHash.Unseen` above 0, §4.2 rule 7), the check `media_unseen` fails in its place (a body with no text bytes and tokens above the media price counts as too high): the tokens of that media are in the bill and not in the bytes. A ratio of 0
    (a body with text bytes and no billed prompt token) and an infinite ratio (billed tokens and an empty body) are outside
    the range too. A body of media only has no text bytes: it passes only when the bill is at most the media price (a smaller bill is cut, check 11). A bill above it fails this check, because the extra tokens fit no content. Without this
    check the ratio, and so the conservation check (check 6), agree with themselves for any usage.
@@ -1544,7 +1545,7 @@ check, the operator, the detail, and the request, session and thread IDs). `Prev
     position over 2 GiB does not wrap negative.
 
 If check 8, 9 or 10 fails, the library prices nothing for the request. Each operation goes to `Unpriced` with the
-reason `bad_usage`, `ratio_range` or `breakpoints` (the first check that fails, in that order), no cache effect is
+reason `bad_usage`, `ratio_range` (or `media_unseen`) or `breakpoints` (the first check that fails, in that order), no cache effect is
 added, and the cache state for the next request is unknown, as for a response with no usage (§8). The check name
 equals the reason. A check on a request with no usage is not run: that request is `no_usage`.
 
@@ -1605,7 +1606,7 @@ missing, report too little and say why.
 | `accountant.Compute` panics | The host recovers, writes no saving for the request, and increments `ops_price_panics`. The request and its spend record are unchanged. |
 | A malformed context operation (unknown kind, negative size, a size above the bounds of check 13, a spend whose `Call` has a negative or non-finite figure) | Goes to `Unpriced` with a reason (`unknown_kind`, `negative_size`, `size_range`, `bad_usage`). The other context operations are priced. |
 | A `spend` whose `Call` has no usage (a ping that timed out: the host sent it and read no response) | `Unpriced` with `ping_result_unknown`. The cost is missing, not zero, so the window must not show its rescue as a net gain. The rescue is still credited from the read on the request that follows (§4.4) |
-| Usage is negative, does not fit the body (tokens per byte outside 0.05 to 2.0), or the request has more than 4 breakpoints or an unknown TTL | Nothing is priced. Every operation goes to `Unpriced` with `bad_usage`, `ratio_range` or `breakpoints`, and a check of the same name fails (§6.5, checks 8 to 10). |
+| Usage is negative, does not fit the body (tokens per byte outside 0.05 to 2.0), or the request has more than 4 breakpoints or an unknown TTL | Nothing is priced. Every operation goes to `Unpriced` with `bad_usage`, `ratio_range` (`media_unseen` when the ratio is too high and the body holds media with no bytes) or `breakpoints`, and a check of the same name fails (§6.5, checks 8 to 10). |
 | Sum check fails | Pricing goes on. A warning is logged. The failure is counted for each plugin on `/v1/pipeline`. |
 | No previous fingerprint for the thread | `Boundary` is nil, §6.4, unless `Usage.CacheRead` proves a read (§5.2). |
 | Response has no usage | Nothing is priced, as today. The active changes are still kept (§4.6). |

@@ -45,6 +45,12 @@ type PosHash struct {
 	// Media is the part of Bytes that is a base64 image or document block. NewBody finds it. The
 	// token ratio leaves it out (§4.2 rule 7). It is not in the hash.
 	Media int32 `json:"media,omitempty"`
+	// Unseen counts the media blocks of the position whose tokens the bytes do not show: an image or a
+	// document given by url or by file id (no bytes at all), and a PDF (billed by page, not by byte).
+	// NewBody finds them. They change no price. Only the check of the token ratio reads them, to name its
+	// failure (media_unseen, §6.5 check 9). It is not in the hash, and Snapshot does not keep it: check 9
+	// reads only the forwarded body of the current request, so a restored body with Unseen 0 is enough.
+	Unseen int32 `json:"unseen,omitempty"`
 }
 
 // Breakpoint is a cache breakpoint in a body.
@@ -65,7 +71,7 @@ func NewBody(tools, system, messages [][]byte) Body {
 				h = (h ^ uint64(c)) * 1099511628211
 			}
 			h = (h ^ 0xff) * 1099511628211 // position separator
-			b.Pos = append(b.Pos, PosHash{Hash: h, Bytes: clamp32(len(p)), Media: clamp32(mediaBytes(p))})
+			b.Pos = append(b.Pos, PosHash{Hash: h, Bytes: clamp32(len(p)), Media: clamp32(mediaBytes(p)), Unseen: clamp32(unseenBlocks(p))})
 		}
 	}
 	b.buildPrefix()
@@ -334,3 +340,127 @@ func (fp *Fingerprint) modelID() string {
 	}
 	return fp.Model
 }
+
+// unseenBlocks counts the media blocks of a position whose tokens its bytes do not show (PosHash.Unseen):
+//   - an Anthropic image or document block with a "url" or "file" source;
+//   - an Anthropic document block with a base64 PDF (a PDF is billed by page);
+//   - an OpenAI chat "image_url" block whose url is not a data URL, and a "file" block with a "file_id" or a
+//     PDF data URL;
+//   - an OpenAI Responses "input_image" block with a url that is not a data URL, or a "file_id", and an
+//     "input_file" block with a "file_id", a "file_url" or a PDF data URL.
+//
+// Gemini (fileData, an inlineData PDF) and Bedrock (an s3Location source) are not read.
+//
+// Text that only quotes these words is not a block: a tool output is a string, and the detector reads
+// JSON objects only. A position that is not valid JSON counts 0. A key written with \u escapes is not
+// seen. The count only names a failed check, so a miss costs a less exact reason and no price.
+func unseenBlocks(p []byte) int {
+	if !mightHoldUnseen(p) {
+		return 0
+	}
+	var v any
+	if json.Unmarshal(p, &v) != nil {
+		return 0
+	}
+	n := 0
+	countUnseen(v, &n)
+	return n
+}
+
+// mightHoldUnseen is a byte-level pre-filter for unseenBlocks: it needs the name of a block type and a
+// word that makes it a reference or a PDF. It returns false only when unseenBlocks must count 0.
+func mightHoldUnseen(p []byte) bool {
+	hasType := false
+	for _, w := range [][]byte{[]byte(`"image"`), []byte(`"document"`), []byte(`"image_url"`),
+		[]byte(`"input_image"`), []byte(`"input_file"`), []byte(`"file"`)} {
+		if bytes.Contains(p, w) {
+			hasType = true
+			break
+		}
+	}
+	if !hasType {
+		return false
+	}
+	for _, w := range [][]byte{[]byte(`"url"`), []byte(`"image_url"`), []byte(`"file_id"`),
+		[]byte(`"file_url"`)} {
+		if bytes.Contains(p, w) {
+			return true
+		}
+	}
+	// "application/pdf" without case, as isPDFDataURL and the media_type match read it. The full MIME
+	// type, not "pdf": a large base64 payload holds "pdf" by chance and would be parsed a second time.
+	return containsFoldASCII(p, "application/pdf")
+}
+
+// containsFoldASCII is bytes.Contains without ASCII case, for a lower-case ASCII substr. It does not copy p.
+func containsFoldASCII(p []byte, substr string) bool {
+	for i := 0; i+len(substr) <= len(p); i++ {
+		j := 0
+		for ; j < len(substr); j++ {
+			c := p[i+j]
+			if 'A' <= c && c <= 'Z' {
+				c += 'a' - 'A'
+			}
+			if c != substr[j] {
+				break
+			}
+		}
+		if j == len(substr) {
+			return true
+		}
+	}
+	return false
+}
+
+func countUnseen(v any, n *int) {
+	switch x := v.(type) {
+	case map[string]any:
+		if unseenBlock(x) {
+			*n++
+		}
+		for _, e := range x {
+			countUnseen(e, n)
+		}
+	case []any:
+		for _, e := range x {
+			countUnseen(e, n)
+		}
+	}
+}
+
+// unseenBlock says whether one JSON object is a media block of the kinds in unseenBlocks.
+func unseenBlock(m map[string]any) bool {
+	str := func(v any) string { s, _ := v.(string); return s }
+	switch str(m["type"]) {
+	case "image", "document":
+		src, _ := m["source"].(map[string]any)
+		switch str(src["type"]) {
+		case "url", "file":
+			return true
+		case "base64":
+			return str(m["type"]) == "document" && hasPrefixFold(str(src["media_type"]), "application/pdf")
+		}
+	case "image_url":
+		return urlByReference(m["image_url"])
+	case "input_image":
+		return urlByReference(m["image_url"]) || str(m["file_id"]) != ""
+	case "file":
+		f, _ := m["file"].(map[string]any)
+		return str(f["file_id"]) != "" || isPDFDataURL(str(f["file_data"]))
+	case "input_file":
+		return str(m["file_id"]) != "" || str(m["file_url"]) != "" || isPDFDataURL(str(m["file_data"]))
+	}
+	return false
+}
+
+// urlByReference says whether v (a url string, or an object with a "url" string) names a place to fetch
+// the image from, and is not a data URL that holds the bytes.
+func urlByReference(v any) bool {
+	s, ok := v.(string)
+	if m, isMap := v.(map[string]any); isMap {
+		s, ok = m["url"].(string)
+	}
+	return ok && s != "" && !hasPrefixFold(s, "data:")
+}
+
+func isPDFDataURL(s string) bool { return hasPrefixFold(s, "data:application/pdf") }
