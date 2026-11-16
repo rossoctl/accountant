@@ -48,7 +48,8 @@ type PosHash struct {
 	// Unseen counts the media blocks of the position whose tokens the bytes do not show: an image or a
 	// document given by url or by file id (no bytes at all), and a PDF (billed by page, not by byte).
 	// NewBody finds them. They change no price. Only the check of the token ratio reads them, to name its
-	// failure (media_unseen, §6.5 check 9). It is not in the hash.
+	// failure (media_unseen, §6.5 check 9). It is not in the hash, and Snapshot does not keep it: check 9
+	// reads only the forwarded body of the current request, so a restored body with Unseen 0 is enough.
 	Unseen int32 `json:"unseen,omitempty"`
 }
 
@@ -348,6 +349,8 @@ func (fp *Fingerprint) modelID() string {
 //   - an OpenAI Responses "input_image" block with a url that is not a data URL, or a "file_id", and an
 //     "input_file" block with a "file_id", a "file_url" or a PDF data URL.
 //
+// Gemini (fileData, an inlineData PDF) and Bedrock (an s3Location source) are not read.
+//
 // Text that only quotes these words is not a block: a tool output is a string, and the detector reads
 // JSON objects only. A position that is not valid JSON counts 0. A key written with \u escapes is not
 // seen. The count only names a failed check, so a miss costs a less exact reason and no price.
@@ -379,8 +382,30 @@ func mightHoldUnseen(p []byte) bool {
 		return false
 	}
 	for _, w := range [][]byte{[]byte(`"url"`), []byte(`"image_url"`), []byte(`"file_id"`),
-		[]byte(`"file_url"`), []byte(`pdf`)} {
+		[]byte(`"file_url"`)} {
 		if bytes.Contains(p, w) {
+			return true
+		}
+	}
+	// "application/pdf" without case, as isPDFDataURL and the media_type match read it. The full MIME
+	// type, not "pdf": a large base64 payload holds "pdf" by chance and would be parsed a second time.
+	return containsFoldASCII(p, "application/pdf")
+}
+
+// containsFoldASCII is bytes.Contains without ASCII case, for a lower-case ASCII substr. It does not copy p.
+func containsFoldASCII(p []byte, substr string) bool {
+	for i := 0; i+len(substr) <= len(p); i++ {
+		j := 0
+		for ; j < len(substr); j++ {
+			c := p[i+j]
+			if 'A' <= c && c <= 'Z' {
+				c += 'a' - 'A'
+			}
+			if c != substr[j] {
+				break
+			}
+		}
+		if j == len(substr) {
 			return true
 		}
 	}
@@ -413,7 +438,7 @@ func unseenBlock(m map[string]any) bool {
 		case "url", "file":
 			return true
 		case "base64":
-			return str(m["type"]) == "document" && str(src["media_type"]) == "application/pdf"
+			return str(m["type"]) == "document" && hasPrefixFold(str(src["media_type"]), "application/pdf")
 		}
 	case "image_url":
 		return urlByReference(m["image_url"])

@@ -1680,9 +1680,13 @@ func (c *calcState) badRatio() bool {
 }
 
 // ratioTooHigh says whether the text carries more than 2.0 tokens a byte (the upper limit of check 9).
+// A body with no text bytes and tokens left after the media price is too high (an infinite ratio).
 func (c *calcState) ratioTooHigh() bool {
-	n := float64(c.ratio.bytes)
-	return n > 0 && float64(c.ratio.tokens) > maxTokensPerByte*n
+	t, n := float64(c.ratio.tokens), float64(c.ratio.bytes)
+	if n == 0 {
+		return t > 0
+	}
+	return t > maxTokensPerByte*n
 }
 
 // badBreakpoints says whether the forwarded body has more than 4 breakpoints, or any breakpoint

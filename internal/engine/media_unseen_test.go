@@ -22,6 +22,9 @@ func TestUnseenBlocksByShape(t *testing.T) {
 		{"anthropic document by url", `{"type":"document","source":{"type":"url","url":"https://x/y.pdf"}}`, 1},
 		{"anthropic document by file id", `{"type":"document","source":{"type":"file","file_id":"file_1"}}`, 1},
 		{"anthropic pdf page, base64", `{"type":"document","source":{"type":"base64","media_type":"application/pdf","data":"` + d + `"}}`, 1},
+		{"anthropic pdf page, upper-case media type", `{"type":"document","source":{"type":"base64","media_type":"Application/PDF","data":"` + d + `"}}`, 1},
+		{"openai chat file pdf data URL, upper case", `{"type":"file","file":{"filename":"a","file_data":"DATA:APPLICATION/PDF;base64,QUJD"}}`, 1},
+		{"base64 payload that holds pdf by chance", `{"type":"image","source":{"type":"base64","media_type":"image/png","data":"` + d + `pdf` + d + `"}}`, 0},
 		{"anthropic small jpeg, base64", `{"type":"image","source":{"type":"base64","media_type":"image/jpeg","data":"` + d + `"}}`, 0},
 		{"anthropic text document, base64", `{"type":"document","source":{"type":"base64","media_type":"text/plain","data":"` + d + `"}}`, 0},
 		{"image by url inside a tool_result", `{"type":"tool_result","tool_use_id":"a","content":[{"type":"image","source":{"type":"url","url":"https://x/y.png"}}]}`, 1},
@@ -54,11 +57,31 @@ func TestUnseenDoesNotChangeTheHashOrTheMediaBytes(t *testing.T) {
 	if b.Pos[0].Media != 100000 || b.Pos[0].Unseen != 1 {
 		t.Fatalf("Media = %d, Unseen = %d, want 100000 and 1", b.Pos[0].Media, b.Pos[0].Unseen)
 	}
-	b.Pos[0].Unseen = 0
-	same := b
-	same.Pos = append([]PosHash(nil), b.Pos...)
-	if b.Pos[0].Hash != NewBody(nil, nil, [][]byte{[]byte(pdf)}).Pos[0].Hash {
-		t.Fatal("the hash depends on the count")
+	h := uint64(14695981039346656037) // NewBody's FNV-1a over the bytes and the separator, nothing else
+	for _, c := range []byte(pdf) {
+		h = (h ^ uint64(c)) * 1099511628211
+	}
+	if h = (h ^ 0xff) * 1099511628211; b.Pos[0].Hash != h {
+		t.Fatal("the hash reads more than the bytes")
+	}
+}
+
+// A host-built body with only media and no text bytes, billed above the media price, has an infinite
+// ratio. With unseen media that is too many tokens, so the reason is media_unseen.
+func TestAllMediaBodyWithUnseenIsMediaUnseen(t *testing.T) {
+	for _, tc := range []struct {
+		unseen int32
+		want   string
+	}{{1, "media_unseen"}, {0, "ratio_range"}, {-1, "ratio_range"}} {
+		b := Body{Pos: []PosHash{{Hash: 1, Bytes: 1000, Media: 1000, Unseen: tc.unseen}}}
+		b.buildPrefix()
+		ts := NewTrackers()
+		r := ts.BeginRequest(RequestMeta{RequestID: "r", Session: "s", At: t0}, b, nil)
+		r.EndRequest(Thread{ID: "main"}, b, nil, exact5m)
+		res := r.Compute(Usage{Input: 100})
+		if got := checkNames(res); len(got) != 1 || got[0] != tc.want {
+			t.Fatalf("Unseen = %d: Checks = %v, want [%s]", tc.unseen, got, tc.want)
+		}
 	}
 }
 

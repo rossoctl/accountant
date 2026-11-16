@@ -714,8 +714,8 @@ The rule does not run when a splice is in the state.
 
 A body can hold an image by url, an image by file id, or a PDF. Such a block has no payload bytes. The provider
 bills it tokens all the same. The bill is then too high for the text bytes, and check 9 fails. Before the fix, the
-reason was `ratio_range`, which says the bill is wrong. The bill was right. The host marks these blocks in
-`PosHash.Unseen`. The library then fails `media_unseen`, and prices nothing, as before.
+reason was `ratio_range`, which says the bill is wrong. The bill was right. `NewBody` marks these blocks in
+`PosHash.Unseen` (a host that builds its own `Body` sets it; the cases set it by hand, like `media`). The library then fails `media_unseen`, and prices nothing, as before.
 
 Each case has one request. Forwarded text is 4,000 bytes. The bill is 12,000 tokens: 3.0 tokens a text byte, above 2.0.
 

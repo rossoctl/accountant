@@ -33,7 +33,7 @@ func (b Body) sectionEnd(i int) int {
 func (b Body) unseen() int {
 	n := 0
 	for _, p := range b.Pos {
-		n += int(p.Unseen)
+		n += max(int(p.Unseen), 0) // a host-built body can hold a negative count; it is no block
 	}
 	return n
 }
