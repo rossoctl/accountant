@@ -52,6 +52,7 @@ const (
 	CheckBadUsage     = ReasonBadUsage
 	CheckRatioRange   = ReasonRatioRange
 	CheckBreakpoints  = ReasonBreakpoints
+	CheckMediaUnseen  = ReasonMediaUnseen
 	CheckMediaTokens  = ReasonMediaTokens
 	CheckSizeTokens   = "size_tokens"
 	CheckSizeRange    = ReasonSizeRange

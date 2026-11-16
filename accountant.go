@@ -175,6 +175,7 @@ const (
 	CheckBadUsage     = engine.CheckBadUsage
 	CheckRatioRange   = engine.CheckRatioRange
 	CheckBreakpoints  = engine.CheckBreakpoints
+	CheckMediaUnseen  = engine.CheckMediaUnseen
 	CheckMediaTokens  = engine.CheckMediaTokens
 	CheckSizeTokens   = engine.CheckSizeTokens
 	CheckSizeRange    = engine.CheckSizeRange
@@ -191,6 +192,7 @@ const (
 	ReasonNotSpend          = engine.ReasonNotSpend
 	ReasonBadUsage          = engine.ReasonBadUsage
 	ReasonRatioRange        = engine.ReasonRatioRange
+	ReasonMediaUnseen       = engine.ReasonMediaUnseen
 	ReasonMediaTokens       = engine.ReasonMediaTokens
 	ReasonBreakpoints       = engine.ReasonBreakpoints
 	ReasonSizeRange         = engine.ReasonSizeRange

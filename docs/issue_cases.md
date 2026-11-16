@@ -706,9 +706,37 @@ stay active, and on `main` the `sum` check reads `ops=-824 bodies=-381`: 443 byt
 the old deferral's 371. The fix ends the old deferral, then the mark. `internal/engine/causeb_test.go` holds both
 shapes: the same `ChangeID` (the mark stays) and the hashed `ChangeID`s.
 
+Repro case A of the same issue is a change that adds content. The host adds two tool declarations after the
+client's 7. The next request has no tools. The client removed the declarations that the added ones followed, so
+both changes end (design Q12). On `main` the end rule looked for the item before them in the new, empty section,
+found none, and kept both. The `sum` check then read `section=tools ops=-1285 bodies=0` on every later request.
+`internal/engine/added_tools_test.go` holds this shape, the removal of only the client's last tool, and a negative
+control (the client appends a tool, and the change stays). Its other tests cover the content that other changes
+added before the position: an added item or a span that an earlier change added is taken out (the change stays),
+and an item that a later change added is not taken out, on the same request or on a later one (the change ends).
+
 The unit tests in `internal/engine/stale_inplace_test.go` cover the rest of the rule. A change in a chain stays,
 also when the second operator reports spans or a wider range. Ending the last change of a chain ends every link.
 The rule does not run when a splice is in the state.
+
+## 9i. Cases from accountant#70 (case D: media with no bytes)
+
+A body can hold an image by url, an image by file id, or a PDF. Such a block has no payload bytes. The provider
+bills it tokens all the same. The bill is then too high for the text bytes, and check 9 fails. Before the fix, the
+reason was `ratio_range`, which says the bill is wrong. The bill was right. `NewBody` marks these blocks in
+`PosHash.Unseen` (a host that builds its own `Body` sets it; the cases set it by hand, like `media`). The library then fails `media_unseen`, and prices nothing, as before.
+
+Each case has one request. Forwarded text is 4,000 bytes. The bill is 12,000 tokens: 3.0 tokens a text byte, above 2.0.
+
+| Case ID | What the spec requires |
+|---|---|
+| `media/unseen-url-image-too-many-tokens/5m` | An image by url. Check and reason: `media_unseen`. |
+| `media/unseen-file-id-image-too-many-tokens/5m` | An image by file id. Check and reason: `media_unseen`. |
+| `media/unseen-pdf-page-too-many-tokens/5m` | A PDF page, billed by page. Check and reason: `media_unseen`. |
+| `media/unseen-small-base64-image-too-many-tokens/5m` | A small base64 image (1,000 bytes, 4 tokens). Its bytes are in the body, so the bill is not explained. Check and reason stay `ratio_range`. |
+
+The exit for a host that knows the real count is `Size.Tokens` on the sizes of the range. The unit tests are in
+`internal/engine/media_unseen_test.go`.
 
 ## 10. Limits of this document
 

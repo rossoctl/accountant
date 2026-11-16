@@ -19,6 +19,7 @@ const (
 	ReasonNotSpend          = "not_spend"       // a standalone RequestOps holds only spend operations (§6.1)
 	ReasonBadUsage          = "bad_usage"       // a usage count is negative: nothing is priced (§6.5, check 8)
 	ReasonRatioRange        = "ratio_range"     // tokens per byte is outside the range: nothing is priced (§6.5, check 9)
+	ReasonMediaUnseen       = "media_unseen"    // tokens per byte is too high and the body holds media that its bytes do not price: nothing is priced (§6.5, check 9)
 	ReasonMediaTokens       = "media_tokens"    // the operation covers media, and the bill is below the media price: only this operation is unpriced (§6.5, check 11)
 	ReasonBreakpoints       = "breakpoints"     // more than 4 breakpoints, or an unknown TTL: nothing is priced (§6.5, check 10)
 	ReasonSizeRange         = "size_range"      // an operation reports more bytes than the client body holds: that operation is not priced (§6.5, check 13)
@@ -616,8 +617,13 @@ func (c *calcState) forwardPositions() {
 		for _, sp := range it.spans {
 			if sp.before.Bytes == 0 {
 				// Content the operator added: its position is in forwarded space, and the client body has
-				// nothing there. It ends only when the client edited what precedes it (§4.3).
-				if c.clientEdited(c.insertionPoint(sp.from) - 1) {
+				// nothing there. It ends only when the client edited what precedes it (design Q12, §4.3). That
+				// item is measured in the previous client body: when the client removed it, the new body has no
+				// item there to compare (accountant#70, case A). The position counts the content that changes
+				// before it in pipeline order added before it in its section, which the client body does not have. In the first position of a section the
+				// item before it is the last one of the section before, and that one precedes it in the
+				// provider's order too, so an edit there ends the change.
+				if c.clientEdited(c.prevInsertionPoint(c.clientSide(k, sp.from)) - 1) {
 					it.ended = true
 				}
 			} else if i, ok := c.client.flat(sp.from); !ok || c.clientEdited(i) {
@@ -736,14 +742,49 @@ func (c *calcState) sawClientBytes(sp span) bool {
 	return sp.before.Bytes == c.client.cumBytes(t)-c.client.cumBytes(f-1)
 }
 
-// insertionPoint is the flat client position where content added at p sits: the position itself, or
-// the end of its section when the client body has fewer items there.
-func (c *calcState) insertionPoint(p Position) int {
+// insertionPoint is the flat position in client body b where content added at p sits: the position itself,
+// or the end of its section when b has fewer items there.
+func insertionPoint(b Body, p Position) int {
 	s := sectionIndex(p.Section)
 	if s < 0 {
 		return 0
 	}
-	return min(c.client.Start[s]+max(p.Index, 0), c.client.sectionEnd(s))
+	return min(b.Start[s]+max(p.Index, 0), b.sectionEnd(s))
+}
+
+// clientSide takes out of the forwarded position of item k's added content the items that changes before it
+// in pipeline order added before it in the same section. The messages section is not mapped here: its positions go through the splices.
+func (c *calcState) clientSide(k int, p Position) Position {
+	if p.Section == SectionMessages {
+		return p
+	}
+	n := 0
+	// Only items up to k: a position is in the operator's own output, and that has only the content of the
+	// changes before it in pipeline order (§4.3). c.items is in pipeline order, and item k's own earlier
+	// spans are in its output too.
+	for _, it := range c.items[:k+1] {
+		if it.op.Kind != KindRewrite || it.op.DryRun || it.bad != "" {
+			continue
+		}
+		for _, sp := range it.spans {
+			if sp.before.Bytes == 0 && sp.from.Section == p.Section && sp.from.Index < p.Index {
+				n += max(min(sp.to.Index, p.Index-1)-sp.from.Index+1, 0) // a span can add several items
+			}
+		}
+	}
+	p.Index -= n
+	return p
+}
+
+// prevInsertionPoint is the insertion point in the previous request's client body. The client items before
+// it are the ones the added content followed there. clientFD is a flat index that both bodies share up to
+// the first difference, so it can be compared with this point. Without a previous body it is the point in
+// the current client body; clientEdited is false then, so that value never decides the end rule.
+func (c *calcState) prevInsertionPoint(p Position) int {
+	if c.s.PrevPrint == nil {
+		return insertionPoint(c.client, p)
+	}
+	return insertionPoint(c.s.PrevPrint.Client, p)
 }
 
 // toFwdSkipping is toFwd without item k's own splice. Content that k inserted is already at its
@@ -1681,6 +1722,9 @@ func (c *calcState) validate(u Usage) string {
 	case badUsage(u):
 		return ReasonBadUsage
 	case c.badRatio():
+		if c.ratioTooHigh() && c.fwd.unseen() > 0 {
+			return ReasonMediaUnseen // the extra tokens may be that media: say so, not that the usage is wrong
+		}
 		return ReasonRatioRange
 	case c.badBreakpoints():
 		return ReasonBreakpoints
@@ -1706,6 +1750,16 @@ func (c *calcState) badRatio() bool {
 		return true
 	}
 	return t < minTokensPerByte*n || t > maxTokensPerByte*n
+}
+
+// ratioTooHigh says whether the text carries more than 2.0 tokens a byte (the upper limit of check 9).
+// A body with no text bytes and tokens left after the media price is too high (an infinite ratio).
+func (c *calcState) ratioTooHigh() bool {
+	t, n := float64(c.ratio.tokens), float64(c.ratio.bytes)
+	if n == 0 {
+		return t > 0
+	}
+	return t > maxTokensPerByte*n
 }
 
 // badBreakpoints says whether the forwarded body has more than 4 breakpoints, or any breakpoint
@@ -1744,6 +1798,9 @@ func (c *calcState) checkUsage(res *Result) {
 	}
 	detail := fmt.Sprintf("usage=%d/%d/%d/%d breakpoints=%d forwarded bytes=%d", c.usage.Input, c.usage.CacheRead,
 		c.usage.CacheWrite, c.usage.CacheWrite1h, len(c.r.breakpoints), c.ratio.bytes)
+	if c.invalid == ReasonMediaUnseen {
+		detail += fmt.Sprintf(" unseen media blocks=%d: their tokens are not in the bytes", c.fwd.unseen())
+	}
 	res.Checks = append(res.Checks, CheckFailure{Check: c.invalid, Detail: detail})
 }
 

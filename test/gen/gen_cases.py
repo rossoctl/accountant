@@ -2843,6 +2843,8 @@ def mbody(msgs):
         if len(m) > 2:
             p["bytes"] += m[2]
             p["media"] = m[2]
+        if len(m) > 3:
+            p["unseen"] = m[3]  # blocks whose tokens the bytes do not show (url, file_id, PDF)
     return b
 
 
@@ -2925,6 +2927,35 @@ def c42c():
                  "conservation takes its 1,850 tokens out of the bill difference. Only media_tokens fails. "
                  "Before the fix conservation failed too.",
                  DIMS("rewrite", "media", "hot", media="hot-op-over-media"), [s0, s1])
+
+
+def c70d():
+    # accountant#70 case D. A media block that holds no bytes (an image by url or file_id, a PDF page) is billed
+    # tokens the body does not show. The ratio goes above 2.0 and check 9 fails. The host marks the block
+    # (Unseen) and the library names the cause: media_unseen, not ratio_range. A small base64 image has its
+    # bytes in the body: the same bill is a real ratio_range.
+    for name, unseen, why in (("url-image", 1, "an image the model fetches by url"),
+                              ("file-id-image", 1, "an image kept by file id"),
+                              ("pdf-page", 1, "a PDF page, billed by page and not by byte"),
+                              ("small-base64-image", 0, "a small base64 image, 1,000 bytes, priced at 4 tokens")):
+        SF = f"cg:cmdfilter:c70d-{name}"
+        media = 1000 if name == "small-base64-image" else 0
+        C = [("m0", 500), ("img", 0, media, unseen), ("m2", 2000)]
+        F = [("m0", 500), ("img", 0, media, unseen), ("m2", 500)]
+        op = rewrite("o1", "context-guru.cmdfilter", "messages", 2, 2000, 500, SF)
+        reason = "media_unseen" if unseen else "ratio_range"
+        s0 = media_step(0, "r0", C, F, op, billed=12000, exp_ops=[], checks=[reason],
+                        unpriced=[{"opId": "o1", "reason": reason}, {"reason": "penalty_unknown"}], baseline=12000)
+        write_review(f"media/unseen-{name}-too-many-tokens/5m", 70,
+                     f"One request: {why}. Forwarded text = 2,000 + 2,000 = 4,000 bytes. The bill is 12,000 tokens: "
+                     f"3.0 tokens a text byte, above the limit 2.0. "
+                     + ("The block holds no bytes, so its tokens cannot be in the ratio. The check media_unseen fails and "
+                        "names the cause. Nothing is priced: the rewrite is unpriced with the reason media_unseen. "
+                        "Before the fix the reason was ratio_range, which said the bill was wrong."
+                        if unseen else
+                        "The block has bytes, and they are priced at 1 token for 250 bytes. The bill is not explained by "
+                        "media, so the check ratio_range fails and nothing is priced. The reason is the same as before the fix."),
+                     DIMS("rewrite", "media", "unknown", media=f"unseen-{name}"), [s0])
 
 
 def c42d():
@@ -3604,5 +3635,5 @@ if __name__ == "__main__":
             os.remove(os.path.join(OUT, old))
     for f in (ex12, ex3, ex4, ex5, ex67, ex8, shared_prefix_cases, ex9, c01, c02, c03_04, c05, c06, c07, c08, c09, c10, c11, c12, c_threads, c_client_compaction, c_client_trim_keeps_head, c_client_rewrite_in_place_ends_replay, c_client_compaction_before_any_change, c_inplace_taken_over_by_another_operator, c_client_tail_edit_keeps_replay, c_client_tail_compaction_ends_replay, c_client_two_compactions, c_clock, c_ttl, c_mix,
               c14, s909, r909_system_hash, c15, c16, c17, c18, a1, a2, a3, a4_b3, b1_b2, b4, b5, c1_, c2_, c2b, c3_, c5, d2, d3, d4,
-              d5, d6, e2, e345, f245, h2, h5, r9, i53, i54, i56, i55_split, i55_no_cache, i55_media_one_side, r14, r21, r20, r20b, c42, c42b, c42c, c42d, c43, c73, i44, c49, i52_all, d60, d60_1h, d60_loaded):
+              d5, d6, e2, e345, f245, h2, h5, r9, i53, i54, i56, i55_split, i55_no_cache, i55_media_one_side, r14, r21, r20, r20b, c42, c42b, c42c, c42d, c70d, c43, c73, i44, c49, i52_all, d60, d60_1h, d60_loaded):
         f()

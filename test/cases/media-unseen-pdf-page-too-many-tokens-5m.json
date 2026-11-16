@@ -1,0 +1,148 @@
+{
+ "id": "media/unseen-pdf-page-too-many-tokens/5m",
+ "description": "One request: a PDF page, billed by page and not by byte. Forwarded text = 2,000 + 2,000 = 4,000 bytes. The bill is 12,000 tokens: 3.0 tokens a text byte, above the limit 2.0. The block holds no bytes, so its tokens cannot be in the ratio. The check media_unseen fails and names the cause. Nothing is priced: the rewrite is unpriced with the reason media_unseen. Before the fix the reason was ratio_range, which said the bill was wrong.",
+ "source": "issue_cases.md#accountant-70",
+ "dims": {
+  "kind": "rewrite",
+  "position": "media",
+  "cache": "unknown",
+  "ttl": "5m",
+  "lifetime": "exact",
+  "media": "unseen-pdf-page"
+ },
+ "rates": "fixture-v1",
+ "steps": [
+  {
+   "begin": {
+    "meta": {
+     "requestId": "r0",
+     "session": "s1",
+     "model": "agent-model",
+     "at": "2026-03-02T09:00:00Z",
+     "billing": {
+      "mode": "api"
+     }
+    },
+    "client": {
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "pos": [
+      {
+       "hash": 625792648282977192,
+       "bytes": 2000
+      },
+      {
+       "hash": 17956178250200053669,
+       "bytes": 0,
+       "media": 0,
+       "unseen": 1
+      },
+      {
+       "hash": 11100004509484968826,
+       "bytes": 8000
+      }
+     ]
+    },
+    "clientBreakpoints": [
+     {
+      "pos": {
+       "section": "messages",
+       "index": 2
+      },
+      "ttl": "5m"
+     }
+    ]
+   },
+   "add": [
+    {
+     "id": "o1",
+     "kind": "rewrite",
+     "operator": "context-guru.cmdfilter",
+     "at": {
+      "section": "messages",
+      "index": 2
+     },
+     "sizeBefore": {
+      "bytes": 8000
+     },
+     "sizeAfter": {
+      "bytes": 2000
+     },
+     "changeId": "cg:cmdfilter:c70d-pdf-page"
+    }
+   ],
+   "end": {
+    "thread": {
+     "id": "main"
+    },
+    "forwarded": {
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "pos": [
+      {
+       "hash": 625792648282977192,
+       "bytes": 2000
+      },
+      {
+       "hash": 17956178250200053669,
+       "bytes": 0,
+       "media": 0,
+       "unseen": 1
+      },
+      {
+       "hash": 11100004509484968826,
+       "bytes": 2000
+      }
+     ]
+    },
+    "breakpoints": [
+     {
+      "pos": {
+       "section": "messages",
+       "index": 2
+      },
+      "ttl": "5m"
+     }
+    ],
+    "facts": {
+     "ttl": "5m",
+     "lifetime": "exact"
+    }
+   },
+   "usage": {
+    "input": 0,
+    "cacheRead": 0,
+    "cacheWrite": 12000,
+    "cacheWrite1h": 0
+   },
+   "expected": {
+    "phase": "unknown",
+    "baselineUsage": {
+     "input": 0,
+     "cacheRead": 0,
+     "cacheWrite": 12000,
+     "cacheWrite1h": 0
+    },
+    "ops": [],
+    "unpriced": [
+     {
+      "opId": "o1",
+      "reason": "media_unseen"
+     },
+     {
+      "reason": "penalty_unknown"
+     }
+    ],
+    "checks": [
+     "media_unseen"
+    ]
+   }
+  }
+ ]
+}

@@ -96,8 +96,8 @@ func TestEveryCheckNameIsPinnedAndInTheDesign(t *testing.T) {
 	for got, want := range map[string]string{
 		CheckSum: "sum", CheckUniqueChange: "unique_change", CheckSpans: "spans", CheckConservation: "conservation",
 		CheckSharedWarm: "shared_warm", CheckBadUsage: "bad_usage", CheckRatioRange: "ratio_range",
-		CheckBreakpoints: "breakpoints", CheckMediaTokens: "media_tokens", CheckSizeTokens: "size_tokens",
-		CheckSizeRange: "size_range",
+		CheckBreakpoints: "breakpoints", CheckMediaTokens: "media_tokens", CheckMediaUnseen: "media_unseen",
+		CheckSizeTokens: "size_tokens", CheckSizeRange: "size_range",
 	} {
 		if got != want {
 			t.Errorf("check constant = %q, want %q", got, want)

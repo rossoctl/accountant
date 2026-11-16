@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 620" width="1100" height="620" role="img" aria-labelledby="t d" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">
 <title id="t">Context operations: high-level package diagram</title>
-<desc id="d">Top, the accountant library. It holds the context operation class, whose kind field is one of rewrite, cacheChange, spend or setting, and the Tracker class, one for each thread. The Tracker keeps the ThreadState of a thread and has the methods BeginRequest, Add, EndRequest, Compute and Preview; Compute returns tokens for each billing tier and stores the new ThreadState. Bottom left, the Context operators: context-guru, tool-prune, headroom and other context operators, which report context operations to the Host. The Host runs the context operators. Bottom right, the Host (examples: Cortex and cg-proxy): its pipeline calls BeginRequest, Add and EndRequest on the Tracker; settle calls Compute and records cost and savings. The context operators and the Host import counterfactual; counterfactual imports none of them.</desc>
+<desc id="d">Top, the accountant library. It holds three classes. The context operation class, whose kind field is one of rewrite, spend or setting. The Trackers class, one set for the host, which keeps one ThreadState for each thread and has the method BeginRequest, which returns a Request. The Request class, one for each request, with the methods Add, EndRequest, Compute and Preview; Compute returns tokens for each billing tier and stores the new ThreadState. Bottom left, the Context operators: context-guru, tool-prune, headroom and other context operators, which report context operations to the Host. The Host runs the context operators. Bottom right, the Host (examples: Cortex and cg-proxy): its pipeline calls BeginRequest on the Trackers, then Add and EndRequest on the Request; settle calls Compute on the Request and records cost and savings. The context operators and the Host import accountant; accountant imports none of them.</desc>
 <defs>
 <marker id="ao" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="10" markerHeight="10" orient="auto-start-reverse"><path class="aol" d="M0,0 L10,5 L0,10"/></marker>
 <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arf" d="M0,0 L10,5 L0,10 z"/></marker>
@@ -36,28 +36,37 @@ svg{--surface:#fcfcfb;--panel:#f3f2ee;--ink:#0b0b0b;--ink2:#52514e;--grid:#c9c8c
 <rect class="ext" x="440" y="51" width="30" height="18" rx="2"/>
 <text class="t2" x="478" y="64" font-size="12">external</text>
 
-<!-- ================= cost ================= -->
+<!-- ================= accountant ================= -->
 <path class="lib" d="M24,92 h190 v26 h-190 z"/>
-<text class="tl" x="36" y="110" font-size="13" font-weight="600">«library» cost</text>
+<text class="tl" x="36" y="110" font-size="13" font-weight="600">«library» accountant</text>
 <rect class="lib" x="24" y="118" width="1052" height="172"/>
-<text class="t2" x="44" y="142" font-size="12">Context operation types and a Tracker with the state of a thread. Imports no host and no framework.</text>
+<text class="t2" x="44" y="142" font-size="12">Context operation types, the Trackers that keep the state of each thread, and a Request record for each request. Imports no host and no framework.</text>
 
 <!-- Operation class -->
 <rect class="cls" x="44" y="158" width="330" height="110"/>
 <text class="t" x="209" y="184" font-size="14" font-weight="600" text-anchor="middle">Context operation</text>
 <line class="sep" x1="44" y1="198" x2="374" y2="198"/>
-<text class="t m" x="58" y="222" font-size="12">kind: rewrite | cacheChange</text>
-<text class="t m" x="58" y="240" font-size="12">      | spend | setting</text>
+<text class="t m" x="58" y="222" font-size="12">kind: rewrite | spend | setting</text>
 
-<!-- Tracker -->
-<rect class="cls" x="394" y="158" width="662" height="110"/>
-<text class="t2" x="725" y="178" font-size="11" text-anchor="middle">«class» one for each thread</text>
-<text class="t" x="725" y="196" font-size="14" font-weight="600" text-anchor="middle">Tracker</text>
-<line class="sep" x1="394" y1="206" x2="1056" y2="206"/>
-<text class="t m" x="408" y="224" font-size="11.5" font-weight="600">BeginRequest(client) · Add(op) · EndRequest(forwarded, ...)</text>
-<text class="t m" x="408" y="240" font-size="11.5" font-weight="600">Compute(usage) Result · Preview(usage) Result</text>
-<text class="t2" x="408" y="254" font-size="10.5">keeps the ThreadState: active operations, previous fingerprint, cache state.</text>
-<text class="t2" x="408" y="267" font-size="10.5">Compute returns tokens for each tier and stores the new ThreadState.</text>
+<!-- Trackers -->
+<rect class="cls" x="394" y="158" width="290" height="110"/>
+<text class="t2" x="539" y="178" font-size="11" text-anchor="middle">«class» one set for the host</text>
+<text class="t" x="539" y="196" font-size="14" font-weight="600" text-anchor="middle">Trackers</text>
+<line class="sep" x1="394" y1="206" x2="684" y2="206"/>
+<text class="t m" x="408" y="224" font-size="11.5" font-weight="600">BeginRequest(meta, client, ...)</text>
+<text class="t2" x="408" y="241" font-size="10.5">returns a Request. Keeps one ThreadState</text>
+<text class="t2" x="408" y="254" font-size="10.5">for each thread: active operations,</text>
+<text class="t2" x="408" y="267" font-size="10.5">previous fingerprint, cache state.</text>
+
+<!-- Request -->
+<rect class="cls" x="714" y="158" width="342" height="110"/>
+<text class="t2" x="885" y="178" font-size="11" text-anchor="middle">«class» one for each request</text>
+<text class="t" x="885" y="196" font-size="14" font-weight="600" text-anchor="middle">Request</text>
+<line class="sep" x1="714" y1="206" x2="1056" y2="206"/>
+<text class="t m" x="726" y="224" font-size="11.5" font-weight="600">Add(op) · EndRequest(thread, forwarded, ...)</text>
+<text class="t m" x="726" y="240" font-size="11.5" font-weight="600">Compute(usage) Result · Preview(usage) Result</text>
+<text class="t2" x="726" y="254" font-size="10.5">Compute returns tokens for each tier</text>
+<text class="t2" x="726" y="267" font-size="10.5">and stores the new ThreadState.</text>
 
 <!-- ================= Reporters ================= -->
 <path class="pkg" d="M24,370 h180 v26 h-180 z"/>
@@ -88,7 +97,7 @@ svg{--surface:#fcfcfb;--panel:#f3f2ee;--ink:#0b0b0b;--ink2:#52514e;--grid:#c9c8c
 <rect class="sub" x="660" y="416" width="190" height="80" rx="4"/>
 <text class="t" x="674" y="442" font-size="14" font-weight="600">pipeline</text>
 <text class="t2" x="674" y="464" font-size="12">adds each reported context</text>
-<text class="t2" x="674" y="480" font-size="12">operation to the Tracker</text>
+<text class="t2" x="674" y="480" font-size="12">operation to the Request</text>
 
 <rect class="sub" x="866" y="416" width="190" height="80" rx="4"/>
 <text class="t" x="880" y="442" font-size="14" font-weight="600">settle</text>
@@ -106,7 +115,7 @@ svg{--surface:#fcfcfb;--panel:#f3f2ee;--ink:#0b0b0b;--ink2:#52514e;--grid:#c9c8c
 <line class="imp" x1="269" y1="370" x2="269" y2="292" marker-end="url(#ao)"/>
 <text class="tl" x="277" y="336" font-size="12">«import»</text>
 <text class="t2" x="277" y="352" font-size="11">builds context operations</text>
-<line class="imp" x1="700" y1="396" x2="700" y2="270" marker-end="url(#ao)"/>
+<line class="imp" x1="699" y1="396" x2="699" y2="270" marker-end="url(#ao)"/>
 <text class="tl" x="708" y="326" font-size="12">«import»</text>
 <text class="t2" x="708" y="342" font-size="11">calls BeginRequest, Add, EndRequest</text>
 <line class="imp" x1="960" y1="416" x2="960" y2="270" marker-end="url(#ao)"/>
