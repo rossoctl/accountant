@@ -119,3 +119,51 @@ func TestAnAddedToolStaysWhenTheClientEditsAfterItWithASpanBefore(t *testing.T) 
 		t.Fatalf("Active = %v, want both added declarations", got)
 	}
 }
+
+// The pipeline order is not the index order: y adds at tool(3) and runs first, then x adds at tool(2). y's
+// position is in y's own output, which does not have X, so X must not be taken out of it. The client edits c2,
+// the tool y followed, so y ends. x followed c1, which did not change, so x stays.
+func TestAnAddedToolEndsWhenALaterChangeAddedBeforeIt(t *testing.T) {
+	ts := NewTrackers()
+	tools := msgs(5, 1000) // c0..c4
+	system := []blk{b("s0", 2000)}
+	ms := []blk{b("m0", 5000), b("m1", 5000)}
+	y := rewrite("y", "context-guru.expand", "cg:expand:decl-y", tool(3), 0, 400)
+	x := rewrite("x", "context-guru.expand", "cg:expand:decl-x", tool(2), 0, 300)
+	fwd1 := []blk{tools[0], tools[1], b("x", 300), tools[2], b("y", 400), tools[3], tools[4]}
+	noSumFailure(t, req{at: t0, client: mk(tools, system, ms), clientBPs: bps5(sys(0), msg(1)), facts: exact5m,
+		ops: []Operation{y, x}, fwd: mk(fwd1, system, ms), usage: Usage{CacheWrite: 3500}}.run(ts))
+	edited := []blk{tools[0], tools[1], b("e2", 1000), tools[3], tools[4]}
+	fwd2 := []blk{tools[0], tools[1], b("x", 300), b("e2", 1000), tools[3], tools[4]}
+	res := req{at: t0.Add(10 * time.Second), client: mk(edited, system, ms), clientBPs: bps5(sys(0), msg(1)),
+		facts: exact5m, fwd: mk(fwd2, system, ms), usage: Usage{CacheWrite: 3500}}.run(ts)
+	noSumFailure(t, res)
+	if got := activeIDs(ts); len(got) != 1 || got[0] != "cg:expand:decl-x" {
+		t.Fatalf("Active = %v, want only cg:expand:decl-x", got)
+	}
+}
+
+// A change reported on a later request runs after the active ones. a adds after c4 on request 1. b adds at
+// tool(0) on request 2, so b's B is not in a's output and must not be taken out of a's position. On request 3
+// the client edits c4, the tool a followed, so a ends. b is at the first position, so it stays.
+func TestAnAddedToolEndsWhenAChangeOnALaterRequestAddedBeforeIt(t *testing.T) {
+	ts := NewTrackers()
+	tools := msgs(5, 1000) // c0..c4
+	system := []blk{b("s0", 2000)}
+	ms := []blk{b("m0", 5000), b("m1", 5000)}
+	a := rewrite("a", "context-guru.expand", "cg:expand:decl-a", tool(5), 0, 400)
+	bb := rewrite("b", "context-guru.expand", "cg:expand:decl-b", tool(0), 0, 300)
+	noSumFailure(t, req{at: t0, client: mk(tools, system, ms), clientBPs: bps5(sys(0), msg(1)), facts: exact5m,
+		ops: []Operation{a}, fwd: mk(with(tools, b("a", 400)), system, ms), usage: Usage{CacheWrite: 3500}}.run(ts))
+	fwd2 := append([]blk{b("b", 300)}, with(tools, b("a", 400))...)
+	noSumFailure(t, req{at: t0.Add(10 * time.Second), client: mk(tools, system, ms), clientBPs: bps5(sys(0), msg(1)),
+		facts: exact5m, ops: []Operation{bb}, fwd: mk(fwd2, system, ms), usage: Usage{CacheWrite: 3500}}.run(ts))
+	edited := []blk{tools[0], tools[1], tools[2], tools[3], b("e4", 1000)}
+	fwd3 := append([]blk{b("b", 300)}, edited...)
+	res := req{at: t0.Add(20 * time.Second), client: mk(edited, system, ms), clientBPs: bps5(sys(0), msg(1)),
+		facts: exact5m, fwd: mk(fwd3, system, ms), usage: Usage{CacheWrite: 3500}}.run(ts)
+	noSumFailure(t, res)
+	if got := activeIDs(ts); len(got) != 1 || got[0] != "cg:expand:decl-b" {
+		t.Fatalf("Active = %v, want only cg:expand:decl-b", got)
+	}
+}

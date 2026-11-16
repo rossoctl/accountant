@@ -1678,8 +1678,12 @@ Where a question has test cases, a host that compares them with its own code mar
       end it. The item before it is found in the previous request's client body, where the added content
       followed it. When the client removes that item, or every item of the section, the new body has
       nothing there to compare, and the change must still end (accountant#70, case A: the client sends no
-      tools after the host added two declarations). Content that other changes added before it in the
-      same section is not in the client body, so it is taken out of the position first. At the first
+      tools after the host added two declarations). The position is in the operator's own output, so it
+      counts the content that changes before it in pipeline order (active ones, then earlier reported
+      ones) added before it in the same section. That content is not in the client body, so it is taken
+      out of the position first. Content that later changes added is not in the position and is not
+      taken out. Removals are not mapped: a change that removes whole items before the added content
+      leaves the position too large, so a client edit after the content can end it. At the first
       position of a section, the item before it is the last one of the section before, and an edit there
       ends the change too.
 
