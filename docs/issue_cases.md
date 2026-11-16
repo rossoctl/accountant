@@ -706,6 +706,15 @@ stay active, and on `main` the `sum` check reads `ops=-824 bodies=-381`: 443 byt
 the old deferral's 371. The fix ends the old deferral, then the mark. `internal/engine/causeb_test.go` holds both
 shapes: the same `ChangeID` (the mark stays) and the hashed `ChangeID`s.
 
+Repro case A of the same issue is a change that adds content. The host adds two tool declarations after the
+client's 7. The next request has no tools. The client removed the declarations that the added ones followed, so
+both changes end (design Q12). On `main` the end rule looked for the item before them in the new, empty section,
+found none, and kept both. The `sum` check then read `section=tools ops=-1285 bodies=0` on every later request.
+`internal/engine/added_tools_test.go` holds this shape, the removal of only the client's last tool, and a negative
+control (the client appends a tool, and the change stays). Its other tests cover the content that other changes
+added before the position: an added item or a span that an earlier change added is taken out (the change stays),
+and an item that a later change added is not taken out, on the same request or on a later one (the change ends).
+
 The unit tests in `internal/engine/stale_inplace_test.go` cover the rest of the rule. A change in a chain stays,
 also when the second operator reports spans or a wider range. Ending the last change of a chain ends every link.
 The rule does not run when a splice is in the state.

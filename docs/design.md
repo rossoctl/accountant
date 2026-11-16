@@ -1676,7 +1676,17 @@ Where a question has test cases, a host that compares them with its own code mar
       size, the library cannot tell which one ran, and both stay;
     - **for content the operator added** (a size before of zero), the client edited something before
       its position. Its position is in forwarded space, so the client body having nothing there does not
-      end it.
+      end it. The item before it is found in the previous request's client body, where the added content
+      followed it. When the client removes that item, or every item of the section, the new body has
+      nothing there to compare, and the change must still end (accountant#70, case A: the client sends no
+      tools after the host added two declarations). The position is in the operator's own output, so it
+      counts the content that changes before it in pipeline order (active ones, then earlier reported
+      ones) added before it in the same section. That content is not in the client body, so it is taken
+      out of the position first. Content that later changes added is not in the position and is not
+      taken out. Removals are not mapped: a change that removes whole items before the added content
+      leaves the position too large, so a client edit after the content can end it. At the first
+      position of a section, the item before it is the last one of the section before, and an edit there
+      ends the change too.
 
     A break that a change leaves behind when it ends has no `ChangeID` (§5.2 row 1), because the change
     is no longer reported or active. It is part of the bill difference (§6.3).
