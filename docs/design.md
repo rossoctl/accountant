@@ -1669,8 +1669,9 @@ not money. The keep-alive window still adds up (§4.4), in usage-limit units.
 
 **Detection.** The host reads `Billing.Mode` from the credential type on the request: an API key
 means `api`; an OAuth token from a subscription login means `subscription`. If it cannot tell, it
-uses `unknown`. Cortex and the proxy must use one rule, so the rule is a function in `accountant`:
-`accountant.BillingFrom(headers)`. It reads only the credential type and returns no part of the credential
+uses `unknown`. Cortex and the proxy must use one rule, so the rule is to be a function in `accountant`:
+`accountant.BillingFrom(headers)`. **Not built yet:** the library has no such function, and the
+context-guru proxy sets `BillingAPI` on every request (wiring W6.6). The function is to read only the credential type and returns no part of the credential
 ([R2](spec.md#r2)). Both hosts must call it on the **client's** upstream credential header (`x-api-key` or
 `Authorization`) before anything rewrites it — not on the proxy's control-plane login
 (`proxy/authmode.go`), which is a different credential. A contract test in each host feeds the same

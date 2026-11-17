@@ -1,7 +1,7 @@
 # Context operations: wiring in Cortex and the context-guru proxy
 
-**Status:** implemented in the context-guru proxy (migration steps 1 to 6, W9). Proposed for Cortex (steps
-7 to 11). The proxy pins `accountant` v0.1.2. Status checked on 2026-11-17 against context-guru `b87af32`.
+**Status:** implemented in the context-guru proxy: migration steps 1 to 5, with gaps in step 4, and part of
+steps 6 and 10 (W9). Proposed for Cortex (steps 7 to 11). The proxy pins `accountant` v0.1.2. Status checked on 2026-11-17 against context-guru `b87af32`.
 **Reference implementation:** the context-guru proxy. [W6](#w6-host-obligations-what-the-context-guru-proxy-does)
 lists what the proxy does that the method documents leave to the host. A Cortex host must make the same
 choices, or record why it does not.
@@ -254,7 +254,7 @@ sequenceDiagram
 
 **Current design.** The Tracker in the library keeps the state of each thread: the active context
 operations, the previous fingerprint and the cache state. The host owns one Tracker for each thread,
-and calls it (design §6.1). The alternative, a push model, is open (design §11, questions 4 and 5).
+and calls it (design §6.1). The alternative, a push model, is not pursued (design §11, question 4, decided).
 
 Each host does the same: Cortex, and the context-guru proxy. The parts are split this way. The parts that live in the library are in the method document (design §5).
 
@@ -334,10 +334,16 @@ would misattribute it. Keying by thread gives the right baseline for every rule 
   snapshot holds hashes, sizes and IDs, no message text (R2).
   - The proxy saves every minute and at shutdown, to `<dashboard DB>.accountant-state.json`. It has no
     file for an in-memory DB (`proxy/accountant_state.go`, `proxyapp/main_run.go`).
-  - At start, the proxy refuses a snapshot older than 1h, because no cache entry outlives the longest TTL.
-    It also refuses a file whose wrapper version is not its own. The proxy changes that version whenever
-    its body hash changes (context-guru#917).
-  - Cortex must do the same, or every restart loses the active changes of every live session.
+  - At start, the proxy refuses a snapshot older than 1h. It also refuses a file whose wrapper version is
+    not its own. The proxy changes that version whenever its body hash changes (context-guru#917).
+  - **The 1h age limit is a proxy choice, and it has a cost.** Its reason, that no cache entry outlives
+    the longest TTL, covers only the cache state. The snapshot also holds the active changes. After a
+    stop longer than 1h, every thread loses them, as with no snapshot (below). `Compute` already judges
+    an old `PrevPrint` by the gap: a gap past the TTL gives a cold or unknown phase. So a host can restore
+    a snapshot of any age, if its body hash has not changed. The library has no idle timeout for the same
+    reason (design §6.1).
+  - Cortex must save and restore the state. Without it, every restart loses the active changes of every
+    live session. Do not copy the 1h limit without a reason.
 - **Restart without a snapshot** (a crash before the first save, or a host that does not save): the whole
   `ThreadState` is lost. The fingerprint heals on the next request: only that request gets
   `penalty_unknown`. The active context operations do not heal: the context operators do not report
@@ -361,13 +367,13 @@ are context-guru issues.
 
 | Case | What the proxy does | Why | Where |
 |---|---|---|---|
-| The status is not 2xx, and not 0 | No `Compute`. The fallback reason is `rejected_status`. | The provider billed nothing, so the request saved nothing. A 4xx or 5xx body can still carry a usage object. Status 0 (no provider reached) is not a rejection. | `proxy/dashcapture.go` (`finish`) |
+| The status is not 2xx, and not 0 | No `Compute`. The fallback reason is `no_result`; the `acc_fallback` log names `rejected_status`. | The provider billed nothing, so the request saved nothing. A 4xx or 5xx body can still carry a usage object. Status 0 (no provider reached) is not a rejection. | `proxy/dashcapture.go` (`finish`) |
 | The request took more than one upstream round | No `Compute`. The fallback reason is `no_result`. | The proxy answered a `context_guru_expand` call itself and sent the request again. One usage object then covers more than one body. | `proxy/dashcapture.go`, `proxy/ssepeek.go` |
-| A tool deferral could not be described to the library | No `Compute` (`deferral_unplaced`). | The sum check would fail on the bodies as they are. | `proxy/dashcapture.go`, `proxy/accountant_billed.go` |
+| A tool deferral could not be described to the library | No `Compute`. The fallback reason is `no_result`; the log names `deferral_unplaced`. | The sum check would fail on the bodies as they are. | `proxy/dashcapture.go`, `proxy/accountant_billed.go` |
 | An OpenAI Responses request whose history the provider holds (`previous_response_id`, `conversation`, `item_reference`) | No record at all (`server_held_history`). | The body holds only this turn. The library would read the missing history as a client edit (#899). | `proxy/proxy.go` (`responsesServerHeldHistory`) |
 | No session | No record. | The thread key needs a session. | `proxy/proxy.go` |
 | A panic before the forward | `drop` the open record. | A record that never ends must not stay in memory. | `proxy/proxy.go` (`accDrop`) |
-| A panic in `Compute` or in ping pricing | Recover, log, book no figure (`compute_panicked`). | The keeper runs pings in its own goroutine, so a panic would end the process (#918). | `proxy/accountant_savings.go` (`computeSafe`), `proxy/accountant_ping.go` |
+| A panic in `Compute` or in ping pricing | Recover, log, book no figure. The fallback reason is `no_result`; the log names `compute_panicked`. | The keeper runs pings in its own goroutine, so a panic would end the process (#918). | `proxy/accountant_savings.go` (`computeSafe`), `proxy/accountant_ping.go` |
 
 ### W6.2 When the calls run
 
@@ -415,7 +421,7 @@ observe mode. The only `spend` operations come from `PingOps`. The proxy adds th
 | The system prompt rewritten | `cg:<component>:system-rewritten:…` | `proxy/accountant_envelope.go` |
 | A cache mark relabelled in place to another lifetime (`headttl`) | `headttl:<hash>`, with no `cg:` prefix. It is its own operation, so the library can book its premium (W7.1). | `proxy/accountant_envelope.go` |
 | The cache split | `cg:cachesplit:<hash>` | `proxy/accountant_envelope.go` |
-| A message inserted or rewritten by the tool deferral | `msg-inserted:<i>`, `msg-rewritten:<i>:<hash>`. Operator `context-guru.tooldefer`. | `proxy/accountant_envelope.go`, `proxy/accountant_wire.go` |
+| A message inserted or rewritten by the tool deferral | `cg:tooldefer:msg-inserted:<i>`, `cg:tooldefer:msg-rewritten:<i>:<hash>`. Operator `context-guru.tooldefer`. | `proxy/accountant_envelope.go`, `proxy/accountant_wire.go` |
 
 Rules the proxy follows:
 
@@ -435,20 +441,26 @@ Rules the proxy follows:
 
 `dash.Event.PriceMode` (`dash/accountant_price.go`) tests these gates in order. The first one that fails
 gives the fallback reason. The proxy then books its own figure and logs `acc_fallback` with the reason,
-the checks and `Recomputed` (`proxy/accountant_shadow.go`).
+the checks and `Recomputed` (`proxy/accountant_shadow.go`). A request that had no `Compute` (W6.1) gets
+`no_result`, and the log line names the detail.
 
-1. `server_held_history` (W6.1).
-2. `no_result`: no `Result` (no usage, a skipped `Compute`, more than one upstream round).
-3. `ops_dropped`: a change could not be placed as an operation.
-4. `observe`: the run was in observe mode.
-5. A fatal check (`CheckFailure.Fatal`). `CheckSum`, `CheckUniqueChange` and `CheckSpans` have their own
+1. `unpriced`: no complete usage, or no price for the model. This test runs before every other gate, so a
+   request with no usage is `unpriced`, not `no_result`.
+2. `server_held_history` (W6.1).
+3. `no_result`: no `Result` (a skipped `Compute`, more than one upstream round, a panic).
+4. `ops_dropped`: a change could not be placed as an operation.
+5. `observe`: the run was in observe mode.
+6. A fatal check (`CheckFailure.Fatal`). `CheckSum`, `CheckUniqueChange` and `CheckSpans` have their own
    reasons. Any other fatal check is `check_other`.
-6. `unpriced`: no usage, no price for the model, or an unpriced operation or cache effect. The exception is
-   `ReasonPenaltyUnknown`. It does not fail the gate. The figure is marked estimated and held in
-   `EstimatedSavedUSD`, outside every total (#915).
-7. `size_unknown`, `implausible_size`: the library saved more tokens than the request had.
-   Operations in the tools section are left out of this bound (#907).
-8. `figure_without_row`, `duplicate_name`, `acted_without_figure`: the figure and the component rows do
+7. `unpriced`: an unpriced operation or cache effect. The exception is `ReasonPenaltyUnknown`. It does
+   not fail the gate. The figure is marked estimated and held in `EstimatedSavedUSD`, outside every total
+   (#915).
+8. `size_unknown`: `TokensBefore` is 0, so the plausibility bound cannot be checked.
+   `implausible_size`: the library saved more tokens than the request had. The bound leaves out the
+   operations of `toolfilter`, `toolschema`, `expand`, `adjudicate` and `tooldefer`, because
+   `TokensBefore` counts message text only (#907). It leaves them out by operator, so the `tooldefer`
+   operations on messages are left out too.
+9. `figure_without_row`, `duplicate_name`, `acted_without_figure`: the figure and the component rows do
    not match.
 
 How the proxy books what passes:
@@ -457,7 +469,8 @@ How the proxy books what passes:
 - It books cache effects by `Kind` with `CacheEffect.Net`. This follows W7.1. An `EffectMarkPremium`
   or `EffectMarkPayback` with no owner goes to `tailbreakpoint` (accountant#52). A `break` marked
   `InBaseline` is shown and not counted.
-- It ignores `Result.Interaction`. Cortex books it as `Event.InteractionUSD` (W7.1).
+- It ignores `Result.Interaction`. Cortex books it as `Event.InteractionUSD` (W7.1). So on a rescued
+  request the session and thread totals of the two hosts differ by the interaction (W7.3).
 
 ### W6.6 Keep-alive pings, shared warmth and billed lifetime
 
@@ -483,7 +496,8 @@ How the proxy books what passes:
 - **Compaction (R55).** `RequestMeta.Compaction` is `CompactionUnknown` after a compaction that the
   proxy found by phrase match. Otherwise it is empty (`proxy/agentcompaction.go`).
 - **Billing.** The proxy sets `Billing{Mode: BillingAPI}` on every request. It does not tell a
-  subscription from an API key. Cortex must set it from the credential (design §7.1).
+  subscription from an API key. Cortex must set it from the credential by the rule in design §7.1. That
+  rule names a helper, `accountant.BillingFrom`, which is not built yet.
 
 ### W6.7 Metrics
 
@@ -494,6 +508,8 @@ The proxy uses `github.com/rossoctl/accountant/metrics` ([metrics.md](metrics.md
 - `Observer.Observe` after each `Compute`, with a panic recovery. Also for each priced ping, with an
   empty `RequestID`.
 - The OTel push runs only with `--dashboard` and `--metrics-push-url` (`proxyapp/metricspush.go`).
+
+## W7. Recording and totals
 
 ### W7.1 From `Result` to `event.Saving`
 
@@ -621,7 +637,8 @@ not read `Result.Boundary` or `Result.Phase` (step 6).
 tier in both hosts. The dollars are equal only when the two rate tables are equal (§1). The test
 cases use one fixed rate table, so they can compare dollars (testing §10.2). A drift between the tables —
 a model priced in one and not the other — shows as a dollar difference on identical tokens, which
-the cross-host comparison test (W9 step 8) reports.
+the cross-host comparison test (W9 step 8) reports. The totals also differ on a rescued request, because
+the proxy does not book `Result.Interaction` (W6.5).
 
 ### W7.4 Comparison with the tool-prune accounting (cortex#952)
 
@@ -659,8 +676,8 @@ Each step merges alone and leaves the totals correct.
 | 1 | context-guru | **Make the test-case list** (testing §10), with the current computation. No `accountant` code yet. | The list is reviewed. Each `differs` entry cites a spec section. Each `notCovered` entry is in design §11. | Done |
 | 2 | accountant (first in context-guru, then moved to its own repository, design Q7) | Create the `accountant` module: types, `Trackers`, `Compute` and `ComputeStandalone` (with the comparison inside them, not public), `NewBody`, checks. No callers. | Every case in the list passes (testing §10.4). | Done |
 | 3 | context-guru | The engine builds `[]accountant.Operation` from `Trace` and the reports, and returns them in `apply.Result.Ops` with `apply.Result.Thread`. Marker and apply-only changes are built by `apply` (§4.2 rule 8). **This is new work for each change, not a read of existing fields.** The frozen state is keyed by content hash (`components/offload/state.go`), so `ChangeID` can be derived. But replays are counted only for each component today (`Report.Replays`), and `apply.Trace` records no ID for each change. Each offloader must record, for each change, its `ChangeID`, and must report a change **only on its first request**; a later turn is applied from the Tracker's state. | Replay tests: the same `ChangeID` on each turn, reported on the first only. | Done |
-| 4 | context-guru | **The proxy's use of the Tracker.** It reads `apply.Result.Ops`; keeps one Tracker per `thread.Key` beside `dash.Recorder`; calls `BeginRequest`, `Add`, `EndRequest` and `Compute`; sets `Billing` from the credential (no `BillingFrom` helper exists; the proxy sets `Billing{Mode: BillingAPI}`); implements `OpsEmitter` on `dashEmitter` (**not built**); and converts each `KeepAliveReport` into a `spend` context operation with the library. Nothing reads its output yet. This is the largest proxy step, and it uses only engine types: none of it depends on Cortex. | The cache cases (design §5.2) pass through the proxy's use of the Tracker. The `MaxCachedIdx`/B\* agreement counter is zero on captured sessions (W5.3). (**Not built**, W5.3.) | Done, with gaps (see Change) |
-| 5 | context-guru | The proxy computes dollars from `accountant` **in shadow** (W7.3), with `Compute`, so that the `ThreadState` still advances on every request: it stores its current figure, and logs the `accountant` figure and the difference. | Each logged difference matches a `differs` entry (testing §10.4). | Done. Over |
+| 4 | context-guru | **The proxy's use of the Tracker.** It reads `apply.Result.Ops`; keeps one Tracker per `thread.Key` beside `dash.Recorder`; calls `BeginRequest`, `Add`, `EndRequest` and `Compute`; does **not** set `Billing` from the credential: it always sets `Billing{Mode: BillingAPI}`, and no `BillingFrom` helper exists (design §7.1); implements `OpsEmitter` on `dashEmitter` (**not built**); and converts each `KeepAliveReport` into a `spend` context operation with the library. Nothing reads its output yet. This is the largest proxy step, and it uses only engine types: none of it depends on Cortex. | The cache cases (design §5.2) pass through the proxy's use of the Tracker. The `MaxCachedIdx`/B\* agreement counter is zero on captured sessions (W5.3). (**Not built**, W5.3.) | Done, with gaps (see Change) |
+| 5 | context-guru | The proxy computes dollars from `accountant` **in shadow** (W7.3), with `Compute`, so that the `ThreadState` still advances on every request: it stores its current figure, and logs the `accountant` figure and the difference. | Each logged difference matches a `differs` entry (testing §10.4). In context-guru each difference was fixed instead, and the write-ups are in `docs/accountant/cg-differences.md`. | Done. Over |
 | 6 | context-guru | The proxy **switches** to the `accountant` figure. `dash.Recorder`'s `TailChanged` and cold-start attribution read `Result.Boundary` and `Result.Phase` from `accountant.Compute` instead of their own copy, so the proxy has one cache-state rule, not two. **Built:** the switch of the figure. **Not built:** `TailChanged` and cold-start attribution still use their own rule (W7.3). | Dashboard totals before and after on the same captured sessions. | Partly done |
 | 7 | Cortex | **The Cortex use of the Tracker.** `pctx.ReportOps` calls `Add`; the context-guru plugin passes `apply.Result.Ops` through it; one Tracker per `thread.Key`; `cgModel` fills `ModelCall`; `pingEmitter` converts each `KeepAliveReport` with the library and implements `OpsEmitter`. `plugins.Deps.Costs` and `core/cost/spend` are removed. No pricing change. | The cache cases (design §5.2) pass through the Cortex Tracker. | Not started |
 | 8 | Cortex | tool-prune and context-guru report context operations beside their current events. `settle` computes both figures, writes the current one, logs the difference. | Each logged difference matches a `differs` entry; also the Cortex / cg proxy / control comparison test (`62333ee9` on `feat/contextguru-keepalive`). | Not started |
@@ -673,7 +690,8 @@ context-guru v0.7.3. The Cortex names in this document (`pingEmitter`,
 `core/plugins/contextguru/spend.go`, `saving.go`, `unique.go`, `core/cost/spend`, `spend.LogRecorder`)
 exist on the branch `feat/contextguru-keepalive`, not on `main`. Start step 7 from the newest
 `accountant` release, not from the proxy's v0.1.2: later versions add `NewBodyCounted`, `OpaqueCount`,
-`OpaqueKey` and `SplitOpaqueTokens` (accountant#77).
+`OpaqueKey` and `SplitOpaqueTokens` (accountant#77), the thinking-block count, and fixes to the model-change
+rule (#69, #80). So v0.1.2 and v0.2.0 can give different figures for a request that changes the model.
 
 Expected differences at step 9 (and, for the proxy, at step 6). Each one corrects a known error, so none is a regression:
 
