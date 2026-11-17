@@ -1452,7 +1452,7 @@ type CacheEffect struct {
 ```
 
 `Cause` is "model_changed" when row 1, 3 or 4 (§5.2) adds a break and the model differs from the previous
-request's, with no `setting` operation of the thread that names the model ("A model change", §5.2): the
+request's, and no `setting` operation explains the change (case 3 of "A model change", §5.2): the
 provider keeps a cache for each model, so the loss is explained, and the break is in the baseline. It is
 empty otherwise.
 

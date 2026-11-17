@@ -190,3 +190,21 @@ func TestRow3WithAModelChangeChargesTheModelOperation(t *testing.T) {
 		}
 	}
 }
+
+// Row 1 with an ended router and a live rewrite at the first difference: the rewrite did not change
+// the model, so it is not named. The ended router change pays, with no ChangeID.
+func TestRow1DoesNotNameALiveRewriteForAModelChange(t *testing.T) {
+	small, large := "claude-haiku-4-5", "claude-sonnet-4-5"
+	m := []blk{b("m0", 1000), b("m1", 2000)}
+	ts := NewTrackers()
+	noChecks(t, runModel(ts, small, req{at: t0, client: mk(nil, msSys, m), clientBPs: bps5(sys(0), msg(1)),
+		ops: []Operation{msRoute("op1", "rt:model", large, small)}, facts: exact5m, usage: Usage{CacheWrite: 4000}}))
+	mask := rewrite("op2", "context-guru.mask", "cg:mask", msg(1), 2000, 100)
+	res := runModel(ts, large, req{at: t0.Add(19 * time.Second), client: mk(nil, msSys, with(m, b("m2", 500))),
+		clientBPs: bps5(sys(0), msg(2)), ops: []Operation{mask},
+		fwd: mk(nil, msSys, []blk{b("m0", 1000), b("k1", 100), b("m2", 500)}), facts: exact5m, usage: Usage{CacheWrite: 2600}})
+	br := effect(t, res, EffectBreak)
+	if br.InBaseline || br.Cause != "" || br.ChangeID != "" {
+		t.Fatalf("break %+v: want a charged break with no ChangeID and no cause", br)
+	}
+}
