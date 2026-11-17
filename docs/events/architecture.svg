@@ -1,12 +1,17 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1160 640" width="1160" height="640" role="img" aria-labelledby="t d" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">
 <title id="t">accountant/events: central collection of structural events</title>
-<desc id="d">Each user has a laptop. On each laptop an agent, such as Claude Code or Codex, sends its LLM requests through a local proxy: Cortex or the context-guru proxy. The proxy forwards each request to the LLM provider. The proxy holds the accountant and the events module, which turn each request and each keep-alive ping decision into one structural OpenTelemetry log event. Each proxy exports its events over OTLP/HTTP with TLS and a bearer token to one central OpenTelemetry Collector. The Collector receives the events, drops unknown attributes (rule E3) and writes them with the clickhouse exporter to one shared ClickHouse database. In the database, the events land in the otel_logs table, materialized views turn them into typed tables, and curated views sit on top. Researchers, each with a read-only account, query the curated views with SQL from clickhouse-client, notebooks or Grafana. The hash key is held by the deployment owner, given to the proxies, and never stored in the database.</desc>
+<desc id="d">Each user has a laptop. On each laptop an agent, such as Claude Code or Codex, sends its LLM requests through a local proxy: Cortex or the context-guru proxy. The proxy forwards each request to the LLM provider. The proxy holds the accountant and the events module, which turn each request and each keep-alive ping decision into one structural OpenTelemetry log event. Each proxy exports its events over OTLP/HTTP with TLS and a bearer token to one central deployment, drawn as a dashed frame: one OpenTelemetry Collector and one ClickHouse database. The Collector receives the events, drops unknown attributes (rule E3) and writes them with the clickhouse exporter to one shared ClickHouse database. In the database, the events land in the otel_logs table, materialized views turn them into typed tables, and curated views sit on top. Researchers, each with a read-only account, query the curated views with SQL from clickhouse-client, notebooks or Grafana. The hash key is held by the deployment owner, given to the proxies, and never stored in the database.</desc>
 <defs>
   <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#24292f"/></marker>
   <marker id="g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#6e7781"/></marker>
 </defs>
 <rect width="1160" height="640" fill="#ffffff"/>
 <text x="20" y="30" font-size="18" font-weight="600" fill="#24292f">accountant/events: central collection of structural events</text>
+
+<!-- The central deployment: one per study -->
+<rect x="415" y="104" width="520" height="396" rx="10" fill="#fbfcfd" stroke="#24292f" stroke-width="1.5" stroke-dasharray="8 4"/>
+<text x="429" y="126" font-size="13" font-weight="600" fill="#24292f">Central deployment</text>
+<text x="429" y="143" font-size="12" fill="#57606a">one per study</text>
 
 <!-- Laptops: one for each user -->
 <g font-size="12" fill="#24292f">
@@ -66,7 +71,7 @@
 <g font-size="12" fill="#24292f">
   <rect x="430" y="200" width="210" height="220" rx="8" fill="#dafbe1" stroke="#1a7f37"/>
   <text x="535" y="225" text-anchor="middle" font-weight="600" font-size="13">OpenTelemetry Collector</text>
-  <text x="535" y="243" text-anchor="middle">central, contrib distribution</text>
+  <text x="535" y="243" text-anchor="middle">contrib distribution</text>
   <rect x="445" y="258" width="180" height="40" rx="4" fill="#ffffff" stroke="#1a7f37"/>
   <text x="535" y="275" text-anchor="middle">otlp receiver</text>
   <text x="535" y="290" text-anchor="middle">+ bearertokenauth</text>
@@ -127,7 +132,7 @@
   <text x="1052" y="418" text-anchor="middle">notebooks (Python, R),</text>
   <text x="1052" y="436" text-anchor="middle">Grafana or Superset</text>
   <line x1="965" y1="420" x2="905" y2="420" stroke="#24292f" stroke-width="1.5" marker-start="url(#a)" marker-end="url(#a)"/>
-  <text x="935" y="412" text-anchor="middle" font-weight="600">SQL</text>
+  <text x="950" y="412" text-anchor="middle" font-weight="600">SQL</text>
 </g>
 
 <!-- Legend and key note -->
