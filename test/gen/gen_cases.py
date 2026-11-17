@@ -3764,6 +3764,35 @@ def c77_more():
                  DIMS("rewrite", "opaque", "unknown", opaque="size-share"), [s0])
 
 
+def c77_capped():
+    # A bill below the media price (check 11) leaves no room, so the counts are dropped. The cause is the media:
+    # media_tokens is reported, and opaque_tokens is not (review of #81, round 2).
+    TC = "cg:sweep:c77c"
+    C = [("m0", 1000), ("img", 0), ("th", 0), ("m3", 500)]
+    F = [("m0f", 500), ("img", 0), ("th", 0), ("m3", 500)]
+
+    def cbody(msgs):
+        b = c77_body(msgs, {2: (3000, 1000)})
+        b["pos"][1]["bytes"] += 2000000
+        b["pos"][1]["media"] = 2000000
+        return b
+
+    op = rewrite("o1", "context-guru.sweep", "messages", 0, 1000, 500, TC)
+    cbp = [{"pos": P("messages", 3), "ttl": "5m"}]
+    billed = 2350
+    s0 = step(0, "r0", cbody(C), cbody(F), cbp, cbp, [op], U(write=billed),
+              expect("unknown", U(write=billed + 100), [eop(TC, saved=TT(cacheWrite5m=100))],
+                     unpriced=[{"reason": "penalty_unknown"}], checks=["media_tokens"]))
+    write_review("opaque/counted-thinking-media-capped/5m", 77,
+                 "One request. The forwarded body holds 4,000 text bytes, an image of 2,000,000 bytes (8,000 tokens at the "
+                 "fixed price) and a thinking block counted at 1,000 tokens. The provider bills 2,350 tokens, below the media "
+                 "price, so check 11 fails: the library cuts the media to the bill less the least the text can cost (4,000 x "
+                 "0.05 = 200 tokens). No room is left for the count, so the counts are dropped, and the signature's fixed "
+                 "price is cut to 0. The cause is the media, so media_tokens is reported and opaque_tokens is not. The "
+                 "operator cuts m0 by 2,000 bytes: 2,000 x 0.05 = 100 tokens saved, the lowest the bill allows.",
+                 DIMS("rewrite", "opaque", "unknown", opaque="media-capped"), [s0])
+
+
 if __name__ == "__main__":
     os.makedirs(OUT, exist_ok=True)
     for old in os.listdir(OUT):  # the generator owns this directory: drop cases that no longer exist
@@ -3771,5 +3800,5 @@ if __name__ == "__main__":
             os.remove(os.path.join(OUT, old))
     for f in (ex12, ex3, ex4, ex5, ex67, ex8, shared_prefix_cases, ex9, c01, c02, c03_04, c05, c06, c07, c08, c09, c10, c11, c12, c_threads, c_client_compaction, c_client_trim_keeps_head, c_client_rewrite_in_place_ends_replay, c_client_compaction_before_any_change, c_inplace_taken_over_by_another_operator, c_client_tail_edit_keeps_replay, c_client_tail_compaction_ends_replay, c_client_two_compactions, c_clock, c_ttl, c_mix,
               c14, s909, r909_system_hash, c15, c16, c17, c18, a1, a2, a3, a4_b3, b1_b2, b4, b5, c1_, c2_, c2b, c3_, c5, d2, d3, d4,
-              d5, d6, e2, e345, f245, h2, h5, r9, i53, i54, i56, i55_split, i55_no_cache, i55_media_one_side, r14, r21, r20, r20b, c42, c42b, c42c, c42d, c70d, c43, c73, c77, c77_more, i44, c49, i52_all, d60, d60_1h, d60_loaded):
+              d5, d6, e2, e345, f245, h2, h5, r9, i53, i54, i56, i55_split, i55_no_cache, i55_media_one_side, r14, r21, r20, r20b, c42, c42b, c42c, c42d, c70d, c43, c73, c77, c77_more, c77_capped, i44, c49, i52_all, d60, d60_1h, d60_loaded):
         f()

@@ -750,6 +750,7 @@ hand. Text is 4 bytes a token. The operator drops one thinking block: its signat
 | `opaque/counted-only-block-dropped/5m` | The operator drops the only counted block (1,000 tokens), so the forwarded body holds no count. The guard has nothing to test, and the drop saves 1,000 tokens. |
 | `opaque/counted-size-opaque-tokens/5m` | One position holds two blocks (1,000 and 500 tokens). The size of the dropped block sets `Size.OpaqueTokens` 1,000, which wins over the body's count. The drop saves 1,000 tokens. |
 | `opaque/counted-size-share/5m` | The same drop with no `Size.OpaqueTokens`, and equal counts (750 each). The size holds half the range's opaque bytes and gets half its count: 750 tokens. |
+| `opaque/counted-thinking-media-capped/5m` | A counted block beside an image, with a bill below the media price. No room is left, so the counts are dropped. Check `media_tokens` fails, and `opaque_tokens` does not, because the media is the cause. |
 | `opaque/counted-thinking-not-billed/5m` | A model that strips thinking. The count in the forwarded body (4,000) is above the room the bill leaves (2,928). The library drops the counts, uses the fixed price, and fails `opaque_tokens`. The drop saves 16 tokens. |
 
 The unit tests are in `internal/engine/opaque_count_test.go`.

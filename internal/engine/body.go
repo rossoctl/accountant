@@ -251,10 +251,11 @@ type ratio struct {
 // the rest. The price never takes more than the bill leaves after the media price and the least the
 // text can cost (minTokensPerByte for each text byte), the room. If the counts of the forwarded body,
 // plus the fixed price of its uncounted opaque bytes, do not fit in the room, the provider did not bill
-// them: the model strips thinking (Sonnet 4.5), or the host's counts are wrong. Only counts in the
-// forwarded body can be tested: with none there, the counts of the client body are used as they are. The library then drops the counts for the request, prices every opaque byte at the fixed
-// price, and marks countsDropped (check 14). If the fixed price is above the room, it is cut to the
-// room. So the opaque price never cuts the media price, and it never fails check 9 or 11.
+// them: the model strips thinking (Sonnet 4.5), or the host's counts are wrong. The library then drops
+// the counts for the request, prices every opaque byte at the fixed price, and marks countsDropped
+// (check 14). Only counts in the forwarded body can be tested: with none there, the counts of the
+// client body are used as they are. If the fixed price is above the room, it is cut to the room. So
+// the opaque price never cuts the media price, and it never fails check 9 or 11.
 //
 // When the fixed media price is above the bill, the price is wrong, because the provider cannot bill
 // less than the media costs. The library then gives the media the bill less the least the text can cost,
@@ -276,7 +277,9 @@ func newRatio(billed int, b Body) ratio {
 		r.counts, r.countsDropped = false, true
 	}
 	// The fixed price covers the uncounted opaque bytes (all of them when the counts are dropped). It is
-	// cut to the room the counts leave.
+	// cut to the room the counts leave. With a counted block in the forwarded body and the counts used,
+	// the guard above already makes it fit, so the cut acts only when the forwarded body holds no count
+	// or the counts are dropped.
 	fixed, left := opaque, room
 	if r.counts {
 		fixed, left = opaque-all.counted, room-all.ctok

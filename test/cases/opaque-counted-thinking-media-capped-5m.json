@@ -1,0 +1,165 @@
+{
+ "id": "opaque/counted-thinking-media-capped/5m",
+ "description": "One request. The forwarded body holds 4,000 text bytes, an image of 2,000,000 bytes (8,000 tokens at the fixed price) and a thinking block counted at 1,000 tokens. The provider bills 2,350 tokens, below the media price, so check 11 fails: the library cuts the media to the bill less the least the text can cost (4,000 x 0.05 = 200 tokens). No room is left for the count, so the counts are dropped, and the signature's fixed price is cut to 0. The cause is the media, so media_tokens is reported and opaque_tokens is not. The operator cuts m0 by 2,000 bytes: 2,000 x 0.05 = 100 tokens saved, the lowest the bill allows.",
+ "source": "issue_cases.md#accountant-77",
+ "dims": {
+  "kind": "rewrite",
+  "position": "opaque",
+  "cache": "unknown",
+  "ttl": "5m",
+  "lifetime": "exact",
+  "opaque": "media-capped"
+ },
+ "rates": "fixture-v1",
+ "steps": [
+  {
+   "begin": {
+    "meta": {
+     "requestId": "r0",
+     "session": "s1",
+     "model": "agent-model",
+     "at": "2026-03-02T09:00:00Z",
+     "billing": {
+      "mode": "api"
+     }
+    },
+    "client": {
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "pos": [
+      {
+       "hash": 625792648282977192,
+       "bytes": 4000
+      },
+      {
+       "hash": 17956178250200053669,
+       "bytes": 2000000,
+       "media": 2000000
+      },
+      {
+       "hash": 16738536532465247491,
+       "bytes": 3000,
+       "opaque": 3000,
+       "opaqueCounted": 3000,
+       "opaqueTokens": 1000
+      },
+      {
+       "hash": 3985296170568568513,
+       "bytes": 2000
+      }
+     ]
+    },
+    "clientBreakpoints": [
+     {
+      "pos": {
+       "section": "messages",
+       "index": 3
+      },
+      "ttl": "5m"
+     }
+    ]
+   },
+   "add": [
+    {
+     "id": "o1",
+     "kind": "rewrite",
+     "operator": "context-guru.sweep",
+     "at": {
+      "section": "messages",
+      "index": 0
+     },
+     "sizeBefore": {
+      "bytes": 4000
+     },
+     "sizeAfter": {
+      "bytes": 2000
+     },
+     "changeId": "cg:sweep:c77c"
+    }
+   ],
+   "end": {
+    "thread": {
+     "id": "main"
+    },
+    "forwarded": {
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "pos": [
+      {
+       "hash": 13223641232931323534,
+       "bytes": 2000
+      },
+      {
+       "hash": 17348059875489913911,
+       "bytes": 2000000,
+       "media": 2000000
+      },
+      {
+       "hash": 2007778766839635033,
+       "bytes": 3000,
+       "opaque": 3000,
+       "opaqueCounted": 3000,
+       "opaqueTokens": 1000
+      },
+      {
+       "hash": 10289017858270694087,
+       "bytes": 2000
+      }
+     ]
+    },
+    "breakpoints": [
+     {
+      "pos": {
+       "section": "messages",
+       "index": 3
+      },
+      "ttl": "5m"
+     }
+    ],
+    "facts": {
+     "ttl": "5m",
+     "lifetime": "exact"
+    }
+   },
+   "usage": {
+    "input": 0,
+    "cacheRead": 0,
+    "cacheWrite": 2350,
+    "cacheWrite1h": 0
+   },
+   "expected": {
+    "phase": "unknown",
+    "baselineUsage": {
+     "input": 0,
+     "cacheRead": 0,
+     "cacheWrite": 2450,
+     "cacheWrite1h": 0
+    },
+    "ops": [
+     {
+      "changeId": "cg:sweep:c77c",
+      "saved": {
+       "cacheWrite5m": 100
+      },
+      "caused": {},
+      "estimated": true
+     }
+    ],
+    "unpriced": [
+     {
+      "reason": "penalty_unknown"
+     }
+    ],
+    "checks": [
+     "media_tokens"
+    ]
+   }
+  }
+ ]
+}
