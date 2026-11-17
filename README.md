@@ -91,7 +91,9 @@ Not implemented yet. `Compute` adds no figure for these, and a zero there is not
 - A `MessageSplice` for whole tools or system blocks. A splice moves message positions only (design §4.3).
 
 The full list is the "Not implemented" section of [internal/engine/doc.go](internal/engine/doc.go). Checks 2
-(order) and 5 (attribution) are not missing: they are reserved numbers, not checks (design §6.5). The Trackers hold about 10,000 threads and drop the oldest above that. A dropped thread loses
+(order) and 5 (attribution) are not missing: they are reserved numbers, not checks (design §6.5).
+
+The Trackers hold about 10,000 threads and drop the oldest above that. A dropped thread loses
 its active changes (design §6.1, Memory).
 
 ## License
