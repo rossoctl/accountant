@@ -1713,11 +1713,13 @@ Where a question has test cases, a host that compares them with its own code mar
    (accountant#11), as is the exclusion of base64 media from the ratio. A content class and an error
    range for each `PricedOp` are still open.
 
-- <a id="q4"></a>**Q4. Where the previous request's hashes live.** The counterfactual needs the previous request's
-   hashes on the same thread. The current design (D12, wiring document) has the host keep one
-   fingerprint for each thread. An alternative is a push model: components push facts with an
-   identity, and the receiver keeps no state. Then the hashes travel in each push, or the context operator
-   keeps them, and who classifies a cache effect changes with it. Not decided.
+- <a id="q4"></a>**Q4. Where the previous request's hashes live (decided, kept here for the record).** The
+   counterfactual needs the previous request's hashes on the same thread. Decided: the host keeps one
+   Tracker for each thread, and the Tracker keeps the fingerprint (D12, §6.1, wiring document W5). The
+   library and the context-guru proxy are built this way. The alternative was a push model: components
+   push facts with an identity, and the receiver keeps no state. Then the hashes travel in each push, or
+   the context operator keeps them, and who classifies a cache effect changes with it. It is not
+   pursued. Q5 applies only if it is taken up again.
 
 - <a id="q5"></a>**Q5. Label volume.** Pushing `change` and `request` as labels on every series gives many series in a
    long session. This must be measured before the push model is fixed.
