@@ -1204,17 +1204,11 @@ func (c *calcState) cacheEffects(res *Result) {
 		return
 	}
 	fwdFDCli := mustFlat(c.client, c.fwdToClient(c.fwd.position(c.fwdFD)))
-	modelChanged := c.clientModelChange()
 	switch {
-	case c.fwdFD <= c.prevExt && fwdFDCli < c.clientFD && modelChanged: // row 1, the client changed the model
-		c.modelBreak(res) // accountant#69: the client body misses too, so no plugin is charged
-		return
 	case c.fwdFD <= c.prevExt && fwdFDCli < c.clientFD: // row 1
-		if op := c.modelSetting(); op != nil && c.modelDiffers() {
-			c.settingBreak(res, *op) // the plugin that changed the model broke the whole prefix
-			return
+		if !c.modelChangeBreak(res) {
+			c.addBreak(res, c.readEnd, c.changeAt(c.fwdFD))
 		}
-		c.addBreak(res, c.readEnd, c.changeAt(c.fwdFD))
 		return
 	case c.clientFD <= c.prevExtCli && fwdFDCli >= c.clientFD: // row 2
 		c.addBreak(res, c.readEnd, "")
@@ -1231,59 +1225,74 @@ func (c *calcState) cacheEffects(res *Result) {
 	}
 	predicted := c.ratio.upTo(c.fwd, expect)
 	low := c.usage.CacheRead+c.r.facts.Provider.tolerance(predicted) < predicted // the one-block tolerance (row 4)
-	if !low {
+	if !low || c.modelChangeBreak(res) {
 		return
 	}
-	if op := c.reportedSetting(); op != nil && !modelChanged { // row 3
+	if op := c.reportedSetting(); op != nil { // row 3
 		c.settingBreak(res, *op)
-		return
-	}
-	if modelChanged {
-		c.modelBreak(res)
-		return
-	}
-	if c.modelDiffers() {
-		// a model setting the thread knows changed the model, and no well-formed report names it now: an
-		// ended router change (Q12) or a report that failed a check (R45). The break counts.
-		c.addBreak(res, c.readEnd, "")
 		return
 	}
 	c.addBreak(res, c.readEnd, "") // row 4: the entry was lost early
 	c.inBaseline(res)
 }
 
-// modelDiffers reports that the request names a different model from the thread's previous one.
-func (c *calcState) modelDiffers() bool {
+// modelChangeBreak adds the break of rows 1, 3 and 4 when the model differs from the thread's previous
+// request's ("A model change", §5.2), and reports whether it did. The provider keeps a cache for each
+// model, so the whole prefix misses, and the operations decide who pays:
+//   - a model setting reported on this request changed the model: that operation pays;
+//   - the change ends an active model setting, or a model setting failed a check: the break counts,
+//     with no ChangeID (an ended change, Q12; a doubtful figure only lowers a saving, R45);
+//   - else the client changed the model: the client body misses too, so the break is in the baseline.
+func (c *calcState) modelChangeBreak(res *Result) bool {
 	prev, cur := c.s.PrevPrint.modelID(), c.r.meta.modelID()
-	return prev != "" && cur != "" && prev != cur
-}
-
-// clientModelChange reports a model change that no operation caused: the model differs, and no
-// setting operation the thread knows names the model. The provider keeps a cache for each model, so
-// the client body would have missed too. A model setting reported on this request caused the change
-// (rows 1 and 3 charge it). An active one from an earlier request that the host no longer reports
-// ended, and the miss is that ended change's (Q12). A reported one that fails a check cannot be
-// priced, and it still keeps the break out of the baseline: a doubtful figure only lowers a saving
-// (R45). A DryRun changed nothing, so it does not count.
-func (c *calcState) clientModelChange() bool {
-	if !c.modelDiffers() {
+	if prev == "" || cur == "" || prev == cur {
 		return false
 	}
-	for _, it := range c.items {
-		if it.op.Kind == KindSetting && !it.op.DryRun {
-			if _, ok := it.op.Settings["model"]; ok {
-				return false
-			}
-		}
+	if op := c.modelSetting(); op != nil {
+		c.settingBreak(res, *op)
+		return true
 	}
+	if c.pluginModelChange() {
+		c.addBreak(res, c.readEnd, "")
+		return true
+	}
+	c.addBreak(res, c.readEnd, "")
+	c.inBaseline(res)
+	res.CacheEffects[len(res.CacheEffects)-1].Cause = CauseModelChanged
 	return true
 }
 
-// modelSetting is the setting operation reported on this request that changes the model, if any.
-func (c *calcState) modelSetting() *Operation {
+// pluginModelChange reports a model setting, with no well-formed report on this request, that still
+// explains the change: one reported now that failed a check, or an active one that this request
+// ends. An active setting ends when the previous request ran on its To and this one does not. An
+// active one whose To was not the previous model ended earlier: it does not explain this change. A
+// DryRun changed nothing.
+func (c *calcState) pluginModelChange() bool {
+	pf := c.s.PrevPrint
+	for _, it := range c.items {
+		sc, ok := it.op.Settings["model"]
+		if !ok || it.op.Kind != KindSetting || it.op.DryRun {
+			continue
+		}
+		if !it.active || (sc.To != nil && (*sc.To == pf.Model || *sc.To == pf.modelID())) {
+			return true
+		}
+	}
+	return false
+}
+
+// modelSetting is the well-formed setting operation reported on this request that changes the model.
+func (c *calcState) modelSetting() *Operation { return c.setting("model") }
+
+// reportedSetting is the first well-formed setting operation reported on this request (§5.2 row 3).
+func (c *calcState) reportedSetting() *Operation { return c.setting("") }
+
+// setting is the first well-formed setting operation reported on this request; with a key, the first
+// one that changes that setting.
+func (c *calcState) setting(key string) *Operation {
 	for _, it := range c.items {
 		if !it.active && it.bad == "" && !it.op.DryRun && it.op.Kind == KindSetting {
-			if _, ok := it.op.Settings["model"]; ok {
+			if _, ok := it.op.Settings[key]; key == "" || ok {
 				return &it.op
 			}
 		}
@@ -1299,23 +1308,6 @@ func (c *calcState) settingBreak(res *Result, op Operation) {
 		res.Unpriced = append(res.Unpriced, Unpriced{OpID: op.ID, Reason: ReasonPenaltyUnknown})
 	}
 	c.addBreak(res, from, op.ChangeID)
-}
-
-// modelBreak adds the break of a model change that no operation caused: in the baseline, with
-// Cause model_changed and no ChangeID.
-func (c *calcState) modelBreak(res *Result) {
-	c.addBreak(res, c.readEnd, "")
-	c.inBaseline(res)
-	res.CacheEffects[len(res.CacheEffects)-1].Cause = CauseModelChanged
-}
-
-func (c *calcState) reportedSetting() *Operation {
-	for _, it := range c.items {
-		if !it.active && it.bad == "" && !it.op.DryRun && it.op.Kind == KindSetting {
-			return &it.op
-		}
-	}
-	return nil
 }
 
 // settingFrom is the start of a setting break: the earliest SettingChange.At, snapped down to the

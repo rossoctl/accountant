@@ -944,18 +944,22 @@ A model change changes these rules in rows 1, 3 and 4 (see the next paragraph).
 A host that sums cache effects into a net skips each break with `InBaseline`.
 
 **A model change** (accountant#69). The request names a different model from the thread's previous one.
-The provider keeps a cache for each model, so the whole prefix misses. Who pays depends on the `setting`
-operations with a `model` key that the thread knows (reported now or active), not counting a `DryRun`:
+The provider keeps a cache for each model, so the whole prefix misses. Rows 1, 3 and 4 then decide who
+pays from the `setting` operations with a `model` key, not counting a `DryRun`. The first case that
+applies wins:
 
-- **None: the client changed the model.** The client body misses too. Rows 1, 3 and 4 add the break with
-  no `ChangeID`, set `InBaseline` and set `Cause` to `model_changed`. Row 1 does not name the change at
-  `fwdFirstDiff`, and row 3 does not charge a param change reported on the same request.
-- **One is reported on this request: a plugin (an inference router) changed the model.** Row 1 and row 3
-  add the break of that operation, as row 3 describes. Row 1 does not name the change at `fwdFirstDiff`.
-- **Only an active one, or a reported one that fails a check.** An active one that the host no longer
-  reports ended (Q12): the model went back without it. A reported one that fails a check cannot be
-  priced (§6.4). In both cases the break counts, with no `ChangeID` and no `Cause`, so the doubtful
-  figure lowers the saving and does not raise it ([R45](spec.md#r45)).
+1. **A well-formed one is reported on this request: a plugin (an inference router) changed the model.**
+   Rows 1 and 3 add the break of that operation, as row 3 describes. Row 1 does not name the change at
+   `fwdFirstDiff`, and row 3 does not name another reported setting.
+2. **This request ends an active one, or a reported one fails a check.** An active setting ends when the
+   previous request ran on its `To` and this one does not: the model went back without the plugin
+   (Q12). A reported one that fails a check cannot be priced (§6.4). The break counts, with no
+   `ChangeID` and no `Cause`, so the doubtful figure lowers the saving and does not raise it
+   ([R45](spec.md#r45)).
+3. **Else the client changed the model.** The client body misses too. The break has no `ChangeID`,
+   sets `InBaseline` and sets `Cause` to `model_changed`. An active setting whose `To` was not the
+   previous model ended on an earlier request, so it does not change this case. A setting stays in
+   `Active` after it ends (§4.6), and this rule keeps it from charging every later model switch.
 
 Row 2 is unchanged in each case: its break is already in the baseline.
 

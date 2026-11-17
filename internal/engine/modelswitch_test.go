@@ -130,3 +130,63 @@ func TestAModelChangeWinsOverAReportedParamChange(t *testing.T) {
 		t.Fatalf("break %+v: want in the baseline, Cause %q, no ChangeID", br, CauseModelChanged)
 	}
 }
+
+// msEffort is a setting operation that changes only effort.
+func msEffort(id string) Operation {
+	hi := "high"
+	return Operation{ID: id, Kind: KindSetting, Operator: "router", ChangeID: "rt:effort",
+		Settings: map[string]SettingChange{"effort": {To: &hi, At: ptr(sys(0))}}}
+}
+
+// msRun4 sends requests on equal bodies that only append, so a break is row 3 or row 4. Request k
+// runs on models[k] with ops[k], and nothing is read after the first one.
+func msRun4(t *testing.T, models []string, ops [][]Operation) Result {
+	t.Helper()
+	m := msgs(4, 8000)
+	ts := NewTrackers()
+	var res Result
+	for k, model := range models {
+		u := Usage{CacheWrite: 33000 + 1000*k}
+		res = runModel(ts, model, req{at: t0.Add(time.Duration(k) * time.Minute), client: mk(nil, msSys, m),
+			clientBPs: bps5(sys(0), msg(len(m)-1)), ops: ops[k], facts: exact5m, usage: u})
+		m = with(m, b("n", 1000))
+	}
+	return res
+}
+
+// A router setting stays active after it ends. Only the request that ends it is charged: a later
+// model switch by the client is in the baseline again.
+func TestAStaleRouterSettingDoesNotChargeALaterClientSwitch(t *testing.T) {
+	small, large, opus := "claude-haiku-4-5", "claude-sonnet-4-5", "claude-opus-4-5"
+	res := msRun4(t, []string{small, large, large, opus},
+		[][]Operation{{msRoute("op1", "rt:model", large, small)}, nil, nil, nil})
+	br := effect(t, res, EffectBreak)
+	if !br.InBaseline || br.Cause != CauseModelChanged || br.ChangeID != "" {
+		t.Fatalf("break %+v: want in the baseline, Cause %q, no ChangeID", br, CauseModelChanged)
+	}
+}
+
+// Row 3 with a model change: the operations decide who pays, not the first reported setting.
+func TestRow3WithAModelChangeChargesTheModelOperation(t *testing.T) {
+	small, large := "claude-haiku-4-5", "claude-sonnet-4-5"
+	bad := msRoute("op2", "rt:model", large, small)
+	bad.SizeBefore = Size{Bytes: -1}
+	for _, c := range []struct {
+		name       string
+		models     []string
+		ops        [][]Operation
+		wantChange string
+	}{
+		{"effort, then model: the model operation pays", []string{large, small},
+			[][]Operation{nil, {msEffort("op1"), msRoute("op2", "rt:model", large, small)}}, "rt:model"},
+		{"the router ends, and effort is reported: the ended change pays", []string{small, large},
+			[][]Operation{{msRoute("op1", "rt:model", large, small)}, {msEffort("op2")}}, ""},
+		{"a bad model setting and a good effort: nobody is named", []string{large, small},
+			[][]Operation{nil, {msEffort("op1"), bad}}, ""},
+	} {
+		br := effect(t, msRun4(t, c.models, c.ops), EffectBreak)
+		if br.InBaseline || br.Cause != "" || br.ChangeID != c.wantChange {
+			t.Errorf("%s: break %+v, want a charged break of %q", c.name, br, c.wantChange)
+		}
+	}
+}
