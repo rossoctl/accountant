@@ -1669,10 +1669,20 @@ not money. The keep-alive window still adds up (§4.4), in usage-limit units.
 
 **Detection.** The host reads `Billing.Mode` from the credential type on the request: an API key
 means `api`; an OAuth token from a subscription login means `subscription`. If it cannot tell, it
-uses `unknown`. Cortex and the proxy must use one rule, so the rule is to be a function in `accountant`:
-`accountant.BillingFrom(headers)`. **Not built yet:** the library has no such function, and the
-context-guru proxy sets `BillingAPI` on every request (wiring W6.6). The function is to read only the credential type and is to return no part of the credential
-([R2](spec.md#r2)). Both hosts must call it on the **client's** upstream credential header (`x-api-key` or
+uses `unknown`. Cortex and the proxy must use one rule, so the rule is a function in `accountant`:
+`accountant.BillingFrom(h http.Header) Billing`. It reads only the credential's type and returns no
+part of the credential ([R2](spec.md#r2)):
+
+- `x-api-key` present, any value, means `api`.
+- `Authorization: Bearer <token>`: an Anthropic API key (`sk-ant-api...`) or an OpenAI API key
+  (`sk-...`, including the project-scoped `sk-proj-...`) means `api`. An Anthropic OAuth token from
+  a subscription login (`sk-ant-oat...`) or a JWT access token, as a ChatGPT login sends (three
+  dot-separated base64url segments), means `subscription`.
+  - Anything else — `Authorization: Basic ...`, another scheme, or no credential at all — means
+    `unknown`.
+- Header names are matched case-insensitively.
+
+Both hosts must call it on the **client's** upstream credential header (`x-api-key` or
 `Authorization`) before anything rewrites it — not on the proxy's control-plane login
 (`proxy/authmode.go`), which is a different credential. A contract test in each host feeds the same
 captured headers and expects the same `Billing.Mode`.

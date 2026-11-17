@@ -52,7 +52,11 @@
 // keeps for each thread; none of that is part of the API.
 package accountant
 
-import "github.com/rossoctl/accountant/internal/engine"
+import (
+	"net/http"
+
+	"github.com/rossoctl/accountant/internal/engine"
+)
 
 // Entry points.
 type (
@@ -73,6 +77,14 @@ func ComputeStandalone(ops RequestOps) Result { return engine.ComputeStandalone(
 // PingOps turns a keep-alive [Ping] into a [RequestOps] with one spend, for [ComputeStandalone], and
 // returns the [PingFacts] the thread's next real request passes in [EntryFacts].
 func PingOps(p Ping, b Billing) (RequestOps, PingFacts) { return engine.PingOps(p, b) }
+
+// BillingFrom reads the client's upstream credential header (x-api-key or Authorization, as the
+// request arrived, before any plugin rewrites it) and returns the [Billing] it implies: an API key
+// gives [BillingAPI]; an OAuth token from a subscription login gives [BillingSubscription]; anything
+// else, or no credential, gives [BillingUnknown]. It reads only the credential's type and returns no
+// part of the credential (R2). Cortex and the context-guru proxy both call this, so the two hosts
+// share one rule (design §7.1).
+func BillingFrom(h http.Header) Billing { return engine.BillingFrom(h) }
 
 // SharedWarmFrom returns the [EntryFacts].SharedWarm of a request that forwarded fwd: the last
 // position that one of the siblings kept warm (R54). The host chooses the [Sibling] list.
