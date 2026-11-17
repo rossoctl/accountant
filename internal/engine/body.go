@@ -249,9 +249,10 @@ type ratio struct {
 //
 // Opaque bytes get their price first: the host's tokens for the counted bytes and the fixed price for
 // the rest. The price never takes more than the bill leaves after the media price and the least the
-// text can cost (minTokensPerByte for each text byte), the room. If the counts alone do not fit in the
-// room, the provider did not bill them: the model strips thinking (Sonnet 4.5), or the host's counts
-// are wrong. The library then drops the counts for the request, prices every opaque byte at the fixed
+// text can cost (minTokensPerByte for each text byte), the room. If the counts of the forwarded body,
+// plus the fixed price of its uncounted opaque bytes, do not fit in the room, the provider did not bill
+// them: the model strips thinking (Sonnet 4.5), or the host's counts are wrong. Only counts in the
+// forwarded body can be tested: with none there, the counts of the client body are used as they are. The library then drops the counts for the request, prices every opaque byte at the fixed
 // price, and marks countsDropped (check 14). If the fixed price is above the room, it is cut to the
 // room. So the opaque price never cuts the media price, and it never fails check 9 or 11.
 //
@@ -268,12 +269,20 @@ func newRatio(billed int, b Body) ratio {
 	floor := int(math.Ceil(minTokensPerByte * float64(max(text, 0))))
 	room := max(billed-media/mediaBytesPerToken-floor, 0)
 	r := ratio{mediaTok: 1, mediaPer: mediaBytesPerToken, opqTok: 1, opqPer: opaqueBytesPerToken}
-	if all.counted > 0 {
-		r.counts = all.ctok+(opaque-all.counted)/opaqueBytesPerToken <= room
-		r.countsDropped = !r.counts
+	// The counts are used unless the forwarded body proves them wrong. A forwarded body with no counted
+	// block proves nothing, so the counts of the client body (a block the operator dropped) still apply.
+	r.counts = true
+	if all.counted > 0 && all.ctok+(opaque-all.counted)/opaqueBytesPerToken > room {
+		r.counts, r.countsDropped = false, true
 	}
-	if !r.counts && opaque/opaqueBytesPerToken > room {
-		r.opqTok, r.opqPer = room, opaque
+	// The fixed price covers the uncounted opaque bytes (all of them when the counts are dropped). It is
+	// cut to the room the counts leave.
+	fixed, left := opaque, room
+	if r.counts {
+		fixed, left = opaque-all.counted, room-all.ctok
+	}
+	if fixed/opaqueBytesPerToken > left {
+		r.opqTok, r.opqPer = left, fixed
 	}
 	billed -= r.opaqueOf(all.nonText)
 	r.tokens, r.bytes = billed-media/mediaBytesPerToken, text

@@ -747,6 +747,9 @@ hand. Text is 4 bytes a token. The operator drops one thinking block: its signat
 | Case ID | What the spec requires |
 |---|---|
 | `opaque/counted-thinking-blocks/5m` | Two counted blocks (1,000 and 300 tokens). The ratio takes the counts out: (3,900 - 300) / 14,400 = 0.25. The drop saves the block's own count, 1,000 tokens, not the 12 of the fixed price. On the second request the read extent is found with the counts, and the replay saves 1,000 at the read tier. |
+| `opaque/counted-only-block-dropped/5m` | The operator drops the only counted block (1,000 tokens), so the forwarded body holds no count. The guard has nothing to test, and the drop saves 1,000 tokens. |
+| `opaque/counted-size-opaque-tokens/5m` | One position holds two blocks (1,000 and 500 tokens). The size of the dropped block sets `Size.OpaqueTokens` 1,000, which wins over the body's count. The drop saves 1,000 tokens. |
+| `opaque/counted-size-share/5m` | The same drop with no `Size.OpaqueTokens`, and equal counts (750 each). The size holds half the range's opaque bytes and gets half its count: 750 tokens. |
 | `opaque/counted-thinking-not-billed/5m` | A model that strips thinking. The count in the forwarded body (4,000) is above the room the bill leaves (2,928). The library drops the counts, uses the fixed price, and fails `opaque_tokens`. The drop saves 16 tokens. |
 
 The unit tests are in `internal/engine/opaque_count_test.go`.

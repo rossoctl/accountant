@@ -3702,6 +3702,68 @@ def c77():
                  DIMS("rewrite", "opaque", "unknown", opaque="counted-not-billed"), [s0])
 
 
+def c77_more():
+    # The operator drops the only counted block, so the forwarded body holds no count. The guard has nothing
+    # to test, and the client body's count still prices the drop (review of #81).
+    TH = "cg:thinking:c77o"
+    C = [("m0", 1000), ("th1", 100), ("m2", 500)]
+    F = [("m0", 1000), ("th1f", 100), ("m2", 500)]
+    cbp = [{"pos": P("messages", 2), "ttl": "5m"}]
+    billed, base = 1000 + 100 + 500, 1000 + 100 + 1000 + 500
+    s0 = step(0, "r0", c77_body(C, {1: (3000, 1000)}), c77_body(F, {}), cbp, cbp, [c77_drop("o1", TH, 1, 100, 3000)], U(write=billed),
+              expect("unknown", U(write=base), [eop(TH, saved=TT(cacheWrite5m=1000))], unpriced=[{"reason": "penalty_unknown"}]))
+    write_review("opaque/counted-only-block-dropped/5m", 77,
+                 "One request. Message 1 holds 100 text tokens and the only counted thinking block: 3,000 signature bytes, "
+                 "counted at 1,000 tokens. The operator drops it, so the forwarded body holds no count. The forwarded body is "
+                 "billed 1,000 + 100 + 500 = 1,600 tokens, and the ratio is 1,600 / 6,400 = 0.25. A forwarded body with no "
+                 "count cannot prove the counts wrong, so the library uses the client body's count: the drop saves 1,000 "
+                 "tokens, not the 12 of the fixed price.",
+                 DIMS("rewrite", "opaque", "unknown", opaque="counted-only-dropped"), [s0])
+
+    # One position holds two thinking blocks of 3,000 signature bytes each, counted at 1,000 and 500 tokens. The
+    # operator drops the first one and reports a size over that block only. The range holds 6,000 opaque bytes, so
+    # the size's 3,000 are a part of them.
+    C = [("m0", 1000), ("th", 100), ("m2", 500)]
+    F = [("m0", 1000), ("thf", 100), ("m2", 500)]
+    client, fwd = c77_body(C, {1: (6000, 1500)}), c77_body(F, {1: (3000, 500)})
+    billed, base = 1000 + 100 + 500 + 500, 1000 + 100 + 1500 + 500
+
+    def part_drop(change, tokens=None):
+        before = {"bytes": 3000, "opaqueBytes": 3000}
+        if tokens:
+            before["opaqueTokens"] = tokens
+        return {"id": "o1", "kind": "rewrite", "operator": "context-guru.thinking", "at": P("messages", 1),
+                "sizeBefore": before, "sizeAfter": {"bytes": 0}, "changeId": change}
+
+    TK = "cg:thinking:c77k"
+    s0 = step(0, "r0", client, fwd, cbp, cbp, [part_drop(TK, 1000)], U(write=billed),
+              expect("unknown", U(write=base), [eop(TK, saved=TT(cacheWrite5m=1000))], unpriced=[{"reason": "penalty_unknown"}]))
+    write_review("opaque/counted-size-opaque-tokens/5m", 77,
+                 "One request. Message 1 holds 100 text tokens and two thinking blocks of 3,000 signature bytes each, counted "
+                 "at 1,000 and 500 tokens. The operator drops the first block and reports a size of its 3,000 opaque bytes, "
+                 "with Size.OpaqueTokens 1,000: the host knows the block's own count. The forwarded body is billed 1,000 + "
+                 "100 + 500 + 500 = 2,100 tokens; the ratio is (2,100 - 500) / 6,400 = 0.25. The size's count wins over the "
+                 "body's, so the drop saves 1,000 tokens.",
+                 DIMS("rewrite", "opaque", "unknown", opaque="size-opaque-tokens"), [s0])
+
+    # The same drop with no Size.OpaqueTokens, and two blocks of equal count (750 each). The size holds half the
+    # range's opaque bytes, so it gets half the range's count: the share by proportion (rangeMedia).
+    TP = "cg:thinking:c77p"
+    client, fwd = c77_body(C, {1: (6000, 1500)}), c77_body(F, {1: (3000, 750)})
+    billed, base = 1000 + 100 + 500 + 750, 1000 + 100 + 1500 + 500
+    s0 = step(0, "r0", client, fwd, cbp, cbp, [part_drop(TP)], U(write=billed),
+              expect("unknown", U(write=base), [eop(TP, saved=TT(cacheWrite5m=750))], unpriced=[{"reason": "penalty_unknown"}]))
+    write_review("opaque/counted-size-share/5m", 77,
+                 "One request. Message 1 holds 100 text tokens and two thinking blocks of 3,000 signature bytes each, counted "
+                 "at 750 tokens each (1,500 for the position). The operator drops the first block and reports a size of its "
+                 "3,000 opaque bytes, with no Size.OpaqueTokens. The size holds half the range's opaque bytes, so it gets half "
+                 "the range's count: 1,500 x 3,000 / 6,000 = 750 tokens saved. The forwarded body is billed 1,000 + 100 + 500 "
+                 "+ 750 = 2,350 tokens; the ratio is (2,350 - 750) / 6,400 = 0.25. The share is exact here only because the "
+                 "two counts are equal. With unequal counts it is an estimate, and a host that knows the block's count sets "
+                 "Size.OpaqueTokens (previous case).",
+                 DIMS("rewrite", "opaque", "unknown", opaque="size-share"), [s0])
+
+
 if __name__ == "__main__":
     os.makedirs(OUT, exist_ok=True)
     for old in os.listdir(OUT):  # the generator owns this directory: drop cases that no longer exist
@@ -3709,5 +3771,5 @@ if __name__ == "__main__":
             os.remove(os.path.join(OUT, old))
     for f in (ex12, ex3, ex4, ex5, ex67, ex8, shared_prefix_cases, ex9, c01, c02, c03_04, c05, c06, c07, c08, c09, c10, c11, c12, c_threads, c_client_compaction, c_client_trim_keeps_head, c_client_rewrite_in_place_ends_replay, c_client_compaction_before_any_change, c_inplace_taken_over_by_another_operator, c_client_tail_edit_keeps_replay, c_client_tail_compaction_ends_replay, c_client_two_compactions, c_clock, c_ttl, c_mix,
               c14, s909, r909_system_hash, c15, c16, c17, c18, a1, a2, a3, a4_b3, b1_b2, b4, b5, c1_, c2_, c2b, c3_, c5, d2, d3, d4,
-              d5, d6, e2, e345, f245, h2, h5, r9, i53, i54, i56, i55_split, i55_no_cache, i55_media_one_side, r14, r21, r20, r20b, c42, c42b, c42c, c42d, c70d, c43, c73, c77, i44, c49, i52_all, d60, d60_1h, d60_loaded):
+              d5, d6, e2, e345, f245, h2, h5, r9, i53, i54, i56, i55_split, i55_no_cache, i55_media_one_side, r14, r21, r20, r20b, c42, c42b, c42c, c42d, c70d, c43, c73, c77, c77_more, i44, c49, i52_all, d60, d60_1h, d60_loaded):
         f()

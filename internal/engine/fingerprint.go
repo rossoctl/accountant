@@ -87,7 +87,8 @@ type OpaqueCount func(key uint64) (tokens int, ok bool)
 
 // NewBodyCounted is NewBody with the host's token counts for opaque strings (design D16). For each
 // thinking signature and each redacted_thinking data string it finds, it calls count with the string's
-// OpaqueKey. A known count goes to PosHash.OpaqueCounted and PosHash.OpaqueTokens. A nil count is NewBody.
+// OpaqueKey. A known count goes to PosHash.OpaqueCounted and PosHash.OpaqueTokens. A negative count is
+// no count: that block keeps the fixed price. A nil count is NewBody.
 // The hashes and the sizes do not depend on count.
 func NewBodyCounted(tools, system, messages [][]byte, count OpaqueCount) Body {
 	b := Body{Start: [3]int{0, len(tools), len(tools) + len(system)}}

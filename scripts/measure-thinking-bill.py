@@ -38,6 +38,10 @@ def post(path, body, tag):
             if e.code in (429, 500, 502, 503, 529) and attempt < 3:
                 time.sleep(5 * (attempt + 1)); continue
             raise SystemExit(f"{tag}: HTTP {e.code}: {msg}")
+        except urllib.error.URLError as e:  # a timeout or a dropped connection
+            if attempt < 3:
+                time.sleep(5 * (attempt + 1)); continue
+            raise SystemExit(f"{tag}: {e.reason}")
     with open(os.path.join(OUT, tag + ".json"), "w") as f:
         json.dump({"request": body, "response": d}, f, indent=1)
     return d

@@ -1987,7 +1987,9 @@ func (c *calcState) checks(res *Result) {
 			Detail: fmt.Sprintf("media price=%d tokens billed=%d: the bill is below the media price: the media is cut to %d tokens: %s",
 				media, c.usage.Input+c.usage.CacheRead+c.usage.CacheWrite, c.ratio.mediaTok, note)})
 	}
-	if c.ratio.countsDropped && !c.noUsage && c.invalid == "" {
+	// With the media capped (check 11) the room is 0, so any count is dropped. The cause is the media,
+	// and media_tokens already reports it.
+	if c.ratio.countsDropped && !c.ratio.capped && !c.noUsage && c.invalid == "" {
 		all := c.fwd.between(-1, len(c.fwd.Pos)-1)
 		res.Checks = append(res.Checks, CheckFailure{Check: CheckOpaqueTokens,
 			Detail: fmt.Sprintf("opaque counts=%d tokens for %d of %d opaque bytes, tokens billed=%d: the counts are above what the bill leaves: the fixed price is used",
