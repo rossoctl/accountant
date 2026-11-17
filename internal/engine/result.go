@@ -56,6 +56,7 @@ const (
 	CheckMediaTokens  = ReasonMediaTokens
 	CheckSizeTokens   = "size_tokens"
 	CheckSizeRange    = ReasonSizeRange
+	CheckOpaqueTokens = "opaque_tokens"
 )
 
 // CheckFailure is a failed check (§6.5). A failure does not stop pricing, except size_range, which unprices the one operation (§6.5, check 13).

@@ -1,0 +1,153 @@
+{
+ "id": "opaque/counted-size-share/5m",
+ "description": "One request. Message 1 holds 100 text tokens and two thinking blocks of 3,000 signature bytes each, counted at 750 tokens each (1,500 for the position). The operator drops the first block and reports a size of its 3,000 opaque bytes, with no Size.OpaqueTokens. The size holds half the range's opaque bytes, so it gets half the range's count: 1,500 x 3,000 / 6,000 = 750 tokens saved. The forwarded body is billed 1,000 + 100 + 500 + 750 = 2,350 tokens; the ratio is (2,350 - 750) / 6,400 = 0.25. The share is exact here only because the two counts are equal. With unequal counts it is an estimate, and a host that knows the block's count sets Size.OpaqueTokens (previous case).",
+ "source": "issue_cases.md#accountant-77",
+ "dims": {
+  "kind": "rewrite",
+  "position": "opaque",
+  "cache": "unknown",
+  "ttl": "5m",
+  "lifetime": "exact",
+  "opaque": "size-share"
+ },
+ "rates": "fixture-v1",
+ "steps": [
+  {
+   "begin": {
+    "meta": {
+     "requestId": "r0",
+     "session": "s1",
+     "model": "agent-model",
+     "at": "2026-03-02T09:00:00Z",
+     "billing": {
+      "mode": "api"
+     }
+    },
+    "client": {
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "pos": [
+      {
+       "hash": 625792648282977192,
+       "bytes": 4000
+      },
+      {
+       "hash": 10195673027689881628,
+       "bytes": 6400,
+       "opaque": 6000,
+       "opaqueCounted": 6000,
+       "opaqueTokens": 1500
+      },
+      {
+       "hash": 8954237928656804569,
+       "bytes": 2000
+      }
+     ]
+    },
+    "clientBreakpoints": [
+     {
+      "pos": {
+       "section": "messages",
+       "index": 2
+      },
+      "ttl": "5m"
+     }
+    ]
+   },
+   "add": [
+    {
+     "id": "o1",
+     "kind": "rewrite",
+     "operator": "context-guru.thinking",
+     "at": {
+      "section": "messages",
+      "index": 1
+     },
+     "sizeBefore": {
+      "bytes": 3000,
+      "opaqueBytes": 3000
+     },
+     "sizeAfter": {
+      "bytes": 0
+     },
+     "changeId": "cg:thinking:c77p"
+    }
+   ],
+   "end": {
+    "thread": {
+     "id": "main"
+    },
+    "forwarded": {
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "pos": [
+      {
+       "hash": 625792648282977192,
+       "bytes": 4000
+      },
+      {
+       "hash": 16785653436705741282,
+       "bytes": 3400,
+       "opaque": 3000,
+       "opaqueCounted": 3000,
+       "opaqueTokens": 750
+      },
+      {
+       "hash": 13488678001463010087,
+       "bytes": 2000
+      }
+     ]
+    },
+    "breakpoints": [
+     {
+      "pos": {
+       "section": "messages",
+       "index": 2
+      },
+      "ttl": "5m"
+     }
+    ],
+    "facts": {
+     "ttl": "5m",
+     "lifetime": "exact"
+    }
+   },
+   "usage": {
+    "input": 0,
+    "cacheRead": 0,
+    "cacheWrite": 2350,
+    "cacheWrite1h": 0
+   },
+   "expected": {
+    "phase": "unknown",
+    "baselineUsage": {
+     "input": 0,
+     "cacheRead": 0,
+     "cacheWrite": 3100,
+     "cacheWrite1h": 0
+    },
+    "ops": [
+     {
+      "changeId": "cg:thinking:c77p",
+      "saved": {
+       "cacheWrite5m": 750
+      },
+      "caused": {},
+      "estimated": true
+     }
+    ],
+    "unpriced": [
+     {
+      "reason": "penalty_unknown"
+     }
+    ]
+   }
+  }
+ ]
+}

@@ -38,6 +38,9 @@ type Body struct {
 	cumMed []int
 	// cumOpq[i+1] is the opaque bytes of positions 0..i, each clamped to 0..Bytes-Media. Built with cum.
 	cumOpq []int
+	// cumCnt[i+1] and cumCtk[i+1] are the counted opaque bytes and their tokens over positions 0..i
+	// (PosHash.OpaqueCounted, OpaqueTokens), clamped as opqCounted and opqTokens do. Built with cum.
+	cumCnt, cumCtk []int
 }
 
 // PosHash holds hashes and sizes only (R2).
@@ -51,6 +54,12 @@ type PosHash struct {
 	// bills as few tokens: a thinking signature. NewBody finds it. The token ratio leaves it out, and it
 	// has a fixed price of 1 token for each 250 bytes (§4.2 rule 7). It is not in the hash.
 	Opaque int32 `json:"opaque,omitempty"`
+	// OpaqueCounted is the part of Opaque whose tokens the host knows, and OpaqueTokens is those tokens:
+	// the thinking tokens of the response that made each block (design D16). NewBodyCounted sets both.
+	// The library prices the counted bytes at OpaqueTokens and the rest of Opaque at the fixed price.
+	// OpaqueCounted 0 means no count, whatever OpaqueTokens says. Neither is in the hash.
+	OpaqueCounted int32 `json:"opaqueCounted,omitempty"`
+	OpaqueTokens  int32 `json:"opaqueTokens,omitempty"`
 	// Unseen counts the media blocks of the position whose tokens the bytes do not show: an image or a
 	// document given by url or by file id (no bytes at all), and a PDF (billed by page, not by byte).
 	// NewBody finds them. They change no price. Only the check of the token ratio reads them, to name its
@@ -69,6 +78,19 @@ type Breakpoint struct {
 // The host calls it for the client body (before BeginRequest) and for the forwarded body (before
 // EndRequest).
 func NewBody(tools, system, messages [][]byte) Body {
+	return NewBodyCounted(tools, system, messages, nil)
+}
+
+// OpaqueCount looks up the host's token count for one opaque string, by its OpaqueKey. ok false means
+// the host has no count for it, and the library uses the fixed price.
+type OpaqueCount func(key uint64) (tokens int, ok bool)
+
+// NewBodyCounted is NewBody with the host's token counts for opaque strings (design D16). For each
+// thinking signature and each redacted_thinking data string it finds, it calls count with the string's
+// OpaqueKey. A known count goes to PosHash.OpaqueCounted and PosHash.OpaqueTokens. A negative count is
+// no count: that block keeps the fixed price. A nil count is NewBody.
+// The hashes and the sizes do not depend on count.
+func NewBodyCounted(tools, system, messages [][]byte, count OpaqueCount) Body {
 	b := Body{Start: [3]int{0, len(tools), len(tools) + len(system)}}
 	var h uint64 = 14695981039346656037
 	for _, section := range [][][]byte{tools, system, messages} {
@@ -77,7 +99,9 @@ func NewBody(tools, system, messages [][]byte) Body {
 				h = (h ^ uint64(c)) * 1099511628211
 			}
 			h = (h ^ 0xff) * 1099511628211 // position separator
-			b.Pos = append(b.Pos, PosHash{Hash: h, Bytes: clamp32(len(p)), Media: clamp32(mediaBytes(p)), Opaque: clamp32(opaqueBytes(p)), Unseen: clamp32(unseenBlocks(p))})
+			o := opaqueOf(p, count)
+			b.Pos = append(b.Pos, PosHash{Hash: h, Bytes: clamp32(len(p)), Media: clamp32(mediaBytes(p)), Opaque: clamp32(o.bytes),
+				OpaqueCounted: clamp32(o.counted), OpaqueTokens: clamp32(o.tokens), Unseen: clamp32(unseenBlocks(p))})
 		}
 	}
 	b.buildPrefix()
@@ -215,21 +239,94 @@ func escapeMightSpellMarker(p []byte) bool {
 //   - a "thinking" block: the length of its "signature" string;
 //   - a "redacted_thinking" block: the length of its "data" string.
 //
-// The provider bills these strings as few tokens, so they stay out of the text ratio. The
+// The provider bills these strings apart from text, so they stay out of the text ratio. The
 // thinking text itself is text. Other providers' opaque fields (OpenAI "encrypted_content", Gemini
 // "thoughtSignature") are not counted until their billing is known. A position that is not valid
 // JSON counts what was read before the error.
-func opaqueBytes(p []byte) int {
+func opaqueBytes(p []byte) int { return opaqueOf(p, nil).bytes }
+
+// opaqueSum is the opaque bytes of one position, and the part of them that the host counted.
+type opaqueSum struct{ bytes, counted, tokens int }
+
+// opaqueOf counts the opaque strings in one position, as opaqueBytes does, and looks up each one in
+// count. The strings are read only to take their length and their key; neither is kept (R2).
+func opaqueOf(p []byte, count OpaqueCount) opaqueSum {
+	var o opaqueSum
 	if !mightHoldOpaque(p) {
-		return 0
+		return o
 	}
-	dec := json.NewDecoder(bytes.NewReader(p))
-	n := 0
-	for {
-		if _, ok := walkOpaque(dec, &n); !ok {
-			return n
+	each := func(s string) {
+		o.bytes += len(s)
+		if count == nil || s == "" {
+			return
+		}
+		if t, ok := count(OpaqueKey(s)); ok && t >= 0 {
+			o.counted += len(s)
+			o.tokens += t
 		}
 	}
+	dec := json.NewDecoder(bytes.NewReader(p))
+	for {
+		if _, ok := walkOpaque(dec, each); !ok {
+			return o
+		}
+	}
+}
+
+// OpaqueKey is the key of one opaque string (a thinking signature, or the data of a redacted_thinking
+// block) in the host's table of counts: the 64-bit FNV-1a hash of the string, as JSON decodes it. A host
+// stores a count under the key of the string it read in a response, and NewBodyCounted looks it up
+// under the key of the same string in a later request (design D16).
+func OpaqueKey(s string) uint64 {
+	var h uint64 = 14695981039346656037
+	for i := 0; i < len(s); i++ {
+		h = (h ^ uint64(s[i])) * 1099511628211
+	}
+	return h
+}
+
+// SplitOpaqueTokens splits the thinking tokens of one response between the opaque strings it made, in
+// proportion to their lengths (design D16). Anthropic reports one count for each response
+// (usage.output_tokens_details.thinking_tokens), so a response with two blocks needs a split. The
+// split is an estimate. The parts add up to tokens exactly: the remainder goes to the largest
+// fractions first, and to the earlier string on a tie. With no tokens, or no strings, every part is 0.
+// When every string is empty, the tokens are split evenly.
+func SplitOpaqueTokens(opaques []string, tokens int) []int {
+	out := make([]int, len(opaques))
+	if tokens <= 0 || len(opaques) == 0 {
+		return out
+	}
+	w := make([]int64, len(opaques))
+	var total int64
+	for i, s := range opaques {
+		w[i] = int64(len(s))
+		total += w[i]
+	}
+	if total == 0 {
+		for i := range w {
+			w[i] = 1
+		}
+		total = int64(len(w))
+	}
+	rem := make([]int64, len(w))
+	given := 0
+	for i := range w {
+		q := int64(tokens) * w[i]
+		out[i] = int(q / total)
+		rem[i] = q % total
+		given += out[i]
+	}
+	for ; given < tokens; given++ {
+		best := 0
+		for i := range rem {
+			if rem[i] > rem[best] {
+				best = i
+			}
+		}
+		out[best]++
+		rem[best] = -1
+	}
+	return out
 }
 
 // mightHoldOpaque is a byte-level pre-filter for opaqueBytes. It returns false only when the exact
@@ -241,9 +338,9 @@ func mightHoldOpaque(p []byte) bool {
 		escapeMightSpellMarker(p)
 }
 
-// walkOpaque reads one JSON value and adds the opaque bytes it holds to *n. It returns the value
-// when it is a string. false means the input ended or is not valid JSON.
-func walkOpaque(dec *json.Decoder, n *int) (str string, ok bool) {
+// walkOpaque reads one JSON value and calls each for every opaque string it holds. It returns the
+// value when it is a string. false means the input ended or is not valid JSON.
+func walkOpaque(dec *json.Decoder, each func(string)) (str string, ok bool) {
 	tok, err := dec.Token()
 	if err != nil {
 		return "", false
@@ -254,7 +351,7 @@ func walkOpaque(dec *json.Decoder, n *int) (str string, ok bool) {
 	case json.Delim:
 		if v == '[' {
 			for dec.More() {
-				if _, ok := walkOpaque(dec, n); !ok {
+				if _, ok := walkOpaque(dec, each); !ok {
 					return "", false
 				}
 			}
@@ -268,7 +365,7 @@ func walkOpaque(dec *json.Decoder, n *int) (str string, ok bool) {
 				return "", false
 			}
 			key, _ := kt.(string)
-			child, ok := walkOpaque(dec, n)
+			child, ok := walkOpaque(dec, each)
 			if !ok {
 				return "", false
 			}
@@ -286,9 +383,9 @@ func walkOpaque(dec *json.Decoder, n *int) (str string, ok bool) {
 		}
 		switch typ {
 		case "thinking":
-			*n += len(sig)
+			each(sig)
 		case "redacted_thinking":
-			*n += len(data)
+			each(data)
 		}
 	}
 	return "", true

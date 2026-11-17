@@ -58,7 +58,8 @@ and §6 the `R` numbers are written bare, to keep the comments short; they are t
 | <a id="d12"></a>D12 | Where does the thread ID come from? | **From the engine's `internal/thread`, in both hosts**, carried on the request. The host keeps one fingerprint per thread, keyed by `thread.Key`, and compares each request with its own thread's previous request (wiring document, W5.2). |
 | <a id="d13"></a>D13 | How does the model serve a subscription user? | **The library does not change.** It already returns tokens for each tier (D3). The request carries a `Billing` fact. The host converts tokens to dollars for an API user, and to usage-limit units for a subscription user, with an API-equivalent dollar figure beside it, marked as such (§7.1). |
 | <a id="d14"></a>D14 | Is `Compute` stateful? | **The library is stateful. `Compute` is deterministic.** A context operator reports a change once, on the first request. `Compute` applies it again on later requests until it ends, so a result depends on earlier requests. The state is a `ThreadState`, kept by the Tracker, one for each thread. `Compute` is a method of the request record. The record takes a copy of the `ThreadState` in `EndRequest`, because the thread is known only after the plugins ran (§6.1). As its last step `Compute` replaces the thread's `ThreadState` with the new one, so the host has nothing to commit and cannot forget to. A failure or a panic leaves the old `ThreadState` (see [§4.6, a request that does not reach `Compute`](#46-replays-who-remembers-past-changes)). Two requests of one thread at the same time (a retry, parallel calls of one agent) are safe: the replace is guarded by the `Version` of the `ThreadState` (optimistic locking, [R53](spec.md#r53), §6.1). `Preview` does the same calculation and stores nothing (it can differ from `Compute` only for a fork's first request, if the parent's state moved in between, [R26](spec.md#r26)), for pricing an old request again and for a look that must not move the thread forward. A second `Compute` of the same request prices against the state the first call stored (the result is usually phase `hot`), so a host must not call `Compute` again to retry after a transient error; it calls `Preview`. A test case is a sequence of requests. Rejected alternatives are listed below the table. What the state holds is open (§11, question 11). How a change ends is decided (§11, question 12). |
-| <a id="d15"></a>D15 | How are thinking signatures priced? | **As opaque bytes, apart from the text ratio, at a fixed 1 token for 250 bytes, as a fallback** (accountant#73). A signature is a long sealed string that the client sends back in every later request. It is about 20% of the message bytes on Claude Code traffic. Older Claude models strip it and bill 0 tokens. Opus 4.5+ and Sonnet 4.6+ decrypt it and bill the thinking it holds, as input; the docs give no figure per byte. **The real price is not known.** Two samples of Claude Code traffic suggest 0.04 to 0.08 tokens a byte: R is 0.41 to 0.42 with signatures left out, and 0.394 to 0.396 in conversations with no thinking blocks. The samples are small and different, so the gap can be noise. **What the fallback does:** it removes the large error (R about 20% too low). It does not fix the small one. If the real price is 0.04 to 0.08, the fallback is 10 to 20 times too low, R comes out up to about 5% too high, and a removal of text books up to about 5% too much. A removal of a thinking block then books 10 to 20 times too little. **Why this price:** it is the media price, and it is above 0. **Why not media:** the media price can be cut to the bill and fail `media_tokens` (check 11). A signature must not fail that check or make an operation unpriced. **Scope:** only the Anthropic fields (`thinking.signature`, `redacted_thinking.data`). **Next:** the host gives each thinking block its own token count (§11, question 16). |
+| <a id="d15"></a>D15 | How are thinking signatures priced? | **As opaque bytes, apart from the text ratio, at a fixed 1 token for 250 bytes, as a fallback** (accountant#73). A signature is a long sealed string that the client sends back in every later request. It is about 20% of the message bytes on Claude Code traffic. Older Claude models strip it and bill 0 tokens. Opus 4.5+ and Sonnet 4.6+ decrypt it and bill the thinking it holds, as input; the docs give no figure per byte. **The real price is not known.** Two samples of Claude Code traffic suggest 0.04 to 0.08 tokens a byte: R is 0.41 to 0.42 with signatures left out, and 0.394 to 0.396 in conversations with no thinking blocks. The samples are small and different, so the gap can be noise. **What the fallback does:** it removes the large error (R about 20% too low). It does not fix the small one. If the real price is 0.04 to 0.08, the fallback is 10 to 20 times too low, R comes out up to about 5% too high, and a removal of text books up to about 5% too much. A removal of a thinking block then books 10 to 20 times too little. **Why this price:** it is the media price, and it is above 0. **Why not media:** the media price can be cut to the bill and fail `media_tokens` (check 11). A signature must not fail that check or make an operation unpriced. **Scope:** only the Anthropic fields (`thinking.signature`, `redacted_thinking.data`). **Since accountant#77** the fixed price applies only to opaque bytes with no host count (D16). The measurement for D16 also shows that no fixed price can be right: on Opus 5.5 a signature bills 0.075 to 0.35 tokens a byte, more for a longer one, so this price is 19 to 87 times too low there. |
+| <a id="d16"></a>D16 | Where does the price of a thinking block come from? | **From the host: the thinking tokens of the response that made the block** (accountant#77). Anthropic reports `usage.output_tokens_details.thinking_tokens` on each response. The host stores it under the `OpaqueKey` of each new signature (and of each `redacted_thinking` `data` string), and splits it with `SplitOpaqueTokens` when one response made several blocks. When a block comes back, `NewBodyCounted` looks up its key and sets `PosHash.OpaqueCounted` and `PosHash.OpaqueTokens`. The library prices the counted bytes at the count, in the text ratio and in every range, and the uncounted rest at the D15 price. **Measured** with `scripts/measure-thinking-bill.py` (Opus 5.5, 6 blocks of 60 to 1,047 thinking tokens, no cache): a sent-back block adds its `thinking_tokens` plus 0 to 4 tokens to the input bill, the same on every call. Sonnet 4.5 strips thinking: a sent-back block adds 0 (8 of 8 comparisons). **Strip guard:** the counts are used unless the forwarded body proves them wrong. If the counts in the forwarded body, plus the D15 price of its uncounted opaque bytes, are above the room the bill leaves (the bill less the media price and the least the text can cost), the provider did not bill them. The library then drops the counts for the request, uses the D15 price for every opaque byte, and fails check 14 (`opaque_tokens`). It does not unprice anything. The guard does not catch every case. Counts that are small next to the bill still fit, and then R is too low by their size. A forwarded body with no counted block proves nothing, so the counts of the client body are used as they are: a drop of the last counted block saves its count. So a host does not pass counts for a model it knows strips thinking. **Edges:** a lookup that answers a negative count keeps the D15 price for that block. `Size.OpaqueTokens` 0 means no count, so a size cannot say that its blocks bill 0; a host that knows that passes no count. The ping's read extent (§4.4) takes its ratio from the ping's cache tokens over the whole previous body, so large counts after the cached prefix can drop the counts there; the D15 price then sets the extent. **Why the library walks the blocks:** each host gives only a lookup function, so every host finds the same blocks and the same keys. **Data:** a hash and a count for each block, no content ([R2](spec.md#r2)). **Rejected:** a better fixed price. The measured price is not a ratio: it is about 680 bytes of overhead plus 2.3 bytes a token, and it differs by model. |
 
 **D14, rejected alternatives.**
 
@@ -184,7 +185,10 @@ type Size struct {
     Bytes       int // required on rewrite; the sum check compares it with the Body sizes (§6.5)
     Tokens      int // the host's count; 0 = not measured, so the library converts Bytes and marks it Estimated
     MediaBytes  int // the base64 part of Bytes; priced at a fixed 250 bytes a token, apart from the text ratio
-    OpaqueBytes int // the opaque part of Bytes (a thinking signature); priced at a fixed 250 bytes a token, apart from the text ratio
+    OpaqueBytes int // the opaque part of Bytes (a thinking signature); priced apart from the text ratio
+    // OpaqueTokens is the host's count for the opaque bytes of the range (D16). 0 = no count: the library takes
+    // the counts of the body that holds the range, and prices the rest at the fixed 250 bytes a token (D15).
+    OpaqueTokens int
 }
 
 type MessageSplice struct{ At, Removed, Inserted int } // messages only
@@ -313,6 +317,22 @@ and can be reported as unpriced ([R19](spec.md#r19)).
      size's bytes beyond the range's text and beyond the host's mark, clamped to what the body holds of that kind.
      So a host that marks only `MediaBytes`, as hosts did before `OpaqueBytes`, still gets the opaque price for a
      signature in the range, and the size agrees with check 6, which takes the opaque bytes from the body.
+   - **A thinking block can carry its own count** (D16, accountant#77). `NewBodyCounted` takes a lookup function. For
+     each opaque string it calls the function with the string's `OpaqueKey` (the 64-bit FNV-1a hash of the string as
+     JSON decodes it). A known count adds the string's bytes to `PosHash.OpaqueCounted` and the count to
+     `PosHash.OpaqueTokens`. A count of 0 is a count. `OpaqueCounted` is capped at `Opaque`, and `OpaqueTokens` counts
+     only when `OpaqueCounted` is above 0; a negative count is 0. The opaque price is then the counts plus the fixed
+     price of the uncounted bytes. The ratio takes it out of the bill in the same way, and every range (a size, the
+     read extent, a write) prices its counted bytes at their count. A size takes its count from `Size.OpaqueTokens`
+     when the host sets it: then all the size's opaque bytes are counted at that figure. Otherwise it takes the counts
+     of the body over the range, in proportion when the size holds fewer opaque bytes than the range. That share is
+     exact only when the blocks of the range have equal counts per byte; a host that knows the count of the part it
+     changed sets `Size.OpaqueTokens`. A lookup that answers a negative count keeps the fixed price. If the counts
+     of the forwarded body, plus the fixed price of its uncounted opaque bytes, do not fit the room the bill leaves
+     (the bill less the media price and the least the text can cost), the library drops the counts for the request,
+     prices all opaque bytes at the fixed price (cut to the room as above), and fails check 14. A forwarded body with
+     no counted block cannot fail this test, so the client body's counts apply as they are. The fixed price of the
+     uncounted bytes is cut to the room that the counts leave. `Snapshot` keeps the counts.
    - **The host may pass tokens.** If a host knows the tokens of a range (a tokenizer, or a
      count_tokens call), it sets `Size.Tokens`. The library uses them as they are, and does not mark
      that size `Estimated`. `Tokens` 0 means not measured, and the bytes are converted.
@@ -894,6 +914,8 @@ type PosHash struct {
     Bytes  int32
     Media  int32 // the base64 image/document part of Bytes (Anthropic source blocks and data URLs); not in the hash
     Opaque int32 // the opaque part of Bytes (thinking signatures, D15); not in the hash
+    OpaqueCounted int32 // the part of Opaque the host counted (D16); not in the hash
+    OpaqueTokens  int32 // the host's tokens for OpaqueCounted (D16); not in the hash
     Unseen int32 // media blocks that hold no bytes but are billed tokens: an image by url or file id, a PDF; not in the hash
 }
 ```
@@ -903,13 +925,23 @@ type PosHash struct {
 // The host calls it for the client body (before BeginRequest) and for the forwarded body (before
 // EndRequest).
 func NewBody(tools, system, messages [][]byte) Body
+
+// NewBodyCounted is NewBody with the host's count for each thinking block (D16). count is called with
+// the OpaqueKey of each opaque string; ok false keeps the fixed price. A nil count is NewBody.
+type OpaqueCount func(key uint64) (tokens int, ok bool)
+func NewBodyCounted(tools, system, messages [][]byte, count OpaqueCount) Body
+
+// OpaqueKey is the key of one opaque string in the host's table. SplitOpaqueTokens splits one
+// response's thinking tokens between its blocks by signature length; the parts add up to tokens.
+func OpaqueKey(s string) uint64
+func SplitOpaqueTokens(opaques []string, tokens int) []int
 ```
 
 The fingerprint itself is built inside `Compute`. `Cached` comes from the usage, which arrives only
 after the response, so no earlier call can build it. `Compute` keeps the result in
 `ThreadState.PrevPrint` for the next request.
 
-`PosHash` is 24 bytes in memory (8 for the hash, 4 for the size, 4 for the media size, 4 for the opaque size, and 4 of padding). It holds hashes and sizes only ([R2](spec.md#r2)).
+`PosHash` is 32 bytes in memory (8 for the hash, then 4 each for the size, the media size, the opaque size, the counted opaque size, the count and the unseen blocks). It holds hashes and sizes only ([R2](spec.md#r2)).
 
 ### 5.2 Classifying a break
 
@@ -1410,7 +1442,7 @@ type Unpriced struct {
 type CheckFailure struct {
     Check    string // one of the Check constants: "sum" | "unique_change" | "spans" | "conservation" |
                     // "shared_warm" | "bad_usage" | "ratio_range" | "media_unseen" | "breakpoints" |
-                    // "media_tokens" | "size_tokens" | "size_range" (§6.5)
+                    // "media_tokens" | "size_tokens" | "size_range" | "opaque_tokens" (§6.5)
     Operator string // "" when the check is not about one operator
     Detail   string // numbers only, no content
 }
@@ -1542,7 +1574,7 @@ check, the operator, the detail, and the request, session and thread IDs). `Prev
    whose `Call` fails goes to `Unpriced` with `bad_usage` (its other figures are not changed), also in `ComputeStandalone`.
    A valid `Call` is passed on as the host sent it.
 9. **Ratio range:** the tokens per forwarded text byte, `(Input + CacheRead + CacheWrite - media price - opaque price) / (bytes - media bytes - opaque bytes)`,
-   is from 0.05 to 2.0. When the bill is below the media price, the media price is first cut to the bill (check 11), so this check does not fail for that reason. Base64 media bytes and opaque bytes are not in the denominator, and their prices (1 token per 250 bytes each; the opaque price cut so that the text keeps at least 0.05 tokens a byte, D15) are not in the numerator.
+   is from 0.05 to 2.0. When the bill is below the media price, the media price is first cut to the bill (check 11), so this check does not fail for that reason. Base64 media bytes and opaque bytes are not in the denominator, and their prices (1 token per 250 bytes each, or the host's count for counted opaque bytes; the opaque price cut so that the text keeps at least 0.05 tokens a byte, D15, D16) are not in the numerator.
    If it is outside that range, the usage does not fit the body, and the check `ratio_range` fails. If the ratio is too high and the forwarded body holds media with no bytes (`PosHash.Unseen` above 0, §4.2 rule 7), the check `media_unseen` fails in its place (a body with no text bytes and tokens above the media price counts as too high): the tokens of that media are in the bill and not in the bytes. A ratio of 0
    (a body with text bytes and no billed prompt token) and an infinite ratio (billed tokens and an empty body) are outside
    the range too. A body of media only has no text bytes: it passes only when the bill is at most the media price (a smaller bill is cut, check 11). A bill above it fails this check, because the extra tokens fit no content. Without this
@@ -1587,6 +1619,15 @@ check, the operator, the detail, and the request, session and thread IDs). `Prev
     again: if a client compacts its body below an active size, the `sum` check flags it.
     Positions: `NewBody` saturates the byte count of one position (and its media bytes) at the largest `int32`, so a
     position over 2 GiB does not wrap negative.
+
+14. **Opaque tokens (`opaque_tokens`):** the host's counts of the forwarded body's thinking blocks (D16), plus the fixed
+    price of its uncounted opaque bytes, fit in the bill less the media price and the least the text can cost (0.05
+    tokens for each text byte). If they do not, the provider did not bill them: the model strips thinking, or the host's
+    counts are wrong. The check fails, and the library drops the counts for the request: every opaque byte gets the
+    fixed price of D15, which is cut to fit. Nothing is unpriced, and the request is not dropped. The check can act only
+    when the forwarded body holds a counted block. It is not run when check 8, 9 or 10 fails, or when the request has
+    no usage. It is not reported when the media is cut to the bill (check 11): the room is then 0, so the counts are
+    dropped, and `media_tokens` already names the cause.
 
 If check 8, 9 or 10 fails, the library prices nothing for the request. Each operation goes to `Unpriced` with the
 reason `bad_usage`, `ratio_range` (or `media_unseen`) or `breakpoints` (the first check that fails, in that order), no cache effect is
@@ -1648,7 +1689,7 @@ missing, report too little and say why.
 | Situation | Result |
 |---|---|
 | `accountant.Compute` panics | The host recovers, writes no saving for the request, and increments `ops_price_panics`. The request and its spend record are unchanged. |
-| A malformed context operation (unknown kind, negative size, a size above the bounds of check 13, a spend whose `Call` has a negative or non-finite figure) | Goes to `Unpriced` with a reason (`unknown_kind`, `negative_size`, `size_range`, `bad_usage`). The other context operations are priced. |
+| A malformed context operation (unknown kind, negative size or a negative `Size.OpaqueTokens`, a size above the bounds of check 13, a spend whose `Call` has a negative or non-finite figure) | Goes to `Unpriced` with a reason (`unknown_kind`, `negative_size`, `size_range`, `bad_usage`). The other context operations are priced. |
 | A `spend` whose `Call` has no usage (a ping that timed out: the host sent it and read no response) | `Unpriced` with `ping_result_unknown`. The cost is missing, not zero, so the window must not show its rescue as a net gain. The rescue is still credited from the read on the request that follows (§4.4) |
 | Usage is negative, does not fit the body (tokens per byte outside 0.05 to 2.0), or the request has more than 4 breakpoints or an unknown TTL | Nothing is priced. Every operation goes to `Unpriced` with `bad_usage`, `ratio_range` (`media_unseen` when the ratio is too high and the body holds media with no bytes) or `breakpoints`, and a check of the same name fails (§6.5, checks 8 to 10). |
 | Sum check fails | Pricing goes on. A warning is logged. The failure is counted for each plugin on `/v1/pipeline`. |
@@ -1775,13 +1816,15 @@ Where a question has test cases, a host that compares them with its own code mar
     - `reasoning_content` (DeepSeek, Kimi, GLM, Qwen, Mistral) is plain text, not opaque. A provider ignores it
       or bills it as input, depending on the model and a flag.
 
-    The signature price (1 token for 250 bytes) is a fallback, not a measurement (D15). A better input: the
-    host gives each thinking block its own token count. Anthropic reports `usage.output_tokens_details.thinking_tokens`
-    on the response that made the block. The host keys the count by a hash of the signature and passes it when the
-    block comes back. One response with several blocks has one count, so the host splits it by signature length.
-    Open: whether the input bill of a sent-back block equals its `thinking_tokens` (the count includes delimiter
-    tokens). To measure, send one conversation twice, with and without one earlier thinking block, and compare
-    the input totals with that block's `thinking_tokens`.
+    For Anthropic the host now gives each thinking block its own count (D16, accountant#77). The measurement
+    answered the old question: a sent-back block bills its `thinking_tokens` plus 0 to 4 tokens. Still open:
+    - whether OpenAI `encrypted_content` and Gemini `thoughtSignature` bill the hidden reasoning the same way. If they
+      do, their per-response counts (`reasoning_tokens`, `thoughtsTokenCount`) can feed the same lookup;
+    - how a model that strips thinking treats the thinking text it is sent back. Sonnet 4.5 bills 0 for the whole
+      block, but the library counts the `thinking` text as text bytes, so R is too low on such a model;
+    - whether the split by signature length is good enough. The measured signature is about 680 bytes of overhead
+      plus 2.3 bytes a token, so a split by length gives a short block too much. The same holds for the share a size
+      gets of a range's count (rule 7) when the range holds blocks with different counts per byte.
 
 ### Provider profile (`EntryFacts.Provider`, accountant#33)
 

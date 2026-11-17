@@ -69,15 +69,16 @@ func (b Body) cumBytes(i int) int {
 	return n
 }
 
-// buildPrefix fills cum, cumMed and cumOpq from Pos.
+// buildPrefix fills the prefix sums (cum, cumMed, cumOpq, cumCnt, cumCtk) from Pos.
 func (b *Body) buildPrefix() {
-	b.cum = make([]int, len(b.Pos)+1)
-	b.cumMed = make([]int, len(b.Pos)+1)
-	b.cumOpq = make([]int, len(b.Pos)+1)
+	n := len(b.Pos) + 1
+	b.cum, b.cumMed, b.cumOpq, b.cumCnt, b.cumCtk = make([]int, n), make([]int, n), make([]int, n), make([]int, n), make([]int, n)
 	for i, p := range b.Pos {
 		b.cum[i+1] = b.cum[i] + int(p.Bytes)
 		b.cumMed[i+1] = b.cumMed[i] + p.media()
 		b.cumOpq[i+1] = b.cumOpq[i] + p.opaque()
+		b.cumCnt[i+1] = b.cumCnt[i] + p.opqCounted()
+		b.cumCtk[i+1] = b.cumCtk[i] + p.opqTokens()
 	}
 }
 
@@ -88,10 +89,22 @@ func (p PosHash) media() int { return int(max(min(p.Media, p.Bytes), 0)) }
 // than Bytes. The media counts first.
 func (p PosHash) opaque() int { return max(min(int(p.Opaque), int(p.Bytes)-p.media()), 0) }
 
+// opqCounted is OpaqueCounted clamped to 0..opaque.
+func (p PosHash) opqCounted() int { return max(min(int(p.OpaqueCounted), p.opaque()), 0) }
+
+// opqTokens is OpaqueTokens when the position has counted bytes, else 0. A negative count is 0.
+func (p PosHash) opqTokens() int {
+	if p.opqCounted() == 0 {
+		return 0
+	}
+	return max(int(p.OpaqueTokens), 0)
+}
+
 // withPrefix returns b with its prefix sums built. A Body from NewBody or Restore has them; one
 // decoded from JSON does not.
 func (b Body) withPrefix() Body {
-	if len(b.cum) != len(b.Pos)+1 || len(b.cumMed) != len(b.Pos)+1 || len(b.cumOpq) != len(b.Pos)+1 {
+	n := len(b.Pos) + 1
+	if len(b.cum) != n || len(b.cumMed) != n || len(b.cumOpq) != n || len(b.cumCnt) != n || len(b.cumCtk) != n {
 		b.buildPrefix()
 	}
 	return b
@@ -155,53 +168,94 @@ func lastAtOrBefore(bps []bp, x int) int {
 const mediaBytesPerToken = 250
 
 // cumMedia returns the media bytes of positions 0..i; 0 for i < 0.
-func (b Body) cumMedia(i int) int {
-	if len(b.cumMed) == len(b.Pos)+1 { // built by NewBody or Restore
-		return b.cumMed[min(max(i+1, 0), len(b.Pos))]
+func (b Body) cumMedia(i int) int { return b.cumSum(b.cumMed, i, PosHash.media) }
+
+// cumSum reads a prefix sum of positions 0..i (0 for i < 0). With no prefix table (a Body decoded
+// from JSON) it sums f over the positions.
+func (b Body) cumSum(table []int, i int, f func(PosHash) int) int {
+	if len(table) == len(b.Pos)+1 { // built by NewBody or Restore
+		return table[min(max(i+1, 0), len(b.Pos))]
 	}
 	n := 0
 	for j := 0; j <= i && j < len(b.Pos); j++ {
-		n += b.Pos[j].media()
+		n += f(b.Pos[j])
 	}
 	return n
 }
 
 // cumOpaque returns the opaque bytes of positions 0..i; 0 for i < 0.
-func (b Body) cumOpaque(i int) int {
-	if len(b.cumOpq) == len(b.Pos)+1 { // built by NewBody or Restore
-		return b.cumOpq[min(max(i+1, 0), len(b.Pos))]
-	}
-	n := 0
-	for j := 0; j <= i && j < len(b.Pos); j++ {
-		n += b.Pos[j].opaque()
-	}
-	return n
+func (b Body) cumOpaque(i int) int { return b.cumSum(b.cumOpq, i, PosHash.opaque) }
+
+// cumCounted returns the counted opaque bytes of positions 0..i; 0 for i < 0.
+func (b Body) cumCounted(i int) int { return b.cumSum(b.cumCnt, i, PosHash.opqCounted) }
+
+// cumCountTokens returns the host's tokens for the counted opaque bytes of positions 0..i; 0 for i < 0.
+func (b Body) cumCountTokens(i int) int { return b.cumSum(b.cumCtk, i, PosHash.opqTokens) }
+
+// nonText is the bytes of a range that the text ratio does not price: the media, the opaque bytes,
+// and the part of the opaque bytes the host counted (counted bytes, ctok tokens).
+type nonText struct{ media, opaque, counted, ctok int }
+
+// parts is the bytes of a range and the non-text part of them.
+type parts struct {
+	bytes int
+	nonText
 }
 
-// opaqueBytesPerToken is the fixed price of opaque bytes (a thinking signature): one token for each
-// 250 bytes, the media price. It is a fallback, not a measurement (design D15). Older Claude models strip
-// signatures and bill 0 tokens. Newer ones bill the thinking a signature holds, maybe 0.04 to 0.08 tokens
-// a byte. A price above 0 that cannot fail a check removes the large error in the text ratio. A host
-// count for each thinking block is the next step (design Q16).
+// add adds q to p.
+func (p *parts) add(q parts) {
+	p.bytes += q.bytes
+	p.media += q.media
+	p.opaque += q.opaque
+	p.counted += q.counted
+	p.ctok += q.ctok
+}
+
+// minParts is the part that a and b both hold, field by field: a position the client and the
+// forwarded body share.
+func minParts(a, b parts) parts {
+	return parts{min(a.bytes, b.bytes), nonText{min(a.media, b.media), min(a.opaque, b.opaque), min(a.counted, b.counted), min(a.ctok, b.ctok)}}
+}
+
+// between is the parts of positions from+1..to of b.
+func (b Body) between(from, to int) parts {
+	return parts{b.cumBytes(to) - b.cumBytes(from), nonText{b.cumMedia(to) - b.cumMedia(from), b.cumOpaque(to) - b.cumOpaque(from),
+		b.cumCounted(to) - b.cumCounted(from), b.cumCountTokens(to) - b.cumCountTokens(from)}}
+}
+
+// opaqueBytesPerToken is the fixed price of opaque bytes (a thinking signature) that the host did not
+// count: one token for each 250 bytes, the media price. It is a fallback, not a measurement (design
+// D15). Measured on Opus 5.5, a signature bills 0.075 to 0.35 tokens a byte, more for a longer one;
+// older Claude models strip signatures and bill 0 (design D16). A price above 0 that cannot fail a
+// check removes the large error in the text ratio. The host's count for each block replaces it (D16).
 const opaqueBytesPerToken = 250
 
 // ratio converts forwarded text bytes to tokens with the request's own ratio (§5.3). The bytes and
 // the tokens are those of the text only: media and opaque bytes (a thinking signature) are priced
 // apart (§4.2 rule 7). A media block costs mediaTok tokens for each mediaPer bytes of its base64 text:
-// 1 for each mediaBytesPerToken, unless the bill is below that price (newRatio). Opaque bytes cost
-// opqTok tokens for each opqPer bytes in the same way.
+// 1 for each mediaBytesPerToken, unless the bill is below that price (newRatio). Opaque bytes with no
+// host count cost opqTok tokens for each opqPer bytes in the same way. Counted opaque bytes cost the
+// host's tokens when counts is true, and the fixed price when the bill had no room for them.
 type ratio struct {
 	tokens, bytes      int
 	mediaTok, mediaPer int
 	opqTok, opqPer     int
 	capped             bool // the media price was above the bill and was cut to fit it
+	counts             bool // the host's opaque counts are used (newRatio)
+	countsDropped      bool // the body had counts, but they were above the room the bill leaves
 }
 
 // newRatio builds the ratio of a body that the provider billed for billed prompt tokens.
 //
-// Opaque bytes get their fixed price first, but never more than the bill leaves after the media price
-// and the least the text can cost (minTokensPerByte for each text byte). So the opaque price never cuts
-// the media price, and it never fails a check.
+// Opaque bytes get their price first: the host's tokens for the counted bytes and the fixed price for
+// the rest. The price never takes more than the bill leaves after the media price and the least the
+// text can cost (minTokensPerByte for each text byte), the room. If the counts of the forwarded body,
+// plus the fixed price of its uncounted opaque bytes, do not fit in the room, the provider did not bill
+// them: the model strips thinking (Sonnet 4.5), or the host's counts are wrong. The library then drops
+// the counts for the request, prices every opaque byte at the fixed price, and marks countsDropped
+// (check 14). Only counts in the forwarded body can be tested: with none there, the counts of the
+// client body are used as they are. If the fixed price is above the room, it is cut to the room. So
+// the opaque price never cuts the media price, and it never fails check 9 or 11.
 //
 // When the fixed media price is above the bill, the price is wrong, because the provider cannot bill
 // less than the media costs. The library then gives the media the bill less the least the text can cost,
@@ -210,22 +264,37 @@ type ratio struct {
 // media are unpriced, and all others are estimates.
 func newRatio(billed int, b Body) ratio {
 	last := len(b.Pos) - 1
-	media, opaque := b.cumMedia(last), b.cumOpaque(last)
-	text := b.cumBytes(last) - media - opaque
+	all := b.between(-1, last)
+	media, opaque := all.media, all.opaque
+	text := all.bytes - media - opaque
 	floor := int(math.Ceil(minTokensPerByte * float64(max(text, 0))))
-	opqTok, opqPer := 1, opaqueBytesPerToken
-	if price, room := opaque/opaqueBytesPerToken, max(billed-media/mediaBytesPerToken-floor, 0); price > room {
-		opqTok, opqPer = room, opaque
+	room := max(billed-media/mediaBytesPerToken-floor, 0)
+	r := ratio{mediaTok: 1, mediaPer: mediaBytesPerToken, opqTok: 1, opqPer: opaqueBytesPerToken}
+	// The counts are used unless the forwarded body proves them wrong. A forwarded body with no counted
+	// block proves nothing, so the counts of the client body (a block the operator dropped) still apply.
+	r.counts = true
+	if all.counted > 0 && all.ctok+(opaque-all.counted)/opaqueBytesPerToken > room {
+		r.counts, r.countsDropped = false, true
 	}
-	opq := ratio{opqTok: opqTok, opqPer: opqPer}.opaqueOf(opaque)
-	billed -= opq
-	r := ratio{tokens: billed - media/mediaBytesPerToken, bytes: text, mediaTok: 1, mediaPer: mediaBytesPerToken, opqTok: opqTok, opqPer: opqPer}
+	// The fixed price covers the uncounted opaque bytes (all of them when the counts are dropped). It is
+	// cut to the room the counts leave. With a counted block in the forwarded body and the counts used,
+	// the guard above already makes it fit, so the cut acts only when the forwarded body holds no count
+	// or the counts are dropped.
+	fixed, left := opaque, room
+	if r.counts {
+		fixed, left = opaque-all.counted, room-all.ctok
+	}
+	if fixed/opaqueBytesPerToken > left {
+		r.opqTok, r.opqPer = left, fixed
+	}
+	billed -= r.opaqueOf(all.nonText)
+	r.tokens, r.bytes = billed-media/mediaBytesPerToken, text
 	if r.tokens >= 0 {
 		return r
 	}
 	mediaTokens := max(billed-floor, 0)
-	return ratio{tokens: max(billed, 0) - mediaTokens, bytes: text, mediaTok: mediaTokens, mediaPer: media,
-		opqTok: opqTok, opqPer: opqPer, capped: true}
+	r.tokens, r.mediaTok, r.mediaPer, r.capped = max(billed, 0)-mediaTokens, mediaTokens, media, true
+	return r
 }
 
 func (r ratio) of(bytes int) int {
@@ -243,33 +312,36 @@ func (r ratio) mediaOf(media int) int {
 	return int(int64(media) * int64(r.mediaTok) / int64(r.mediaPer))
 }
 
-// opaqueOf is the tokens of opaque bytes.
-func (r ratio) opaqueOf(opaque int) int {
-	if r.opqPer <= 0 {
-		return 0
+// opaqueOf is the tokens of the opaque bytes of nt: the host's tokens for the counted bytes when the
+// counts are used, and the fixed price for the rest.
+func (r ratio) opaqueOf(nt nonText) int {
+	fixed := nt.opaque
+	tokens := 0
+	if r.counts {
+		fixed -= nt.counted
+		tokens = nt.ctok
 	}
-	return int(int64(opaque) * int64(r.opqTok) / int64(r.opqPer))
+	if r.opqPer <= 0 {
+		return tokens
+	}
+	return tokens + int(int64(max(fixed, 0))*int64(r.opqTok)/int64(r.opqPer))
 }
 
-// tokensOf converts bytes of which media are media bytes and opaque are opaque bytes: the text with
-// the ratio, the media with the media price, and the opaque bytes with the opaque price.
-func (r ratio) tokensOf(bytes, media, opaque int) int {
-	return r.of(bytes-media-opaque) + r.mediaOf(media) + r.opaqueOf(opaque)
+// tokensOf converts the bytes of p: the text with the ratio, the media with the media price, and the
+// opaque bytes with the opaque price.
+func (r ratio) tokensOf(p parts) int {
+	return r.of(p.bytes-p.media-p.opaque) + r.mediaOf(p.media) + r.opaqueOf(p.nonText)
 }
 
 // sizeOf converts the bytes of a size whose non-text bytes are nt.
-func (r ratio) sizeOf(bytes int, nt nonText) int { return r.tokensOf(bytes, nt.media, nt.opaque) }
+func (r ratio) sizeOf(bytes int, nt nonText) int { return r.tokensOf(parts{bytes, nt}) }
 
 // upTo is the tokens of positions 0..i of b.
-func (r ratio) upTo(b Body, i int) int {
-	return r.tokensOf(b.cumBytes(i), b.cumMedia(i), b.cumOpaque(i))
-}
+func (r ratio) upTo(b Body, i int) int { return r.tokensOf(b.between(-1, i)) }
 
 // between is the tokens of positions from+1..to of b (the bytes of position from are not counted
 // twice: the same difference as cumBytes(to) - cumBytes(from)).
-func (r ratio) between(b Body, from, to int) int {
-	return r.tokensOf(b.cumBytes(to)-b.cumBytes(from), b.cumMedia(to)-b.cumMedia(from), b.cumOpaque(to)-b.cumOpaque(from))
-}
+func (r ratio) between(b Body, from, to int) int { return r.tokensOf(b.between(from, to)) }
 
 // extent returns the last candidate position whose estimated prefix fits in tokens, or -1. The
 // tolerance absorbs the error of the byte ratio and the read step of the provider (128 tokens for older

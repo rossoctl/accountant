@@ -242,7 +242,8 @@ func (c Case) StepPicos(s Step) (net int64) {
 func (c Case) RateTable() Rate { return Rates[c.Rates] }
 
 // SectionTokens returns the tokens of each section of a body. The fixtures use 4 bytes a token, and
-// 1 token for each 250 bytes of base64 media and of opaque bytes (a thinking signature).
+// 1 token for each 250 bytes of base64 media and of opaque bytes (a thinking signature) that the host did
+// not count. Counted opaque bytes cost the host's count.
 func SectionTokens(b accountant.Body) (tools, system, messages int) {
 	for i, p := range b.Pos {
 		// The text is 4 bytes a token. Base64 media and opaque bytes are 1 token for each 250 bytes
@@ -251,7 +252,13 @@ func SectionTokens(b accountant.Body) (tools, system, messages int) {
 		// non-text bytes never gives a negative text part.
 		m := min(max(int(p.Media), 0), int(p.Bytes))
 		o := min(max(int(p.Opaque), 0), int(p.Bytes)-m)
-		t := (int(p.Bytes)-m-o)/4 + m/250 + o/250
+		// Counted opaque bytes cost the host's tokens (design D16), the rest the fixed price.
+		cnt := min(max(int(p.OpaqueCounted), 0), o)
+		ctk := 0
+		if cnt > 0 {
+			ctk = max(int(p.OpaqueTokens), 0)
+		}
+		t := (int(p.Bytes)-m-o)/4 + m/250 + (o-cnt)/250 + ctk
 		switch {
 		case i < b.Start[1]:
 			tools += t
