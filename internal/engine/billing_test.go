@@ -79,6 +79,42 @@ func TestBillingFrom(t *testing.T) {
 			h:    http.Header{"authorization": []string{"Bearer sk-ant-oat01-abcdef"}},
 			want: BillingSubscription,
 		},
+		{
+			name: "Authorization with two spaces between scheme and token -> api",
+			h:    http.Header{"Authorization": []string{"Bearer  sk-ant-api03-abcdef"}},
+			want: BillingAPI,
+		},
+		{
+			name: "Authorization with a tab between scheme and token -> subscription",
+			h:    http.Header{"Authorization": []string{"Bearer\tsk-ant-oat01-abcdef"}},
+			want: BillingSubscription,
+		},
+		{
+			name: "Authorization with leading and trailing whitespace -> api",
+			h:    http.Header{"Authorization": []string{"  Bearer sk-ant-api03-abcdef  "}},
+			want: BillingAPI,
+		},
+		{
+			name: "Authorization scheme is lowercase \"bearer\" -> subscription",
+			h:    http.Header{"Authorization": []string{"bearer sk-ant-oat01-abcdef"}},
+			want: BillingSubscription,
+		},
+		{
+			name: "empty x-api-key value is treated as absent, falls through to Authorization",
+			h: http.Header{
+				"X-Api-Key":     []string{""},
+				"Authorization": []string{"Bearer sk-ant-oat01-abcdef"},
+			},
+			want: BillingSubscription,
+		},
+		{
+			name: "x-api-key wins over a present Authorization header",
+			h: http.Header{
+				"X-Api-Key":     []string{"sk-ant-api03-abcdef"},
+				"Authorization": []string{"Bearer sk-ant-oat01-abcdef"},
+			},
+			want: BillingAPI,
+		},
 	}
 
 	for _, c := range cases {

@@ -1673,11 +1673,15 @@ uses `unknown`. Cortex and the proxy must use one rule, so the rule is a functio
 `accountant.BillingFrom(h http.Header) Billing`. It reads only the credential's type and returns no
 part of the credential ([R2](spec.md#r2)):
 
-- `x-api-key` present, any value, means `api`.
-- `Authorization: Bearer <token>`: an Anthropic API key (`sk-ant-api...`) or an OpenAI API key
-  (`sk-...`, including the project-scoped `sk-proj-...`) means `api`. An Anthropic OAuth token from
-  a subscription login (`sk-ant-oat...`) or a JWT access token, as a ChatGPT login sends (three
-  dot-separated base64url segments), means `subscription`.
+- `x-api-key` present with a non-empty value means `api`. An empty value is treated as absent (the
+  rule falls through to `Authorization`), not as a credential of unknown type.
+- If `x-api-key` is present and non-empty, it wins: `Authorization` is not read at all, even when
+  both headers are present.
+- Otherwise, `Authorization: Bearer <token>` (the scheme matched case-insensitively, with any run
+  of whitespace between scheme and token): an Anthropic API key (`sk-ant-api...`) or an OpenAI API
+  key (`sk-...`, including the project-scoped `sk-proj-...`) means `api`. An Anthropic OAuth token
+  from a subscription login (`sk-ant-oat...`) or a JWT access token, as a ChatGPT login sends
+  (three dot-separated base64url segments), means `subscription`.
   - Anything else — `Authorization: Basic ...`, another scheme, or no credential at all — means
     `unknown`.
 - Header names are matched case-insensitively.
