@@ -61,16 +61,55 @@ func TestRow1WithNoModelChangeIsStillCharged(t *testing.T) {
 	}
 }
 
-// A plugin that reports the model change caused the miss: the break is not in the baseline.
-func TestARoutedModelChangeIsNotInTheBaseline(t *testing.T) {
-	from, to := "claude-sonnet-4-5", "claude-opus-4-5"
-	route := Operation{ID: "op2", Kind: KindSetting, Operator: "inference-router", ChangeID: "rt:model",
+func msRoute(id, change, from, to string) Operation {
+	return Operation{ID: id, Kind: KindSetting, Operator: "inference-router", ChangeID: change,
 		Settings: map[string]SettingChange{"model": {From: &from, To: &to, At: ptr(sys(0))}}}
+}
+
+// A plugin that reports the model change caused the miss. Row 1 charges that plugin, as row 3 does,
+// and not the rewrite that ended at the first difference.
+func TestARoutedModelChangeInRow1IsChargedToTheRouter(t *testing.T) {
+	from, to := "claude-sonnet-4-5", "claude-opus-4-5"
 	ts := NewTrackers()
 	msWarm(t, ts, from)
-	br := effect(t, runModel(ts, to, msNext(route)), EffectBreak)
+	res := runModel(ts, to, msNext(msRoute("op2", "rt:model", from, to)))
+	br := effect(t, res, EffectBreak)
+	if br.InBaseline || br.Cause != "" || br.ChangeID != "rt:model" || br.Saved.CacheRead == 0 {
+		t.Fatalf("break %+v: want a charged break of rt:model, with moved tokens", br)
+	}
+}
+
+// A router changed the model on an earlier request and is not reported now: the model goes back to
+// the client's. That ended change caused the miss (Q12), so the break is not in the baseline.
+func TestAnEndedRouterModelChangeIsNotInTheBaseline(t *testing.T) {
+	small, large := "claude-haiku-4-5", "claude-sonnet-4-5"
+	m := msgs(4, 8000)
+	ts := NewTrackers()
+	runModel(ts, small, req{at: t0, client: mk(nil, msSys, m), clientBPs: bps5(sys(0), msg(3)),
+		ops: []Operation{msRoute("op1", "rt:model", large, small)}, facts: exact5m, usage: Usage{CacheWrite: 33000}})
+	q := req{at: t0.Add(time.Minute), client: mk(nil, msSys, with(m, b("m4", 1000))), clientBPs: bps5(sys(0), msg(4)),
+		facts: exact5m, usage: Usage{CacheWrite: 34000}}
+	br := effect(t, runModel(ts, large, q), EffectBreak)
 	if br.InBaseline || br.Cause != "" {
 		t.Fatalf("break %+v: want a charged break with no cause", br)
+	}
+}
+
+// A model setting that fails a check cannot be priced. It still keeps the break out of the
+// baseline, so the doubtful figure lowers the saving and does not raise it (R45).
+func TestABadModelSettingKeepsTheBreakOutOfTheBaseline(t *testing.T) {
+	from, to := "claude-sonnet-4-5", "claude-opus-4-5"
+	ts := NewTrackers()
+	msWarm(t, ts, from)
+	route := msRoute("op2", "rt:model", from, to)
+	route.SizeBefore = Size{Bytes: -1} // a negative size: the operation cannot be priced
+	res := runModel(ts, to, msNext(route))
+	br := effect(t, res, EffectBreak)
+	if br.InBaseline || br.Cause != "" || br.ChangeID != "" {
+		t.Fatalf("break %+v: want a charged break with no cause and no ChangeID", br)
+	}
+	if !hasUnpricedOp(res, "op2", ReasonNegativeSize) {
+		t.Fatalf("unpriced %+v: want op2 %s", res.Unpriced, ReasonNegativeSize)
 	}
 }
 

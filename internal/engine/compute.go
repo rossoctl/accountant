@@ -1210,6 +1210,10 @@ func (c *calcState) cacheEffects(res *Result) {
 		c.modelBreak(res) // accountant#69: the client body misses too, so no plugin is charged
 		return
 	case c.fwdFD <= c.prevExt && fwdFDCli < c.clientFD: // row 1
+		if op := c.modelSetting(); op != nil && c.modelDiffers() {
+			c.settingBreak(res, *op) // the plugin that changed the model broke the whole prefix
+			return
+		}
 		c.addBreak(res, c.readEnd, c.changeAt(c.fwdFD))
 		return
 	case c.clientFD <= c.prevExtCli && fwdFDCli >= c.clientFD: // row 2
@@ -1231,37 +1235,70 @@ func (c *calcState) cacheEffects(res *Result) {
 		return
 	}
 	if op := c.reportedSetting(); op != nil && !modelChanged { // row 3
-		from, known := c.settingFrom(*op)
-		if !known {
-			res.Unpriced = append(res.Unpriced, Unpriced{OpID: op.ID, Reason: ReasonPenaltyUnknown})
-		}
-		c.addBreak(res, from, op.ChangeID)
+		c.settingBreak(res, *op)
 		return
 	}
 	if modelChanged {
 		c.modelBreak(res)
 		return
 	}
+	if c.modelDiffers() {
+		// a model setting the thread knows changed the model, and no well-formed report names it now: an
+		// ended router change (Q12) or a report that failed a check (R45). The break counts.
+		c.addBreak(res, c.readEnd, "")
+		return
+	}
 	c.addBreak(res, c.readEnd, "") // row 4: the entry was lost early
 	c.inBaseline(res)
 }
 
-// clientModelChange reports a model change that no operation caused: the request names a different
-// model from the thread's previous one, and no setting operation on this request reports a model
-// change. The provider keeps a cache for each model, so the client body would have missed too.
-func (c *calcState) clientModelChange() bool {
+// modelDiffers reports that the request names a different model from the thread's previous one.
+func (c *calcState) modelDiffers() bool {
 	prev, cur := c.s.PrevPrint.modelID(), c.r.meta.modelID()
-	if prev == "" || cur == "" || prev == cur {
+	return prev != "" && cur != "" && prev != cur
+}
+
+// clientModelChange reports a model change that no operation caused: the model differs, and no
+// setting operation the thread knows names the model. The provider keeps a cache for each model, so
+// the client body would have missed too. A model setting reported on this request caused the change
+// (rows 1 and 3 charge it). An active one from an earlier request that the host no longer reports
+// ended, and the miss is that ended change's (Q12). A reported one that fails a check cannot be
+// priced, and it still keeps the break out of the baseline: a doubtful figure only lowers a saving
+// (R45). A DryRun changed nothing, so it does not count.
+func (c *calcState) clientModelChange() bool {
+	if !c.modelDiffers() {
 		return false
 	}
 	for _, it := range c.items {
-		if !it.active && it.bad == "" && !it.op.DryRun && it.op.Kind == KindSetting {
+		if it.op.Kind == KindSetting && !it.op.DryRun {
 			if _, ok := it.op.Settings["model"]; ok {
-				return false // a plugin changed the model: row 3 charges it
+				return false
 			}
 		}
 	}
 	return true
+}
+
+// modelSetting is the setting operation reported on this request that changes the model, if any.
+func (c *calcState) modelSetting() *Operation {
+	for _, it := range c.items {
+		if !it.active && it.bad == "" && !it.op.DryRun && it.op.Kind == KindSetting {
+			if _, ok := it.op.Settings["model"]; ok {
+				return &it.op
+			}
+		}
+	}
+	return nil
+}
+
+// settingBreak adds the break of a setting operation (§5.2 row 3): from settingFrom, with the
+// operation's ChangeID, and penalty_unknown when no SettingChange.At gives the position.
+func (c *calcState) settingBreak(res *Result, op Operation) {
+	from, known := c.settingFrom(op)
+	if !known {
+		res.Unpriced = append(res.Unpriced, Unpriced{OpID: op.ID, Reason: ReasonPenaltyUnknown})
+	}
+	c.addBreak(res, from, op.ChangeID)
 }
 
 // modelBreak adds the break of a model change that no operation caused: in the baseline, with
