@@ -79,11 +79,21 @@ go test ./...
 
 ## Status
 
-Pre-release. The API follows the design in [docs/design.md](docs/design.md) and may change before the
-first tag.
+Pre-release (v0.x). The API follows the design in [docs/design.md](docs/design.md) and may change between
+minor versions. [RELEASING.md](RELEASING.md) says how a version is made.
 
-Not implemented yet: `Result.Interaction` and the order check. Each is marked "Not implemented in v0" in
-the design. The Trackers hold about 10,000 threads and drop the oldest above that. A dropped thread loses
+Not implemented yet. `Compute` adds no figure for these, and a zero there is not a measured zero:
+
+- `Result.Interaction` beyond the exact case of design §6.2. `Compute` sets it only on a rescued request
+  with a client breakpoint and no `SharedWarm`, for a saved span at or before the ping's extent that the
+  operations book at the read tier. Any other case adds zero.
+- The 20-block lookback (design §5.1), and the long-context tier.
+- A `MessageSplice` for whole tools or system blocks. A splice moves message positions only (design §4.3).
+
+The full list is the "Not implemented" section of [internal/engine/doc.go](internal/engine/doc.go). Checks 2
+(order) and 5 (attribution) are not missing: they are reserved numbers, not checks (design §6.5).
+
+The Trackers hold about 10,000 threads and drop the oldest above that. A dropped thread loses
 its active changes (design §6.1, Memory).
 
 ## License
