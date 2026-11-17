@@ -1,0 +1,174 @@
+{
+ "id": "opaque/counted-thinking-not-billed/5m",
+ "description": "One request, on a model that strips thinking. The host counted two thinking blocks: message 1 at 1,400 tokens (4,200 signature bytes) and message 3 at 4,000 tokens (12,000 bytes). The provider bills them only at the fixture's fixed price (1 token for 250 bytes). The operator drops the first block, so the forwarded body is billed 1,000 + 100 + 500 + 48 + 2,000 = 3,648 tokens. The count in it does not fit: the bill less the least the text can cost (14,400 text bytes x 0.05 = 720 tokens) leaves 2,928, and the count is 4,000. So the provider did not bill it. The library drops the counts for the request, prices every signature at the fixed price, and fails the check opaque_tokens. Nothing is unpriced for it. The drop saves 4,200 / 250 = 16 tokens, not the 1,400 of its count. With the counts the text ratio would be below 0.",
+ "source": "issue_cases.md#accountant-77",
+ "dims": {
+  "kind": "rewrite",
+  "position": "opaque",
+  "cache": "unknown",
+  "ttl": "5m",
+  "lifetime": "exact",
+  "opaque": "counted-not-billed"
+ },
+ "rates": "fixture-v1",
+ "steps": [
+  {
+   "begin": {
+    "meta": {
+     "requestId": "r0",
+     "session": "s1",
+     "model": "agent-model",
+     "at": "2026-03-02T09:00:00Z",
+     "billing": {
+      "mode": "api"
+     }
+    },
+    "client": {
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "pos": [
+      {
+       "hash": 625792648282977192,
+       "bytes": 4000
+      },
+      {
+       "hash": 16834438767639812877,
+       "bytes": 4600,
+       "opaque": 4200,
+       "opaqueCounted": 4200,
+       "opaqueTokens": 1400
+      },
+      {
+       "hash": 16166564384296000738,
+       "bytes": 2000
+      },
+      {
+       "hash": 13070014964519546924,
+       "bytes": 12000,
+       "opaque": 12000,
+       "opaqueCounted": 12000,
+       "opaqueTokens": 4000
+      },
+      {
+       "hash": 10017575602403847775,
+       "bytes": 8000
+      }
+     ]
+    },
+    "clientBreakpoints": [
+     {
+      "pos": {
+       "section": "messages",
+       "index": 4
+      },
+      "ttl": "5m"
+     }
+    ]
+   },
+   "add": [
+    {
+     "id": "o1",
+     "kind": "rewrite",
+     "operator": "context-guru.thinking",
+     "at": {
+      "section": "messages",
+      "index": 1
+     },
+     "sizeBefore": {
+      "bytes": 4600
+     },
+     "sizeAfter": {
+      "bytes": 400
+     },
+     "changeId": "cg:thinking:c77s"
+    }
+   ],
+   "end": {
+    "thread": {
+     "id": "main"
+    },
+    "forwarded": {
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "pos": [
+      {
+       "hash": 625792648282977192,
+       "bytes": 4000
+      },
+      {
+       "hash": 3997421772459329857,
+       "bytes": 400
+      },
+      {
+       "hash": 15874798179235358310,
+       "bytes": 2000
+      },
+      {
+       "hash": 9751788643400804840,
+       "bytes": 12000,
+       "opaque": 12000,
+       "opaqueCounted": 12000,
+       "opaqueTokens": 4000
+      },
+      {
+       "hash": 812218982363286915,
+       "bytes": 8000
+      }
+     ]
+    },
+    "breakpoints": [
+     {
+      "pos": {
+       "section": "messages",
+       "index": 4
+      },
+      "ttl": "5m"
+     }
+    ],
+    "facts": {
+     "ttl": "5m",
+     "lifetime": "exact"
+    }
+   },
+   "usage": {
+    "input": 0,
+    "cacheRead": 0,
+    "cacheWrite": 3648,
+    "cacheWrite1h": 0
+   },
+   "expected": {
+    "phase": "unknown",
+    "baselineUsage": {
+     "input": 0,
+     "cacheRead": 0,
+     "cacheWrite": 3664,
+     "cacheWrite1h": 0
+    },
+    "ops": [
+     {
+      "changeId": "cg:thinking:c77s",
+      "saved": {
+       "cacheWrite5m": 16
+      },
+      "caused": {},
+      "estimated": true
+     }
+    ],
+    "unpriced": [
+     {
+      "reason": "penalty_unknown"
+     }
+    ],
+    "checks": [
+     "opaque_tokens"
+    ]
+   }
+  }
+ ]
+}

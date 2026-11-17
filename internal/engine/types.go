@@ -167,12 +167,16 @@ type Size struct {
 	// library prices it apart from the text ratio. 0 means the range has none, or the host did not
 	// mark it.
 	OpaqueBytes int `json:"opaqueBytes,omitempty"`
+	// OpaqueTokens is the host's token count for the opaque bytes of the range (design D16). 0 means no
+	// count: the library takes the counts of the body that holds the range, and prices the rest of the
+	// opaque bytes at the fixed price.
+	OpaqueTokens int `json:"opaqueTokens,omitempty"`
 }
 
 // invalid says whether a size cannot be real: a negative figure, or more media and opaque bytes than
 // bytes.
 func (s Size) invalid() bool {
-	return s.Bytes < 0 || s.Tokens < 0 || s.MediaBytes < 0 || s.OpaqueBytes < 0 || s.MediaBytes > s.Bytes || s.OpaqueBytes > s.Bytes-s.MediaBytes
+	return s.Bytes < 0 || s.Tokens < 0 || s.MediaBytes < 0 || s.OpaqueBytes < 0 || s.OpaqueTokens < 0 || s.MediaBytes > s.Bytes || s.OpaqueBytes > s.Bytes-s.MediaBytes
 }
 
 // MessageSplice describes a change to the message list.

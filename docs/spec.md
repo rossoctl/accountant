@@ -286,7 +286,9 @@ numbers are not used: those requirements were dropped.
 - <a id="r8"></a>**R8.** Sizes are in bytes. The library converts bytes to tokens and marks the result `Estimated`
   ([§4.2](design.md#42-rules) rule 7). A host that knows the tokens of a range may send them in `Size.Tokens`. The
   library then uses them and does not mark that size `Estimated`. Base64 image and document bytes are not in the
-  conversion ratio.
+  conversion ratio, and neither are thinking signatures. A host may give each thinking block its own token count,
+  from the response that made it (`NewBodyCounted`, [D16](design.md#d16)). The library prices the block at that count,
+  and the rest of the signatures at a fixed price.
 - <a id="r11"></a>**R11.** Model-call usage is the provider's billed usage, read from the call's own response by
   the model client the host gives the engine. The engine does not count it (wiring document).
 - <a id="r22"></a>**R22.** A change has an ID that is the same on every request that carries it (`ChangeID`).

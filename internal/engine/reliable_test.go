@@ -14,7 +14,7 @@ func TestEveryCheckHasAFatalClass(t *testing.T) {
 	want := map[string]bool{
 		CheckSum: true, CheckUniqueChange: true, CheckSpans: true,
 		CheckConservation: false, CheckSharedWarm: false, CheckBadUsage: false, CheckRatioRange: false, CheckMediaUnseen: false,
-		CheckBreakpoints: false, CheckMediaTokens: false, CheckSizeTokens: false, CheckSizeRange: false,
+		CheckBreakpoints: false, CheckMediaTokens: false, CheckSizeTokens: false, CheckSizeRange: false, CheckOpaqueTokens: false,
 	}
 	// The map above must cover every Check constant of result.go, so a new check cannot be non-fatal
 	// by default: the test fails until its class is chosen here.

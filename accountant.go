@@ -83,6 +83,23 @@ func SharedWarmFrom(fwd Body, siblings []Sibling) *Position {
 // NewBody hashes the content of one request body, one entry for each position of each section.
 func NewBody(tools, system, messages [][]byte) Body { return engine.NewBody(tools, system, messages) }
 
+// NewBodyCounted is [NewBody] with the host's token count for each thinking block (design D16). It
+// looks up each signature, and each redacted_thinking data string, by its [OpaqueKey]. A block with
+// no count keeps the fixed price.
+func NewBodyCounted(tools, system, messages [][]byte, count OpaqueCount) Body {
+	return engine.NewBodyCounted(tools, system, messages, count)
+}
+
+// OpaqueKey is the key under which a host stores the token count of one thinking signature, or of
+// the data string of a redacted_thinking block.
+func OpaqueKey(s string) uint64 { return engine.OpaqueKey(s) }
+
+// SplitOpaqueTokens splits the thinking tokens of one response between the thinking blocks it made,
+// in proportion to the length of their signatures. The parts add up to tokens.
+func SplitOpaqueTokens(opaques []string, tokens int) []int {
+	return engine.SplitOpaqueTokens(opaques, tokens)
+}
+
 // What a host reports.
 type (
 	RequestMeta = engine.RequestMeta
@@ -100,6 +117,7 @@ type (
 	Ping        = engine.Ping
 	PingFacts   = engine.PingFacts
 	Sibling     = engine.Sibling
+	OpaqueCount = engine.OpaqueCount
 )
 
 // Parts of an operation.
@@ -179,6 +197,7 @@ const (
 	CheckMediaTokens  = engine.CheckMediaTokens
 	CheckSizeTokens   = engine.CheckSizeTokens
 	CheckSizeRange    = engine.CheckSizeRange
+	CheckOpaqueTokens = engine.CheckOpaqueTokens
 )
 
 // Machine-stable reasons in [Result].Unpriced.

@@ -56,7 +56,7 @@ func TestOpaqueShapesAreDetected(t *testing.T) {
 func TestOpaquePriceIsCutToTheBill(t *testing.T) {
 	b := Body{Start: [3]int{0, 0, 0}, Pos: []PosHash{{Hash: 1, Bytes: 25100, Opaque: 25000}}}
 	r := newRatio(50, b)
-	if r.capped || r.opaqueOf(25000) != 45 || r.tokens != 5 {
+	if r.capped || r.opaqueOf(nonText{opaque: 25000}) != 45 || r.tokens != 5 {
 		t.Fatalf("ratio = %+v, want opaque 45 tokens, text 5 tokens, not capped", r)
 	}
 }

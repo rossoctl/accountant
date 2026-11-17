@@ -3628,6 +3628,80 @@ def c73():
                  "1,600 / 31,000 = 0.052 and the saving 309 tokens.",
                  DIMS("rewrite", "opaque", "unknown", opaque="beside-text"), [s0])
 
+# accountant#77: the host gives each thinking block its own token count (design D16). The counted bytes cost
+# the host's tokens, not the fixed price, both in the text ratio and in a removal. Text: 4 bytes a token.
+def c77_body(msgs, sigs):
+    """msgs as for body(); sigs maps a message index to (signature bytes, counted tokens or None)."""
+    b = body([], [], msgs)
+    for i, (sig, counted) in sigs.items():
+        b["pos"][i]["bytes"] += sig
+        b["pos"][i]["opaque"] = sig
+        if counted is not None:
+            b["pos"][i]["opaqueCounted"] = sig
+            b["pos"][i]["opaqueTokens"] = counted
+    return b
+
+
+def c77_drop(oid, change, at, text_tokens, sig):
+    """The operator drops the thinking block of message at: its signature goes, its text stays. The sizes
+    are bytes only, so the library takes the opaque bytes and their count from the bodies (rangeMedia)."""
+    return {"id": oid, "kind": "rewrite", "operator": "context-guru.thinking", "at": P("messages", at),
+            "sizeBefore": {"bytes": 4 * text_tokens + sig}, "sizeAfter": {"bytes": 4 * text_tokens}, "changeId": change}
+
+
+def c77():
+    TH = "cg:thinking:c77"
+    # Message 1 has 100 text tokens and a signature of 3,000 bytes that the host counted at 1,000 tokens.
+    # Message 3 is a signature of 1,400 bytes, counted at 300 tokens. The operator drops the first block.
+    C = [("m0", 1000), ("th1", 100), ("m2", 500), ("th2", 0), ("m4", 2000)]
+    F = [("m0", 1000), ("th1f", 100), ("m2", 500), ("th2", 0), ("m4", 2000)]
+    csig, fsig = {1: (3000, 1000), 3: (1400, 300)}, {3: (1400, 300)}
+    client, fwd = c77_body(C, csig), c77_body(F, fsig)
+    op = c77_drop("o1", TH, 1, 100, 3000)
+    cbp = [{"pos": P("messages", 4), "ttl": "5m"}]
+    billed, base = 1000 + 100 + 500 + 300 + 2000, 1000 + 100 + 1000 + 500 + 300 + 2000
+    s0 = step(0, "r0", client, fwd, cbp, cbp, [op], U(write=billed),
+              expect("unknown", U(write=base), [eop(TH, saved=TT(cacheWrite5m=1000))], unpriced=[{"reason": "penalty_unknown"}]))
+    C1, F1 = C + [("m5", 500)], F + [("m5", 500)]
+    cbp1 = [{"pos": P("messages", 5), "ttl": "5m"}]
+    s1 = step(60, "r1", c77_body(C1, csig), c77_body(F1, fsig), cbp1, cbp1, [], U(read=billed, write=500),
+              expect("hot", U(read=base, write=500),
+                     [eop(TH, saved=TT(cacheRead=1000), note="the drop is replayed: the 1,000 tokens are in the read prefix")]))
+    write_review("opaque/counted-thinking-blocks/5m", 77,
+                 "Two requests. Message 1 holds 100 text tokens and a thinking signature of 3,000 bytes. Message 3 is a "
+                 "signature of 1,400 bytes. The host stored the thinking tokens of the responses that made them: 1,000 and "
+                 "300 (design D16). The operator drops the first thinking block. The forwarded body is billed 1,000 + 100 + "
+                 "500 + 300 + 2,000 = 3,900 tokens. The text ratio takes the counts out: (3,900 - 300) tokens over 14,400 "
+                 "text bytes = 0.25 tokens a byte. The drop removes the 3,000 signature bytes and saves their own count: "
+                 "1,000 tokens, at the cache write tier. At the fixed price (1 token for 250 bytes) it would save 12 tokens, "
+                 "and the ratio would be 0.27. The second request reads the previous forwarded body: the library finds the "
+                 "read extent from CacheRead (3,900) with the counts, and the replayed drop saves 1,000 tokens at the read tier.",
+                 DIMS("rewrite", "opaque", "unknown-hit", opaque="counted"), [s0, s1])
+
+    # A model that strips thinking (Sonnet 4.5) bills no token for a sent-back block, but the host still has
+    # its count. The counts (4,000 + 1,400) are above the room the bill leaves: 3,616 tokens less the least the
+    # text can cost (14,400 text bytes x 0.05 = 720). The guard reads the forwarded body, so the big block is the
+    # one that stays. The library drops the counts, prices every signature at the fixed price, and fails
+    # opaque_tokens. The fixture bills the fixed price, as case 73 does.
+    TS = "cg:thinking:c77s"
+    csig, fsig = {1: (4200, 1400), 3: (12000, 4000)}, {3: (12000, 4000)}
+    op = c77_drop("o1", TS, 1, 100, 4200)
+    billed, base = 1000 + 100 + 500 + 12000 // 250 + 2000, 1000 + 100 + 4200 // 250 + 500 + 12000 // 250 + 2000
+    s0 = step(0, "r0", c77_body(C, csig), c77_body(F, fsig), cbp, cbp, [op], U(write=billed),
+              expect("unknown", U(write=base), [eop(TS, saved=TT(cacheWrite5m=4200 // 250))],
+                     unpriced=[{"reason": "penalty_unknown"}], checks=["opaque_tokens"]))
+    write_review("opaque/counted-thinking-not-billed/5m", 77,
+                 "One request, on a model that strips thinking. The host counted two thinking blocks: message 1 at 1,400 "
+                 "tokens (4,200 signature bytes) and message 3 at 4,000 tokens (12,000 bytes). The provider bills them only at "
+                 "the fixture's fixed price (1 token for 250 bytes). The operator drops the first block, so the forwarded body "
+                 "is billed 1,000 + 100 + 500 + 48 + 2,000 = 3,648 tokens. The count in it does not fit: the bill less the "
+                 "least the text can cost (14,400 text bytes x 0.05 = 720 tokens) leaves 2,928, and the count is 4,000. So "
+                 "the provider did not bill it. The library drops the counts for the request, prices every signature at the "
+                 "fixed price, and fails the check opaque_tokens. Nothing is unpriced for it. The drop saves 4,200 / 250 = "
+                 "16 tokens, not the 1,400 of its count. With the counts the text ratio would be below 0.",
+                 DIMS("rewrite", "opaque", "unknown", opaque="counted-not-billed"), [s0])
+
+
 if __name__ == "__main__":
     os.makedirs(OUT, exist_ok=True)
     for old in os.listdir(OUT):  # the generator owns this directory: drop cases that no longer exist
@@ -3635,5 +3709,5 @@ if __name__ == "__main__":
             os.remove(os.path.join(OUT, old))
     for f in (ex12, ex3, ex4, ex5, ex67, ex8, shared_prefix_cases, ex9, c01, c02, c03_04, c05, c06, c07, c08, c09, c10, c11, c12, c_threads, c_client_compaction, c_client_trim_keeps_head, c_client_rewrite_in_place_ends_replay, c_client_compaction_before_any_change, c_inplace_taken_over_by_another_operator, c_client_tail_edit_keeps_replay, c_client_tail_compaction_ends_replay, c_client_two_compactions, c_clock, c_ttl, c_mix,
               c14, s909, r909_system_hash, c15, c16, c17, c18, a1, a2, a3, a4_b3, b1_b2, b4, b5, c1_, c2_, c2b, c3_, c5, d2, d3, d4,
-              d5, d6, e2, e345, f245, h2, h5, r9, i53, i54, i56, i55_split, i55_no_cache, i55_media_one_side, r14, r21, r20, r20b, c42, c42b, c42c, c42d, c70d, c43, c73, i44, c49, i52_all, d60, d60_1h, d60_loaded):
+              d5, d6, e2, e345, f245, h2, h5, r9, i53, i54, i56, i55_split, i55_no_cache, i55_media_one_side, r14, r21, r20, r20b, c42, c42b, c42c, c42d, c70d, c43, c73, c77, i44, c49, i52_all, d60, d60_1h, d60_loaded):
         f()

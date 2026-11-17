@@ -410,9 +410,10 @@ func compareCompaction(t *testing.T, i int, want *ExpectedCompaction, got *accou
 
 // billNotInBody says whether a step states a check that means the bill is not the fixture price of the
 // body: media_tokens (the bill is below the media price), media_unseen (media with no bytes in the body)
-// or ratio_range (the tokens are out of range for the bytes).
+// ratio_range (the tokens are out of range for the bytes) or opaque_tokens (the provider did not bill
+// the host's opaque counts).
 func billNotInBody(checks []string) bool {
 	return slices.ContainsFunc(checks, func(c string) bool {
-		return c == "media_tokens" || c == "media_unseen" || c == "ratio_range"
+		return c == "media_tokens" || c == "media_unseen" || c == "ratio_range" || c == "opaque_tokens"
 	})
 }

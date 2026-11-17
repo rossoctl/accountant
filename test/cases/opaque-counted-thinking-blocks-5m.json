@@ -1,0 +1,313 @@
+{
+ "id": "opaque/counted-thinking-blocks/5m",
+ "description": "Two requests. Message 1 holds 100 text tokens and a thinking signature of 3,000 bytes. Message 3 is a signature of 1,400 bytes. The host stored the thinking tokens of the responses that made them: 1,000 and 300 (design D16). The operator drops the first thinking block. The forwarded body is billed 1,000 + 100 + 500 + 300 + 2,000 = 3,900 tokens. The text ratio takes the counts out: (3,900 - 300) tokens over 14,400 text bytes = 0.25 tokens a byte. The drop removes the 3,000 signature bytes and saves their own count: 1,000 tokens, at the cache write tier. At the fixed price (1 token for 250 bytes) it would save 12 tokens, and the ratio would be 0.27. The second request reads the previous forwarded body: the library finds the read extent from CacheRead (3,900) with the counts, and the replayed drop saves 1,000 tokens at the read tier.",
+ "source": "issue_cases.md#accountant-77",
+ "dims": {
+  "kind": "rewrite",
+  "position": "opaque",
+  "cache": "unknown-hit",
+  "ttl": "5m",
+  "lifetime": "exact",
+  "opaque": "counted"
+ },
+ "rates": "fixture-v1",
+ "steps": [
+  {
+   "begin": {
+    "meta": {
+     "requestId": "r0",
+     "session": "s1",
+     "model": "agent-model",
+     "at": "2026-03-02T09:00:00Z",
+     "billing": {
+      "mode": "api"
+     }
+    },
+    "client": {
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "pos": [
+      {
+       "hash": 625792648282977192,
+       "bytes": 4000
+      },
+      {
+       "hash": 16834438767639812877,
+       "bytes": 3400,
+       "opaque": 3000,
+       "opaqueCounted": 3000,
+       "opaqueTokens": 1000
+      },
+      {
+       "hash": 16166564384296000738,
+       "bytes": 2000
+      },
+      {
+       "hash": 13070014964519546924,
+       "bytes": 1400,
+       "opaque": 1400,
+       "opaqueCounted": 1400,
+       "opaqueTokens": 300
+      },
+      {
+       "hash": 10017575602403847775,
+       "bytes": 8000
+      }
+     ]
+    },
+    "clientBreakpoints": [
+     {
+      "pos": {
+       "section": "messages",
+       "index": 4
+      },
+      "ttl": "5m"
+     }
+    ]
+   },
+   "add": [
+    {
+     "id": "o1",
+     "kind": "rewrite",
+     "operator": "context-guru.thinking",
+     "at": {
+      "section": "messages",
+      "index": 1
+     },
+     "sizeBefore": {
+      "bytes": 3400
+     },
+     "sizeAfter": {
+      "bytes": 400
+     },
+     "changeId": "cg:thinking:c77"
+    }
+   ],
+   "end": {
+    "thread": {
+     "id": "main"
+    },
+    "forwarded": {
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "pos": [
+      {
+       "hash": 625792648282977192,
+       "bytes": 4000
+      },
+      {
+       "hash": 3997421772459329857,
+       "bytes": 400
+      },
+      {
+       "hash": 15874798179235358310,
+       "bytes": 2000
+      },
+      {
+       "hash": 9751788643400804840,
+       "bytes": 1400,
+       "opaque": 1400,
+       "opaqueCounted": 1400,
+       "opaqueTokens": 300
+      },
+      {
+       "hash": 812218982363286915,
+       "bytes": 8000
+      }
+     ]
+    },
+    "breakpoints": [
+     {
+      "pos": {
+       "section": "messages",
+       "index": 4
+      },
+      "ttl": "5m"
+     }
+    ],
+    "facts": {
+     "ttl": "5m",
+     "lifetime": "exact"
+    }
+   },
+   "usage": {
+    "input": 0,
+    "cacheRead": 0,
+    "cacheWrite": 3900,
+    "cacheWrite1h": 0
+   },
+   "expected": {
+    "phase": "unknown",
+    "baselineUsage": {
+     "input": 0,
+     "cacheRead": 0,
+     "cacheWrite": 4900,
+     "cacheWrite1h": 0
+    },
+    "ops": [
+     {
+      "changeId": "cg:thinking:c77",
+      "saved": {
+       "cacheWrite5m": 1000
+      },
+      "caused": {},
+      "estimated": true
+     }
+    ],
+    "unpriced": [
+     {
+      "reason": "penalty_unknown"
+     }
+    ]
+   }
+  },
+  {
+   "begin": {
+    "meta": {
+     "requestId": "r1",
+     "session": "s1",
+     "model": "agent-model",
+     "at": "2026-03-02T09:01:00Z",
+     "billing": {
+      "mode": "api"
+     }
+    },
+    "client": {
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "pos": [
+      {
+       "hash": 625792648282977192,
+       "bytes": 4000
+      },
+      {
+       "hash": 16834438767639812877,
+       "bytes": 3400,
+       "opaque": 3000,
+       "opaqueCounted": 3000,
+       "opaqueTokens": 1000
+      },
+      {
+       "hash": 16166564384296000738,
+       "bytes": 2000
+      },
+      {
+       "hash": 13070014964519546924,
+       "bytes": 1400,
+       "opaque": 1400,
+       "opaqueCounted": 1400,
+       "opaqueTokens": 300
+      },
+      {
+       "hash": 10017575602403847775,
+       "bytes": 8000
+      },
+      {
+       "hash": 284722870615455291,
+       "bytes": 2000
+      }
+     ]
+    },
+    "clientBreakpoints": [
+     {
+      "pos": {
+       "section": "messages",
+       "index": 5
+      },
+      "ttl": "5m"
+     }
+    ]
+   },
+   "add": [],
+   "end": {
+    "thread": {
+     "id": "main"
+    },
+    "forwarded": {
+     "start": [
+      0,
+      0,
+      0
+     ],
+     "pos": [
+      {
+       "hash": 625792648282977192,
+       "bytes": 4000
+      },
+      {
+       "hash": 3997421772459329857,
+       "bytes": 400
+      },
+      {
+       "hash": 15874798179235358310,
+       "bytes": 2000
+      },
+      {
+       "hash": 9751788643400804840,
+       "bytes": 1400,
+       "opaque": 1400,
+       "opaqueCounted": 1400,
+       "opaqueTokens": 300
+      },
+      {
+       "hash": 812218982363286915,
+       "bytes": 8000
+      },
+      {
+       "hash": 12092674229575282487,
+       "bytes": 2000
+      }
+     ]
+    },
+    "breakpoints": [
+     {
+      "pos": {
+       "section": "messages",
+       "index": 5
+      },
+      "ttl": "5m"
+     }
+    ],
+    "facts": {
+     "ttl": "5m",
+     "lifetime": "exact"
+    }
+   },
+   "usage": {
+    "input": 0,
+    "cacheRead": 3900,
+    "cacheWrite": 500,
+    "cacheWrite1h": 0
+   },
+   "expected": {
+    "phase": "hot",
+    "baselineUsage": {
+     "input": 0,
+     "cacheRead": 4900,
+     "cacheWrite": 500,
+     "cacheWrite1h": 0
+    },
+    "ops": [
+     {
+      "changeId": "cg:thinking:c77",
+      "saved": {
+       "cacheRead": 1000
+      },
+      "caused": {},
+      "estimated": true,
+      "note": "the drop is replayed: the 1,000 tokens are in the read prefix"
+     }
+    ]
+   }
+  }
+ ]
+}

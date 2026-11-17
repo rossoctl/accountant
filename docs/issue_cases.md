@@ -738,6 +738,19 @@ Each case has one request. Forwarded text is 4,000 bytes. The bill is 12,000 tok
 The exit for a host that knows the real count is `Size.Tokens` on the sizes of the range. The unit tests are in
 `internal/engine/media_unseen_test.go`.
 
+## 9j. Cases from accountant#77 (a count for each thinking block)
+
+A host stores the `thinking_tokens` of the response that made each thinking block, and passes it when the block
+comes back (`NewBodyCounted`, design D16). The cases set `PosHash.OpaqueCounted` and `PosHash.OpaqueTokens` by
+hand. Text is 4 bytes a token. The operator drops one thinking block: its signature goes, and its text stays.
+
+| Case ID | What the spec requires |
+|---|---|
+| `opaque/counted-thinking-blocks/5m` | Two counted blocks (1,000 and 300 tokens). The ratio takes the counts out: (3,900 - 300) / 14,400 = 0.25. The drop saves the block's own count, 1,000 tokens, not the 12 of the fixed price. On the second request the read extent is found with the counts, and the replay saves 1,000 at the read tier. |
+| `opaque/counted-thinking-not-billed/5m` | A model that strips thinking. The count in the forwarded body (4,000) is above the room the bill leaves (2,928). The library drops the counts, uses the fixed price, and fails `opaque_tokens`. The drop saves 16 tokens. |
+
+The unit tests are in `internal/engine/opaque_count_test.go`.
+
 ## 10. Limits of this document
 
 - **The expected figures were computed by hand** from the spec's rules and the issue text. Cases 1, 3,

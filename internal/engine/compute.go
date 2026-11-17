@@ -439,9 +439,6 @@ func plausible(s Size, nt nonText) bool {
 	return text <= 0 || float64(s.Tokens) >= minTokensPerByte*float64(text)
 }
 
-// nonText is the media and the opaque bytes of a range: the bytes the text ratio does not price.
-type nonText struct{ media, opaque int }
-
 // rangeMedia is the media and opaque bytes a size covers. Each mark the host sets (MediaBytes,
 // OpaqueBytes) wins for its own kind. A kind the host leaves at 0 comes from the body that holds the
 // range: the client body for a "before" size, and the forwarded body, over the range mapped by toFwd,
@@ -451,29 +448,44 @@ type nonText struct{ media, opaque int }
 // opaque price for a signature in the range, and the conservation check (which takes the opaque bytes
 // from the body) agrees with the size. Without this an unmarked size over an image would price its
 // base64 at the text ratio.
+//
+// The counted part of the opaque bytes (design D16) comes from Size.OpaqueTokens when the host sets it:
+// then all the size's opaque bytes are counted at those tokens. Otherwise it comes from the body's
+// counts over the range, in proportion when the size holds less opaque bytes than the range does.
 func (c *calcState) rangeMedia(k int, s Size, sp span, isBefore bool) nonText {
-	host := nonText{s.MediaBytes, s.OpaqueBytes}
-	if (s.MediaBytes > 0 && s.OpaqueBytes > 0) || s.Bytes == 0 {
-		return host
+	nt := nonText{media: s.MediaBytes, opaque: s.OpaqueBytes}
+	var body nonText
+	text, ok := 0, false
+	if s.Bytes > 0 {
+		body, text, ok = c.rangeBody(k, sp, isBefore)
 	}
-	media, opaque, text, ok := c.rangeBody(k, sp, isBefore)
-	if !ok {
-		return host
+	if ok {
+		switch {
+		case s.MediaBytes > 0 && s.OpaqueBytes > 0:
+		case s.MediaBytes > 0:
+			nt.opaque = min(max(s.Bytes-text-s.MediaBytes, 0), body.opaque)
+		case s.OpaqueBytes > 0:
+			nt.media = min(max(s.Bytes-text-s.OpaqueBytes, 0), body.media)
+		default:
+			extra := max(s.Bytes-text, 0)
+			nt.media = min(extra, body.media)
+			nt.opaque = min(extra-nt.media, body.opaque)
+		}
+		if body.opaque > 0 && body.counted > 0 {
+			share := min(nt.opaque, body.opaque)
+			nt.counted = int(int64(body.counted) * int64(share) / int64(body.opaque))
+			nt.ctok = int(int64(body.ctok) * int64(share) / int64(body.opaque))
+		}
 	}
-	switch {
-	case s.MediaBytes > 0:
-		return nonText{s.MediaBytes, min(max(s.Bytes-text-s.MediaBytes, 0), opaque)}
-	case s.OpaqueBytes > 0:
-		return nonText{min(max(s.Bytes-text-s.OpaqueBytes, 0), media), s.OpaqueBytes}
+	if s.OpaqueTokens > 0 && nt.opaque > 0 {
+		nt.counted, nt.ctok = nt.opaque, s.OpaqueTokens
 	}
-	extra := max(s.Bytes-text, 0)
-	m := min(extra, media)
-	return nonText{m, min(extra-m, opaque)}
+	return nt
 }
 
-// rangeBody is the media, opaque and text bytes of a range in the body that holds it (see
+// rangeBody is the non-text and the text bytes of a range in the body that holds it (see
 // rangeMedia). ok is false when the range does not map onto that body.
-func (c *calcState) rangeBody(k int, sp span, isBefore bool) (media, opaque, text int, ok bool) {
+func (c *calcState) rangeBody(k int, sp span, isBefore bool) (nt nonText, text int, ok bool) {
 	body, from, to := c.client, sp.from, sp.to
 	if !isBefore {
 		body = c.fwd
@@ -486,18 +498,16 @@ func (c *calcState) rangeBody(k int, sp span, isBefore bool) (media, opaque, tex
 			to, ok2 = c.toFwd(k, sp.to)
 		}
 		if !ok1 || !ok2 {
-			return 0, 0, 0, false
+			return nonText{}, 0, false
 		}
 	}
 	f, ok1 := body.flat(from)
 	t, ok2 := body.flat(to)
 	if !ok1 || !ok2 || t < f {
-		return 0, 0, 0, false
+		return nonText{}, 0, false
 	}
-	media = body.cumMedia(t) - body.cumMedia(f-1)
-	opaque = body.cumOpaque(t) - body.cumOpaque(f-1)
-	text = body.cumBytes(t) - body.cumBytes(f-1) - media - opaque
-	return media, opaque, text, true
+	p := body.between(f-1, t)
+	return p.nonText, p.bytes - p.media - p.opaque, true
 }
 
 // sizeTokens converts one reported size to tokens. A plausible size the host counted (Tokens > 0) is
@@ -1458,13 +1468,14 @@ func (c *calcState) premiums() (ttl, mark *CacheEffect) {
 		return nil, nil
 	}
 	lo := c.readEnd
-	type acc struct{ bytes, media, opaque, first, last int }
+	type acc struct {
+		parts
+		first, last int
+	}
 	var in5, in1, up acc // input -> 5m, input -> 1h, 5m -> 1h
 	in5.first, in1.first, up.first = -1, -1, -1
-	add := func(a *acc, i, b, m, o int) {
-		a.bytes += b
-		a.media += m
-		a.opaque += o
+	add := func(a *acc, i int, p parts) {
+		a.parts.add(p)
 		if a.first < 0 {
 			a.first = i
 		}
@@ -1485,12 +1496,10 @@ func (c *calcState) premiums() (ttl, mark *CacheEffect) {
 			continue // no break covers it: the provider read it too
 		}
 		counted := covered && c.countedBreak != nil
-		fb, cb := c.fwd.cumBytes(i)-c.fwd.cumBytes(i-1), c.client.cumBytes(j)-c.client.cumBytes(j-1)
-		fm, cm := c.fwd.cumMedia(i)-c.fwd.cumMedia(i-1), c.client.cumMedia(j)-c.client.cumMedia(j-1)
-		fo, co := c.fwd.cumOpaque(i)-c.fwd.cumOpaque(i-1), c.client.cumOpaque(j)-c.client.cumOpaque(j-1)
-		b, m, o := min(fb, cb), min(fm, cm), min(fo, co)
+		fp := c.fwd.between(i-1, i)
+		p := minParts(fp, c.client.between(j-1, j))
 		if counted { // the break priced every forwarded token here as a write, the added ones too
-			b, m, o = fb, fm, fo
+			p = fp
 		}
 		var ct string
 		var cok bool
@@ -1509,16 +1518,15 @@ func (c *calcState) premiums() (ttl, mark *CacheEffect) {
 		switch {
 		case !cok && len(c.clientBPs) > 0:
 			if ft == "1h" {
-				add(&in1, i, b, m, o)
+				add(&in1, i, p)
 			} else {
-				add(&in5, i, b, m, o)
+				add(&in5, i, p)
 			}
 		case cok && ct != "1h" && ft == "1h":
-			add(&up, i, b, m, o)
+			add(&up, i, p)
 		}
 	}
-	n5, n1, t := c.ratio.tokensOf(in5.bytes, in5.media, in5.opaque), c.ratio.tokensOf(in1.bytes, in1.media, in1.opaque),
-		c.ratio.tokensOf(up.bytes, up.media, up.opaque)
+	n5, n1, t := c.ratio.tokensOf(in5.parts), c.ratio.tokensOf(in1.parts), c.ratio.tokensOf(up.parts)
 	if cut := n5 + n1 - c.usage.CacheWrite; cut > 0 {
 		d := min(cut, n5)
 		n5 -= d
@@ -1586,7 +1594,8 @@ func (c *calcState) markPayback(res *Result) {
 			return
 		}
 	}
-	var bytes, media, opaque, first, last = 0, 0, 0, -1, -1
+	var sum parts
+	first, last := -1, -1
 	for i := c.bstarFwd + 1; i <= min(c.readEnd, len(c.fwd.Pos)-1); i++ {
 		j := mustFlat(c.client, c.fwdToClient(c.fwd.position(i)))
 		if j < 0 || mustFlat(c.fwd, c.clientToFwd(c.client.position(j))) != i {
@@ -1595,18 +1604,13 @@ func (c *calcState) markPayback(res *Result) {
 		if _, _, ok := c.writeBP(c.client, c.clientBPs, j); ok {
 			continue // the client body would have cached it: read or written, not input
 		}
-		fb, cb := c.fwd.cumBytes(i)-c.fwd.cumBytes(i-1), c.client.cumBytes(j)-c.client.cumBytes(j-1)
-		fm, cm := c.fwd.cumMedia(i)-c.fwd.cumMedia(i-1), c.client.cumMedia(j)-c.client.cumMedia(j-1)
-		fo, co := c.fwd.cumOpaque(i)-c.fwd.cumOpaque(i-1), c.client.cumOpaque(j)-c.client.cumOpaque(j-1)
-		bytes += min(fb, cb)
-		media += min(fm, cm)
-		opaque += min(fo, co)
+		sum.add(minParts(c.fwd.between(i-1, i), c.client.between(j-1, j)))
 		if first < 0 {
 			first = i
 		}
 		last = i
 	}
-	n := min(c.ratio.tokensOf(bytes, media, opaque), c.usage.CacheRead)
+	n := min(c.ratio.tokensOf(sum), c.usage.CacheRead)
 	if n <= 0 {
 		return
 	}
@@ -1982,6 +1986,12 @@ func (c *calcState) checks(res *Result) {
 		res.Checks = append(res.Checks, CheckFailure{Check: CheckMediaTokens,
 			Detail: fmt.Sprintf("media price=%d tokens billed=%d: the bill is below the media price: the media is cut to %d tokens: %s",
 				media, c.usage.Input+c.usage.CacheRead+c.usage.CacheWrite, c.ratio.mediaTok, note)})
+	}
+	if c.ratio.countsDropped && !c.noUsage && c.invalid == "" {
+		all := c.fwd.between(-1, len(c.fwd.Pos)-1)
+		res.Checks = append(res.Checks, CheckFailure{Check: CheckOpaqueTokens,
+			Detail: fmt.Sprintf("opaque counts=%d tokens for %d of %d opaque bytes, tokens billed=%d: the counts are above what the bill leaves: the fixed price is used",
+				all.ctok, all.counted, all.opaque, c.usage.Input+c.usage.CacheRead+c.usage.CacheWrite)})
 	}
 	var got [3]int
 	seen := map[string]bool{}
