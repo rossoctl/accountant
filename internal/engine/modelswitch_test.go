@@ -166,6 +166,19 @@ func TestAStaleRouterSettingDoesNotChargeALaterClientSwitch(t *testing.T) {
 	}
 }
 
+// accountant#80: the request that ends a router setting removes it from Active. Later, the client
+// picks the router's To itself and goes back: the switch away from it is the client's, so it is in
+// the baseline. Before the fix the setting stayed active, matched again and charged the break.
+func TestAnEndedRouterSettingLeavesActive(t *testing.T) {
+	small, large := "claude-haiku-4-5", "claude-sonnet-4-5"
+	res := msRun4(t, []string{small, large, small, large},
+		[][]Operation{{msRoute("op1", "rt:model", large, small)}, nil, nil, nil})
+	br := effect(t, res, EffectBreak)
+	if !br.InBaseline || br.Cause != CauseModelChanged || br.ChangeID != "" {
+		t.Fatalf("break %+v: want in the baseline, Cause %q, no ChangeID", br, CauseModelChanged)
+	}
+}
+
 // Row 3 with a model change: the operations decide who pays, not the first reported setting.
 func TestRow3WithAModelChangeChargesTheModelOperation(t *testing.T) {
 	small, large := "claude-haiku-4-5", "claude-sonnet-4-5"
