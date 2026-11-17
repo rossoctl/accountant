@@ -79,11 +79,11 @@ go test ./...
 
 ## Status
 
-Pre-release. The API follows the design in [docs/design.md](docs/design.md) and may change before the
-first tag.
+Pre-release (v0.x). The API follows the design in [docs/design.md](docs/design.md) and may change between
+minor versions. [RELEASING.md](RELEASING.md) says how a version is made.
 
-Not implemented yet: `Result.Interaction` and the order check. Each is marked "Not implemented in v0" in
-the design. The Trackers hold about 10,000 threads and drop the oldest above that. A dropped thread loses
+`Result.Interaction` is set on a rescued request (design §6.2). The library does not check the order of
+the operations, and it has no attribution check: checks 2 and 5 are reserved (design §6.5). The Trackers hold about 10,000 threads and drop the oldest above that. A dropped thread loses
 its active changes (design §6.1, Memory).
 
 ## License
