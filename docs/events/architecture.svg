@@ -1,0 +1,141 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1160 640" width="1160" height="640" role="img" aria-labelledby="t d" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">
+<title id="t">accountant/events: central collection of structural events</title>
+<desc id="d">Each user has a laptop. On each laptop an agent, such as Claude Code or Codex, sends its LLM requests through a local proxy: Cortex or the context-guru proxy. The proxy forwards each request to the LLM provider. The proxy holds the accountant and the events module, which turn each request and each keep-alive ping decision into one structural OpenTelemetry log event. Each proxy exports its events over OTLP/HTTP with TLS and a bearer token to one central OpenTelemetry Collector. The Collector receives the events, drops unknown attributes (rule E3) and writes them with the clickhouse exporter to one shared ClickHouse database. In the database, the events land in the otel_logs table, materialized views turn them into typed tables, and curated views sit on top. Researchers, each with a read-only account, query the curated views with SQL from clickhouse-client, notebooks or Grafana. The hash key is held by the deployment owner, given to the proxies, and never stored in the database.</desc>
+<defs>
+  <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#24292f"/></marker>
+  <marker id="g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#6e7781"/></marker>
+</defs>
+<rect width="1160" height="640" fill="#ffffff"/>
+<text x="20" y="30" font-size="18" font-weight="600" fill="#24292f">accountant/events: central collection of structural events</text>
+
+<!-- Laptops: one for each user -->
+<g font-size="12" fill="#24292f">
+  <!-- Laptop A, y=80 -->
+  <rect x="200" y="48" width="110" height="24" rx="12" fill="#eaeef2" stroke="#6e7781"/>
+  <text x="255" y="64" text-anchor="middle">LLM provider</text>
+  <rect x="20" y="80" width="330" height="140" rx="8" fill="#f6f8fa" stroke="#57606a"/>
+  <text x="32" y="100" font-weight="600" font-size="13">Laptop: user A</text>
+  <rect x="35" y="120" width="110" height="80" rx="6" fill="#ffffff" stroke="#57606a"/>
+  <text x="90" y="152" text-anchor="middle" font-weight="600">Agent</text>
+  <text x="90" y="170" text-anchor="middle">Claude Code,</text>
+  <text x="90" y="185" text-anchor="middle">Codex</text>
+  <rect x="170" y="115" width="165" height="95" rx="6" fill="#ddf4ff" stroke="#0969da"/>
+  <text x="252" y="137" text-anchor="middle" font-weight="600">Proxy</text>
+  <text x="252" y="155" text-anchor="middle">Cortex or context-guru</text>
+  <rect x="180" y="177" width="145" height="26" rx="4" fill="#fff8c5" stroke="#9a6700"/>
+  <text x="252" y="194" text-anchor="middle">accountant + events</text>
+  <line x1="145" y1="150" x2="170" y2="150" stroke="#24292f" stroke-width="1.5" marker-start="url(#a)" marker-end="url(#a)"/>
+  <line x1="255" y1="115" x2="255" y2="72" stroke="#6e7781" stroke-width="1.5" stroke-dasharray="5 3" marker-start="url(#g)" marker-end="url(#g)"/>
+
+  <!-- Laptop B, y=260 -->
+  <rect x="200" y="228" width="110" height="24" rx="12" fill="#eaeef2" stroke="#6e7781"/>
+  <text x="255" y="244" text-anchor="middle">LLM provider</text>
+  <rect x="20" y="260" width="330" height="140" rx="8" fill="#f6f8fa" stroke="#57606a"/>
+  <text x="32" y="280" font-weight="600" font-size="13">Laptop: user B</text>
+  <rect x="35" y="300" width="110" height="80" rx="6" fill="#ffffff" stroke="#57606a"/>
+  <text x="90" y="332" text-anchor="middle" font-weight="600">Agent</text>
+  <text x="90" y="350" text-anchor="middle">Claude Code,</text>
+  <text x="90" y="365" text-anchor="middle">Codex</text>
+  <rect x="170" y="295" width="165" height="95" rx="6" fill="#ddf4ff" stroke="#0969da"/>
+  <text x="252" y="317" text-anchor="middle" font-weight="600">Proxy</text>
+  <text x="252" y="335" text-anchor="middle">Cortex or context-guru</text>
+  <rect x="180" y="357" width="145" height="26" rx="4" fill="#fff8c5" stroke="#9a6700"/>
+  <text x="252" y="374" text-anchor="middle">accountant + events</text>
+  <line x1="145" y1="330" x2="170" y2="330" stroke="#24292f" stroke-width="1.5" marker-start="url(#a)" marker-end="url(#a)"/>
+  <line x1="255" y1="295" x2="255" y2="252" stroke="#6e7781" stroke-width="1.5" stroke-dasharray="5 3" marker-start="url(#g)" marker-end="url(#g)"/>
+
+  <!-- Laptop N, y=440 -->
+  <rect x="200" y="408" width="110" height="24" rx="12" fill="#eaeef2" stroke="#6e7781"/>
+  <text x="255" y="424" text-anchor="middle">LLM provider</text>
+  <rect x="20" y="440" width="330" height="140" rx="8" fill="#f6f8fa" stroke="#57606a"/>
+  <text x="32" y="460" font-weight="600" font-size="13">Laptop: user N</text>
+  <rect x="35" y="480" width="110" height="80" rx="6" fill="#ffffff" stroke="#57606a"/>
+  <text x="90" y="512" text-anchor="middle" font-weight="600">Agent</text>
+  <text x="90" y="530" text-anchor="middle">Claude Code,</text>
+  <text x="90" y="545" text-anchor="middle">Codex</text>
+  <rect x="170" y="475" width="165" height="95" rx="6" fill="#ddf4ff" stroke="#0969da"/>
+  <text x="252" y="497" text-anchor="middle" font-weight="600">Proxy</text>
+  <text x="252" y="515" text-anchor="middle">Cortex or context-guru</text>
+  <rect x="180" y="537" width="145" height="26" rx="4" fill="#fff8c5" stroke="#9a6700"/>
+  <text x="252" y="554" text-anchor="middle">accountant + events</text>
+  <line x1="145" y1="510" x2="170" y2="510" stroke="#24292f" stroke-width="1.5" marker-start="url(#a)" marker-end="url(#a)"/>
+  <line x1="255" y1="475" x2="255" y2="432" stroke="#6e7781" stroke-width="1.5" stroke-dasharray="5 3" marker-start="url(#g)" marker-end="url(#g)"/>
+</g>
+
+<!-- Central OpenTelemetry Collector -->
+<g font-size="12" fill="#24292f">
+  <rect x="430" y="200" width="210" height="220" rx="8" fill="#dafbe1" stroke="#1a7f37"/>
+  <text x="535" y="225" text-anchor="middle" font-weight="600" font-size="13">OpenTelemetry Collector</text>
+  <text x="535" y="243" text-anchor="middle">central, contrib distribution</text>
+  <rect x="445" y="258" width="180" height="40" rx="4" fill="#ffffff" stroke="#1a7f37"/>
+  <text x="535" y="275" text-anchor="middle">otlp receiver</text>
+  <text x="535" y="290" text-anchor="middle">+ bearertokenauth</text>
+  <rect x="445" y="313" width="180" height="40" rx="4" fill="#ffffff" stroke="#1a7f37"/>
+  <text x="535" y="330" text-anchor="middle">transform: drop unknown</text>
+  <text x="535" y="345" text-anchor="middle">attributes (rule E3)</text>
+  <rect x="445" y="368" width="180" height="34" rx="4" fill="#ffffff" stroke="#1a7f37"/>
+  <text x="535" y="389" text-anchor="middle">clickhouse exporter</text>
+  <line x1="535" y1="298" x2="535" y2="313" stroke="#24292f" stroke-width="1.5" marker-end="url(#a)"/>
+  <line x1="535" y1="353" x2="535" y2="368" stroke="#24292f" stroke-width="1.5" marker-end="url(#a)"/>
+  <text x="535" y="445" text-anchor="middle">OTLP/HTTP over TLS, bearer token</text>
+  <text x="535" y="463" text-anchor="middle">Structure only: no text,</text>
+  <text x="535" y="479" text-anchor="middle">ids are keyed hashes</text>
+</g>
+
+<!-- Events from every proxy to the collector -->
+<g fill="none" stroke="#9a6700" stroke-width="2">
+  <path d="M325 190 H395 V278"/>
+  <path d="M325 370 H395 V278"/>
+  <path d="M325 550 H395 V278"/>
+  <line x1="395" y1="278" x2="445" y2="278" marker-end="url(#a)"/>
+</g>
+
+
+<!-- ClickHouse -->
+<g font-size="12" fill="#24292f">
+  <rect x="690" y="140" width="230" height="340" rx="8" fill="#fbefff" stroke="#8250df"/>
+  <text x="805" y="165" text-anchor="middle" font-weight="600" font-size="13">ClickHouse</text>
+  <text x="805" y="183" text-anchor="middle">one shared database</text>
+  <rect x="705" y="200" width="200" height="40" rx="4" fill="#ffffff" stroke="#8250df"/>
+  <text x="805" y="217" text-anchor="middle">otel_logs</text>
+  <text x="805" y="232" text-anchor="middle">landing table, 7-day TTL</text>
+  <rect x="705" y="255" width="200" height="34" rx="4" fill="#ffffff" stroke="#8250df"/>
+  <text x="805" y="276" text-anchor="middle">materialized views</text>
+  <rect x="705" y="304" width="200" height="56" rx="4" fill="#ffffff" stroke="#8250df"/>
+  <text x="805" y="321" text-anchor="middle" font-weight="600">typed tables</text>
+  <text x="805" y="337" text-anchor="middle">request_events, ping_events</text>
+  <text x="805" y="352" text-anchor="middle">producer_events</text>
+  <rect x="705" y="375" width="200" height="90" rx="4" fill="#ffffff" stroke="#8250df"/>
+  <text x="805" y="395" text-anchor="middle" font-weight="600">curated views</text>
+  <text x="805" y="413" text-anchor="middle">requests, pings</text>
+  <text x="805" y="430" text-anchor="middle">ping_windows</text>
+  <text x="805" y="447" text-anchor="middle">threads, gaps</text>
+  <line x1="805" y1="240" x2="805" y2="255" stroke="#24292f" stroke-width="1.5" marker-end="url(#a)"/>
+  <line x1="805" y1="289" x2="805" y2="304" stroke="#24292f" stroke-width="1.5" marker-end="url(#a)"/>
+  <line x1="805" y1="360" x2="805" y2="375" stroke="#24292f" stroke-width="1.5" marker-end="url(#a)"/>
+</g>
+
+<!-- Collector to ClickHouse -->
+<path d="M625 385 H670 V220 H705" fill="none" stroke="#24292f" stroke-width="1.5" marker-end="url(#a)"/>
+
+<!-- Researchers -->
+<g font-size="12" fill="#24292f">
+  <rect x="965" y="330" width="175" height="135" rx="8" fill="#fff1e5" stroke="#bc4c00"/>
+  <text x="1052" y="355" text-anchor="middle" font-weight="600" font-size="13">Researchers</text>
+  <text x="1052" y="374" text-anchor="middle">read-only account each</text>
+  <text x="1052" y="400" text-anchor="middle">clickhouse-client,</text>
+  <text x="1052" y="418" text-anchor="middle">notebooks (Python, R),</text>
+  <text x="1052" y="436" text-anchor="middle">Grafana or Superset</text>
+  <line x1="965" y1="420" x2="905" y2="420" stroke="#24292f" stroke-width="1.5" marker-start="url(#a)" marker-end="url(#a)"/>
+  <text x="935" y="412" text-anchor="middle" font-weight="600">SQL</text>
+</g>
+
+<!-- Legend and key note -->
+<g font-size="12" fill="#24292f">
+  <line x1="430" y1="560" x2="470" y2="560" stroke="#9a6700" stroke-width="2"/>
+  <text x="478" y="564">OTel log events: one per request, one per ping decision, plus producer stats</text>
+  <line x1="430" y1="585" x2="470" y2="585" stroke="#6e7781" stroke-width="1.5" stroke-dasharray="5 3"/>
+  <text x="478" y="589">LLM traffic: the request path, which the events never slow down</text>
+  <text x="430" y="614">Hash key: held by the deployment owner, given to the proxies, never stored in the database.</text>
+</g>
+</svg>

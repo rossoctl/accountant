@@ -10,6 +10,12 @@ It is a nested Go module, like [`metrics`](../metrics/metrics.md). The root modu
 library (R3). The module imports the OpenTelemetry **logs** API only. The SDK, the exporter and the
 collector address belong to the host.
 
+![Laptops, each with an agent and a proxy, send OTel events to one Collector, which writes ClickHouse; researchers query it with SQL](architecture.svg)
+
+Each user's laptop runs a proxy. The proxy forwards LLM traffic as usual and, after each response, emits one
+structural event. All proxies export to one OpenTelemetry Collector, which writes one ClickHouse database.
+Researchers query that database with SQL (§9).
+
 ## 1. Intent
 
 - Researchers need per-request facts from real traffic: sizes, timings, token tiers, cache behaviour, and
