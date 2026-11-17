@@ -740,7 +740,7 @@ applied on the next request, and drops the others:
 | Context operation | Kept in `ThreadState.Active` | Why |
 |---|---|---|
 | `rewrite` (tool-prune, mask, a summary) | yes, until it ends | The client sends the same transcript again, so the change applies again on every later request |
-| `setting` (model, effort) | yes, until the setting changes again. A `model` setting also ends on the request that ends the model change: the previous request ran on its `To`, and this one does not (§5.2, case 2 of "A model change") | The setting still holds on the next request |
+| `setting` (model, effort) | yes, until the setting changes again. A `model` setting also ends on the first request with a known model that is not its `To`. A new spelling of the same model (the same `ModelKey`) does not end it. The operation leaves as a whole, with any other key it changed (accountant#80) | The setting still holds on the next request |
 | `spend` | no | A model call happened once. Only its `ChangeID` is kept, to join it with the later saving |
 | a cache effect | no | It is not an operation. `Compute` finds it for one request and returns it in `Result.CacheEffects` |
 | a `rewrite` or `setting` with `DryRun` | yes, as `DryRun`, until it ends | A component in observe mode computes the same change on every request. If it were dropped, "would have saved" would show on the first request only, and an applied change would add up on every request, so the two could not be compared. It is never counted in totals ([R12](spec.md#r12)) |
@@ -954,13 +954,15 @@ applies wins:
 2. **This request ends an active one, or a reported one fails a check.** An active setting ends when the
    previous request ran on its `To` and this one does not: the model went back without the plugin
    (Q12). That request also removes the setting from `Active` (§4.6, accountant#80), so a later
-   switch by the client cannot match its `To` again. A reported one that fails a check cannot be priced (§6.4). The break counts, with no
+   switch by the client cannot match its `To` again. A request with no model does not keep the
+   setting alive: it ends on the next known model that is not its `To`. A reported one that fails a check cannot be priced (§6.4). The break counts, with no
    `ChangeID` and no `Cause`, so the doubtful figure lowers the saving and does not raise it
    ([R45](spec.md#r45)).
 3. **Else the client changed the model.** The client body misses too. The break has no `ChangeID`,
    sets `InBaseline` and sets `Cause` to `model_changed`. An active setting whose `To` was not the
    previous model ended on an earlier request, so it does not change this case. Case 2 removes an
-   ended setting from `Active`, so this rule is for a state that an older version saved.
+   ended setting from `Active`. This rule still applies when the `To` is written in another
+   spelling than the model (an alias), or when an older version saved the state.
 
 Row 2 is unchanged in each case: its break is already in the baseline.
 
