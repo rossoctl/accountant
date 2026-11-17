@@ -608,9 +608,13 @@ func (c *calcState) downgraded() bool {
 }
 
 // forwardPositions ends the active operations whose position a later splice removed (§4.3), or
-// that are no longer in the client body (a client compaction).
+// that are no longer in the client body (a client compaction). It also ends an active model setting
+// on the request that ends the model change (modelSettingEnded).
 func (c *calcState) forwardPositions() {
 	for k, it := range c.items {
+		if it.active && c.modelSettingEnded(it) {
+			it.ended = true
+		}
 		if !it.active || it.op.Kind != KindRewrite { // a setting has no position (§4.6)
 			continue
 		}
@@ -646,6 +650,29 @@ func (c *calcState) forwardPositions() {
 			}
 		}
 	}
+}
+
+// modelSettingEnded says whether this request ends an active model setting (§4.6): the request does
+// not run on its To, so the plugin no longer applies it. The operation leaves Active as a whole, with
+// any other key it changed, so a later model switch by the client cannot match its To again
+// (accountant#80). Whether the ending request's break counts is case 2 of "A model change" (§5.2).
+//
+// Nothing ends when the model of this request is unknown, or when the previous request ran on the
+// same model by ModelKey: a new spelling of one model is not a change ("The model differs", §6.3).
+// With the previous model unknown, the setting ends on the first known model that is not its To, so a
+// request with no model does not keep it alive. A DryRun changed nothing, so the client may have
+// picked its To: it does not end here.
+func (c *calcState) modelSettingEnded(it *item) bool {
+	sc, ok := it.op.Settings["model"]
+	if !ok || it.op.Kind != KindSetting || it.op.DryRun || sc.To == nil {
+		return false
+	}
+	to, cur := *sc.To, c.r.meta
+	if cur.modelID() == "" || to == cur.Model || to == cur.modelID() {
+		return false
+	}
+	pf := c.s.PrevPrint
+	return pf == nil || pf.modelID() == "" || pf.modelID() != cur.modelID()
 }
 
 // clientEdited says whether the client changed something at or before flat position i, compared with
@@ -1264,9 +1291,10 @@ func (c *calcState) modelChangeBreak(res *Result) bool {
 
 // pluginModelChange reports a model setting, with no well-formed report on this request, that still
 // explains the change: one reported now that failed a check, or an active one that this request
-// ends. An active setting ends when the previous request ran on its To and this one does not. An
-// active one whose To was not the previous model ended earlier: it does not explain this change. A
-// DryRun changed nothing.
+// ends. An active setting ends when the previous request ran on its To and this one does not; that
+// request also removes it from Active (modelSettingEnded). An active one whose To was not the previous
+// model does not explain this change: its To is written in another spelling than the model, or an
+// older version saved the state. A DryRun changed nothing.
 func (c *calcState) pluginModelChange() bool {
 	pf := c.s.PrevPrint
 	for _, it := range c.items {

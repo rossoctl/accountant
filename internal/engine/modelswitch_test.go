@@ -10,8 +10,11 @@ import (
 // misses too.
 
 // runModel is req.run with a model on the request.
-func runModel(ts *Trackers, model string, q req) Result {
-	r := ts.BeginRequest(RequestMeta{RequestID: "r", Session: "s1", Model: model, At: q.at}, q.client, q.clientBPs)
+func runModel(ts *Trackers, model string, q req) Result { return runModelKey(ts, model, "", q) }
+
+// runModelKey is runModel with a ModelKey.
+func runModelKey(ts *Trackers, model, key string, q req) Result {
+	r := ts.BeginRequest(RequestMeta{RequestID: "r", Session: "s1", Model: model, ModelKey: key, At: q.at}, q.client, q.clientBPs)
 	for _, op := range q.ops {
 		r.Add(op)
 	}
@@ -142,20 +145,26 @@ func msEffort(id string) Operation {
 // runs on models[k] with ops[k], and nothing is read after the first one.
 func msRun4(t *testing.T, models []string, ops [][]Operation) Result {
 	t.Helper()
+	return msRunKeys(t, models, make([]string, len(models)), ops)
+}
+
+// msRunKeys is msRun4 with keys[k] as the ModelKey of request k.
+func msRunKeys(t *testing.T, models, keys []string, ops [][]Operation) Result {
+	t.Helper()
 	m := msgs(4, 8000)
 	ts := NewTrackers()
 	var res Result
 	for k, model := range models {
 		u := Usage{CacheWrite: 33000 + 1000*k}
-		res = runModel(ts, model, req{at: t0.Add(time.Duration(k) * time.Minute), client: mk(nil, msSys, m),
+		res = runModelKey(ts, model, keys[k], req{at: t0.Add(time.Duration(k) * time.Minute), client: mk(nil, msSys, m),
 			clientBPs: bps5(sys(0), msg(len(m)-1)), ops: ops[k], facts: exact5m, usage: u})
 		m = with(m, b("n", 1000))
 	}
 	return res
 }
 
-// A router setting stays active after it ends. Only the request that ends it is charged: a later
-// model switch by the client is in the baseline again.
+// Only the request that ends a router setting is charged: a later model switch by the client is in
+// the baseline again.
 func TestAStaleRouterSettingDoesNotChargeALaterClientSwitch(t *testing.T) {
 	small, large, opus := "claude-haiku-4-5", "claude-sonnet-4-5", "claude-opus-4-5"
 	res := msRun4(t, []string{small, large, large, opus},
@@ -163,6 +172,45 @@ func TestAStaleRouterSettingDoesNotChargeALaterClientSwitch(t *testing.T) {
 	br := effect(t, res, EffectBreak)
 	if !br.InBaseline || br.Cause != CauseModelChanged || br.ChangeID != "" {
 		t.Fatalf("break %+v: want in the baseline, Cause %q, no ChangeID", br, CauseModelChanged)
+	}
+}
+
+// accountant#80: the request that ends a router setting removes it from Active. Later, the client
+// picks the router's To itself and goes back: the switch away from it is the client's, so it is in
+// the baseline. Before the fix the setting stayed active, matched again and charged the break.
+func TestAnEndedRouterSettingLeavesActive(t *testing.T) {
+	small, large := "claude-haiku-4-5", "claude-sonnet-4-5"
+	res := msRun4(t, []string{small, large, small, large},
+		[][]Operation{{msRoute("op1", "rt:model", large, small)}, nil, nil, nil})
+	br := effect(t, res, EffectBreak)
+	if !br.InBaseline || br.Cause != CauseModelChanged || br.ChangeID != "" {
+		t.Fatalf("break %+v: want in the baseline, Cause %q, no ChangeID", br, CauseModelChanged)
+	}
+}
+
+// A request with no model does not keep an ended router setting in Active (accountant#80, round 1).
+// Request 3 runs on large, so the setting ends there, and the client's later switch away from small
+// is in the baseline.
+func TestARequestWithNoModelDoesNotKeepARouterSetting(t *testing.T) {
+	small, large := "claude-haiku-4-5", "claude-sonnet-4-5"
+	res := msRun4(t, []string{small, "", large, small, large},
+		[][]Operation{{msRoute("op1", "rt:model", large, small)}, nil, nil, nil, nil})
+	br := effect(t, res, EffectBreak)
+	if !br.InBaseline || br.Cause != CauseModelChanged || br.ChangeID != "" {
+		t.Fatalf("break %+v: want in the baseline, Cause %q, no ChangeID", br, CauseModelChanged)
+	}
+}
+
+// A new spelling of the router's model, with the same ModelKey, is not a model change, so it does not
+// end the setting (accountant#80, round 1). The router stops on request 4: that break counts.
+func TestANewSpellingOfTheModelDoesNotEndARouterSetting(t *testing.T) {
+	small, large := "claude-haiku-4-5", "claude-sonnet-4-5"
+	res := msRunKeys(t, []string{small, "anthropic/" + small, small, large},
+		[]string{"haiku", "haiku", "haiku", "sonnet"},
+		[][]Operation{{msRoute("op1", "rt:model", large, small)}, nil, nil, nil})
+	br := effect(t, res, EffectBreak)
+	if br.InBaseline || br.Cause != "" || br.ChangeID != "" {
+		t.Fatalf("break %+v: want a charged break with no cause and no ChangeID", br)
 	}
 }
 
