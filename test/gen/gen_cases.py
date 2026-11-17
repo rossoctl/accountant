@@ -1588,6 +1588,30 @@ def c_mix():
                 "It is in the client body's bill too, so the baseline equals the bill and the break nets out.",
                 DIMS("none", "beforeBStar", "break", threads="1", models="1", **{"break": "unexplained"}), [k0, k1])
 
+    # 2c. The client changes the model on the request where the host stops applying a change (accountant#69).
+    # The forwarded body differs from the previous one inside the cached prefix, before the client's first
+    # difference, so §5.2 row 1 matches. No operation reports the model change, and the provider keeps a cache
+    # for each model, so the client body misses too: the break is in the baseline, labelled model_changed.
+    C2 = C1 + [("m10", 500)]
+    w0 = sim(0, "main-0", ([], SYS1, M_BASE), ([], SYS1, M_BASE), [], "unknown", model="agent-model")
+    w1 = sim(10, "main-1", ([], SYS1, C1), ([], SYS1, F1), [eop(CF, saved=TT(cacheWrite5m=7000))], "hot",
+             add=[cmdfilter_op()], prev=(30000, 30000), boundary=P("messages", 8), model="agent-model")
+    w2 = sim(29, "main-2", ([], SYS1, C2), ([], SYS1, C2), [], "hot", model="small-model",
+             usage=U(write=38500), base=U(write=38500),
+             effects=[effect("break", "", saved=TT(cacheRead=38000), caused=TT(cacheWrite5m=38000), to=P("messages", 9),
+                             cause="model_changed", note="row 1: the forwarded body differs at messages[9]; the "
+                             "small model holds no entry for main's prefix, so the client body misses too")])
+    write_issue("threads/model-switch-unreported/row1-change-stops", 69,
+                "Main runs on the large model, and cmdfilter shrinks messages[9] from 8,000 to 1,000 tokens. On the "
+                "next request the client moves to the small model and appends one message, and the host does not "
+                "apply cmdfilter. The forwarded body differs from the previous one at messages[9], inside the cached "
+                "prefix and before the client's first difference: design 5.2 row 1. No operation reports the model "
+                "change, and the provider keeps a cache for each model, so nothing is read and all 38,500 tokens are "
+                "written. The client body misses too, so the break is in the baseline, labelled model_changed: the "
+                "38,000 tokens of the prefix up to messages[9], from read to write, net out. Before accountant#69, row 1 booked it as a charged break "
+                "with no ChangeID, which a host shows as an ended change.",
+                DIMS("none", "beforeBStar", "break", threads="1", models="2", **{"break": "model"}), [w0, w1, w2])
+
     # 3. Two sessions, each with a main and a subagent, all reporting the same ChangeID.
     C1, F1 = M_BASE + [("m9", 8000)], M_BASE + [("m9f", 1000)]
     first = lambda sec, rid, ses, th: sim(sec, rid, ([], SYS1, M_BASE), ([], SYS1, M_BASE), [], "unknown", session=ses, thread=th)

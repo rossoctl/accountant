@@ -1206,7 +1206,9 @@ func (c *calcState) cacheEffects(res *Result) {
 	fwdFDCli := mustFlat(c.client, c.fwdToClient(c.fwd.position(c.fwdFD)))
 	switch {
 	case c.fwdFD <= c.prevExt && fwdFDCli < c.clientFD: // row 1
-		c.addBreak(res, c.readEnd, c.changeAt(c.fwdFD))
+		if !c.modelChangeBreak(res) {
+			c.addBreak(res, c.readEnd, c.changeAt(c.fwdFD))
+		}
 		return
 	case c.clientFD <= c.prevExtCli && fwdFDCli >= c.clientFD: // row 2
 		c.addBreak(res, c.readEnd, "")
@@ -1223,32 +1225,89 @@ func (c *calcState) cacheEffects(res *Result) {
 	}
 	predicted := c.ratio.upTo(c.fwd, expect)
 	low := c.usage.CacheRead+c.r.facts.Provider.tolerance(predicted) < predicted // the one-block tolerance (row 4)
-	if !low {
+	if !low || c.modelChangeBreak(res) {
 		return
 	}
 	if op := c.reportedSetting(); op != nil { // row 3
-		from, known := c.settingFrom(*op)
-		if !known {
-			res.Unpriced = append(res.Unpriced, Unpriced{OpID: op.ID, Reason: ReasonPenaltyUnknown})
-		}
-		c.addBreak(res, from, op.ChangeID)
+		c.settingBreak(res, *op)
 		return
 	}
 	c.addBreak(res, c.readEnd, "") // row 4: the entry was lost early
 	c.inBaseline(res)
-	if prev := c.s.PrevPrint; prev.modelID() != "" && c.r.meta.modelID() != "" && prev.modelID() != c.r.meta.modelID() {
-		// the provider keeps a cache for each model, so this is not a loss nobody can explain
-		res.CacheEffects[len(res.CacheEffects)-1].Cause = CauseModelChanged
-	}
 }
 
-func (c *calcState) reportedSetting() *Operation {
+// modelChangeBreak adds the break of rows 1, 3 and 4 when the model differs from the thread's previous
+// request's ("A model change", §5.2), and reports whether it did. The provider keeps a cache for each
+// model, so the whole prefix misses, and the operations decide who pays:
+//   - a model setting reported on this request changed the model: that operation pays;
+//   - the change ends an active model setting, or a model setting failed a check: the break counts,
+//     with no ChangeID (an ended change, Q12; a doubtful figure only lowers a saving, R45);
+//   - else the client changed the model: the client body misses too, so the break is in the baseline.
+func (c *calcState) modelChangeBreak(res *Result) bool {
+	prev, cur := c.s.PrevPrint.modelID(), c.r.meta.modelID()
+	if prev == "" || cur == "" || prev == cur {
+		return false
+	}
+	if op := c.modelSetting(); op != nil {
+		c.settingBreak(res, *op)
+		return true
+	}
+	if c.pluginModelChange() {
+		c.addBreak(res, c.readEnd, "")
+		return true
+	}
+	c.addBreak(res, c.readEnd, "")
+	c.inBaseline(res)
+	res.CacheEffects[len(res.CacheEffects)-1].Cause = CauseModelChanged
+	return true
+}
+
+// pluginModelChange reports a model setting, with no well-formed report on this request, that still
+// explains the change: one reported now that failed a check, or an active one that this request
+// ends. An active setting ends when the previous request ran on its To and this one does not. An
+// active one whose To was not the previous model ended earlier: it does not explain this change. A
+// DryRun changed nothing.
+func (c *calcState) pluginModelChange() bool {
+	pf := c.s.PrevPrint
+	for _, it := range c.items {
+		sc, ok := it.op.Settings["model"]
+		if !ok || it.op.Kind != KindSetting || it.op.DryRun {
+			continue
+		}
+		if !it.active || (sc.To != nil && (*sc.To == pf.Model || *sc.To == pf.modelID())) {
+			return true
+		}
+	}
+	return false
+}
+
+// modelSetting is the well-formed setting operation reported on this request that changes the model.
+func (c *calcState) modelSetting() *Operation { return c.setting("model") }
+
+// reportedSetting is the first well-formed setting operation reported on this request (§5.2 row 3).
+func (c *calcState) reportedSetting() *Operation { return c.setting("") }
+
+// setting is the first well-formed setting operation reported on this request; with a key, the first
+// one that changes that setting.
+func (c *calcState) setting(key string) *Operation {
 	for _, it := range c.items {
 		if !it.active && it.bad == "" && !it.op.DryRun && it.op.Kind == KindSetting {
-			return &it.op
+			if _, ok := it.op.Settings[key]; key == "" || ok {
+				return &it.op
+			}
 		}
 	}
 	return nil
+}
+
+// settingBreak adds the break of a setting operation (§5.2 row 3): from settingFrom, with the
+// operation's ChangeID, and penalty_unknown when no SettingChange.At gives the position.
+func (c *calcState) settingBreak(res *Result, op Operation) {
+	from, known := c.settingFrom(op)
+	if !known {
+		res.Unpriced = append(res.Unpriced, Unpriced{OpID: op.ID, Reason: ReasonPenaltyUnknown})
+	}
+	c.addBreak(res, from, op.ChangeID)
 }
 
 // settingFrom is the start of a setting break: the earliest SettingChange.At, snapped down to the

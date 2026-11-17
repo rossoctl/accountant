@@ -164,7 +164,8 @@ type CacheEffect struct {
 	Caused    TierTokens       `json:"caused"`
 	Estimated bool             `json:"estimated,omitempty"`
 	// InBaseline marks a break that the client body would have had too: a client edit, an expiry,
-	// or an entry lost early (§5.2 rows 2, 4 and 5). It is on the record, but it is not part of the
+	// an entry lost early (§5.2 rows 2, 4 and 5), or a model change that no operation reports
+	// (rows 1, 3 and 4, accountant#69). It is on the record, but it is not part of the
 	// bill difference (§6.3), so a host does not count it. A break that an ended change left behind
 	// has no ChangeID and is not InBaseline: it counts.
 	InBaseline bool `json:"inBaseline,omitempty"`

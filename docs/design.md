@@ -940,14 +940,35 @@ checked in order, and the first match wins.
 Rows 2, 4 and 5 set `InBaseline` on the break: the client body would have had the same break, so it
 is on the record but is not part of the bill difference (§6.3). A row 1 break with no `ChangeID` (the
 change ended, Q12) does not set it: the client body would have read that prefix, so the break counts.
+A model change changes these rules in rows 1, 3 and 4 (see the next paragraph).
 A host that sums cache effects into a net skips each break with `InBaseline`.
+
+**A model change** (accountant#69). The request names a different model from the thread's previous one.
+The provider keeps a cache for each model, so the whole prefix misses. Rows 1, 3 and 4 then decide who
+pays from the `setting` operations with a `model` key, not counting a `DryRun`. The first case that
+applies wins:
+
+1. **A well-formed one is reported on this request: a plugin (an inference router) changed the model.**
+   Rows 1 and 3 add the break of that operation, as row 3 describes. Row 1 does not name the change at
+   `fwdFirstDiff`, and row 3 does not name another reported setting.
+2. **This request ends an active one, or a reported one fails a check.** An active setting ends when the
+   previous request ran on its `To` and this one does not: the model went back without the plugin
+   (Q12). A reported one that fails a check cannot be priced (§6.4). The break counts, with no
+   `ChangeID` and no `Cause`, so the doubtful figure lowers the saving and does not raise it
+   ([R45](spec.md#r45)).
+3. **Else the client changed the model.** The client body misses too. The break has no `ChangeID`,
+   sets `InBaseline` and sets `Cause` to `model_changed`. An active setting whose `To` was not the
+   previous model ended on an earlier request, so it does not change this case. A setting stays in
+   `Active` after it ends (§4.6), and this rule keeps it from charging every later model switch.
+
+Row 2 is unchanged in each case: its break is already in the baseline.
 
 | # | Comparison | Result |
 |---|---|---|
 | 1 | `fwdFirstDiff` ≤ `prevExtent`, and `fwdFirstDiff` < `clientFirstDiff` | A plugin broke the cache. Add a break with `at: fwdFirstDiff` and the `ChangeID` of the context operation, reported or active, that changed the position `fwdFirstDiff`. |
 | 2 | `clientFirstDiff` ≤ `prevExtent`, and `fwdFirstDiff` ≥ `clientFirstDiff` | The client changed its body inside the cached prefix. Add a break with no `ChangeID`. |
 | 3 | A `setting` context operation changed the model or a param (`effort`, `thinking`) since the previous request, and `Usage.CacheRead` is below the read that the forwarded body and the phase predict | Add a break with the `ChangeID` of the `setting` context operation. The break starts at the earliest `SettingChange.At` of the operation, snapped down to the last breakpoint before it (§6.2), because the bodies are equal there and no hash shows the position. If `At` is nil, the break starts at the read the usage shows and `penalty_unknown` is added (§6.4). If the operation changed several settings, the break names the operation, not one setting: the library cannot say which of them caused it. This is the one cost of a param change that can be measured. |
-| 4 | No diff inside `prevExtent`, the phase is `hot`, but `Usage.CacheRead` is below the read the phase predicts: the end of `prevExtent`, snapped down to the last forwarded breakpoint at or before it. When the request is more than 5 minutes after the previous one, the prediction is cut at the head (the end of the first forwarded breakpoint group that is held at 1h): a 5m part past the head has expired | The entry was lost early (eviction, the lookback window, another reason the library cannot see). Add a break with no `ChangeID`; set `Cause` to `model_changed` when the model differs from the previous request's. A one-block tolerance absorbs the read step of the provider (128 tokens by default, `Provider.ReadGranularity`). |
+| 4 | No diff inside `prevExtent`, the phase is `hot`, but `Usage.CacheRead` is below the read the phase predicts: the end of `prevExtent`, snapped down to the last forwarded breakpoint at or before it. When the request is more than 5 minutes after the previous one, the prediction is cut at the head (the end of the first forwarded breakpoint group that is held at 1h): a 5m part past the head has expired | The entry was lost early (eviction, the lookback window, another reason the library cannot see). Add a break with no `ChangeID`; set `Cause` to `model_changed` when the model differs from the previous request's and no operation changed it (see "A model change" above). A one-block tolerance absorbs the read step of the provider (128 tokens by default, `Provider.ReadGranularity`). |
 | 5 | No diff inside `prevExtent`, and the phase is `cold` | The cache expired. Add a break with no `ChangeID`, so the expiry is on the record ([R31](spec.md#r31)). It moves no tokens: B\* = 0 already prices every position as a write (§6.2), so the range from the read extent to B\* is empty, and the expiry is not counted twice. |
 | 6 | No previous fingerprint for this thread | First turn of the thread with no `Inherits`, or a restart: no break is added. B\* is unknown (§6.4). |
 
@@ -1426,12 +1447,14 @@ type CacheEffect struct {
     Caused    TierTokens
     Estimated bool
     Cause     CacheEffectCause // why a break nobody caused happened, when the library knows; "model_changed" is the only value
-    InBaseline bool           // the client body has this break too (§5.2 rows 2, 4, 5): on the record, not in the bill difference
+    InBaseline bool           // the client body has this break too (§5.2 rows 2, 4, 5, and a model change): on the record, not in the bill difference
 }
 ```
 
-`Cause` is "model_changed" when row 4 (§5.2) finds a loss and the model differs from the previous
-request's: the provider keeps a cache for each model, so the loss is explained. It is empty otherwise.
+`Cause` is "model_changed" when row 1, 3 or 4 (§5.2) adds a break and the model differs from the previous
+request's, and no `setting` operation explains the change (case 3 of "A model change", §5.2): the
+provider keeps a cache for each model, so the loss is explained, and the break is in the baseline. It is
+empty otherwise.
 
 "The model differs" compares `RequestMeta.ModelKey` when the host sets it, and `RequestMeta.Model` as written
 otherwise. The library treats ids as opaque strings. A dated id (`claude-sonnet-4-5-20250929`), an alias
