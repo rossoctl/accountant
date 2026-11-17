@@ -95,8 +95,9 @@ with a rule like it lists the case as `differs`.
 **Rounding.** The case list and the examples compute in micro-dollars, exactly, and round once, half
 up, when a figure is shown. A total adds the exact amounts.
 
-A case that is not in the host's list of differences (Cortex: `differences.json`; context-guru:
-`accLibraryDisagrees`) must agree with the current code. The current figure is never
+A case that is not in the host's list of differences (Cortex: `differences.json`) must agree with the
+current code. context-guru allows no difference: `accLibraryDisagrees` skips only cases that the library
+itself fails. The current figure is never
 stored: the agreement test computes it each time it runs (§10.4).
 
 ### 10.3 What makes the list exhaustive

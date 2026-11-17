@@ -340,7 +340,7 @@ would misattribute it. Keying by thread gives the right baseline for every rule 
     the longest TTL, covers only the cache state. The snapshot also holds the active changes. After a
     stop longer than 1h, every thread loses them, as with no snapshot (below). `Compute` already judges
     an old `PrevPrint` by the gap: a gap past the TTL gives a cold or unknown phase. So a host can restore
-    a snapshot of any age, if its body hash has not changed. The library has no idle timeout for the same
+    a snapshot of any age, if its body hash has not changed. The library has no idle timeout for a close
     reason (design §6.1).
   - Cortex must save and restore the state. Without it, every restart loses the active changes of every
     live session. Do not copy the 1h limit without a reason.
@@ -441,7 +441,7 @@ Rules the proxy follows:
 
 `dash.Event.PriceMode` (`dash/accountant_price.go`) tests these gates in order. The first one that fails
 gives the fallback reason. The proxy then books its own figure and logs `acc_fallback` with the reason,
-the checks and `Recomputed` (`proxy/accountant_shadow.go`). A request that had no `Compute` (W6.1) gets
+the checks and `Recomputed` (`proxy/accountant_shadow.go`). A request whose `Compute` was skipped (W6.1) gets
 `no_result`, and the log line names the detail.
 
 1. `unpriced`: no complete usage, or no price for the model. This test runs before every other gate, so a
