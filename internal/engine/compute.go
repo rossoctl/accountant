@@ -1204,7 +1204,11 @@ func (c *calcState) cacheEffects(res *Result) {
 		return
 	}
 	fwdFDCli := mustFlat(c.client, c.fwdToClient(c.fwd.position(c.fwdFD)))
+	modelChanged := c.clientModelChange()
 	switch {
+	case c.fwdFD <= c.prevExt && fwdFDCli < c.clientFD && modelChanged: // row 1, the client changed the model
+		c.modelBreak(res) // accountant#69: the client body misses too, so no plugin is charged
+		return
 	case c.fwdFD <= c.prevExt && fwdFDCli < c.clientFD: // row 1
 		c.addBreak(res, c.readEnd, c.changeAt(c.fwdFD))
 		return
@@ -1226,7 +1230,7 @@ func (c *calcState) cacheEffects(res *Result) {
 	if !low {
 		return
 	}
-	if op := c.reportedSetting(); op != nil { // row 3
+	if op := c.reportedSetting(); op != nil && !modelChanged { // row 3
 		from, known := c.settingFrom(*op)
 		if !known {
 			res.Unpriced = append(res.Unpriced, Unpriced{OpID: op.ID, Reason: ReasonPenaltyUnknown})
@@ -1234,12 +1238,38 @@ func (c *calcState) cacheEffects(res *Result) {
 		c.addBreak(res, from, op.ChangeID)
 		return
 	}
+	if modelChanged {
+		c.modelBreak(res)
+		return
+	}
 	c.addBreak(res, c.readEnd, "") // row 4: the entry was lost early
 	c.inBaseline(res)
-	if prev := c.s.PrevPrint; prev.modelID() != "" && c.r.meta.modelID() != "" && prev.modelID() != c.r.meta.modelID() {
-		// the provider keeps a cache for each model, so this is not a loss nobody can explain
-		res.CacheEffects[len(res.CacheEffects)-1].Cause = CauseModelChanged
+}
+
+// clientModelChange reports a model change that no operation caused: the request names a different
+// model from the thread's previous one, and no setting operation on this request reports a model
+// change. The provider keeps a cache for each model, so the client body would have missed too.
+func (c *calcState) clientModelChange() bool {
+	prev, cur := c.s.PrevPrint.modelID(), c.r.meta.modelID()
+	if prev == "" || cur == "" || prev == cur {
+		return false
 	}
+	for _, it := range c.items {
+		if !it.active && it.bad == "" && !it.op.DryRun && it.op.Kind == KindSetting {
+			if _, ok := it.op.Settings["model"]; ok {
+				return false // a plugin changed the model: row 3 charges it
+			}
+		}
+	}
+	return true
+}
+
+// modelBreak adds the break of a model change that no operation caused: in the baseline, with
+// Cause model_changed and no ChangeID.
+func (c *calcState) modelBreak(res *Result) {
+	c.addBreak(res, c.readEnd, "")
+	c.inBaseline(res)
+	res.CacheEffects[len(res.CacheEffects)-1].Cause = CauseModelChanged
 }
 
 func (c *calcState) reportedSetting() *Operation {
