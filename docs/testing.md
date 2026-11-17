@@ -70,20 +70,34 @@ return. A step can also be a standalone `RequestOps` (a ping), priced with `Comp
   code's figure can be compared in dollars.
 
 The places where a host's current code is meant to give a different figure are not in this repository.
-Each host keeps them in its own file, `differences.json` (context-guru: `dash/testdata/differences.json`),
-because they compare the cases with that host's code. Each entry has a case ID, a kind, and a reason:
+Each host keeps them with its own tests, because they compare the cases with that host's code. Each entry
+has a case ID, a kind, and a reason.
+
+- **context-guru today:** no `differences.json` exists. `TestProxyPathMatchesTheAccountantCases`
+  (`dash/accountant_agree_test.go`) prices every case the way the proxy prices a `Result`, and allows no
+  difference. A
+  case that the library itself does not meet is skipped through the map `accLibraryDisagrees`, with its
+  reason. The map is empty at `b87af32`. The differences that were found and fixed are written up in
+  `docs/accountant/cg-differences.md` and `cg-differences-root-causes.md`.
+- **Cortex:** at step 8 (wiring W9), Cortex compares the cases with its current rules. It keeps its
+  differences in a `differences.json` with the kinds below.
+
+The kinds:
 
 - `differs`: the figures differ on purpose. The reason cites the spec or design section that causes it.
 - `notCovered`: the current code prices something the model does not. The case is listed in the open questions ([§11, spec](spec.md#11-open-questions) and [design](design.md#11-open-questions)).
 
-Known `differs` entries from the specification and the design, for the keep-alive credit ([§4.4](design.md#44-cache-effects)): the current code credits a
-1h entry after a 5m gap (`providerCacheTTLMs`, `dash/event.go`). This spec does not. Both agree on a
-rescue on OpenAI GPT-5.6+ after the 30-minute minimum.
+A known `differs` entry from the past, for the keep-alive credit ([§4.4](design.md#44-cache-effects)): the old context-guru code credited a
+1h entry after a 5m gap (`providerCacheTTLMs`, `dash/event.go`). This spec does not. Both agreed on a
+rescue on OpenAI GPT-5.6+ after the 30-minute minimum. context-guru has since removed that rule. A host
+with a rule like it lists the case as `differs`.
 
 **Rounding.** The case list and the examples compute in micro-dollars, exactly, and round once, half
 up, when a figure is shown. A total adds the exact amounts.
 
-A case that is not in this file must agree with the current code. The current figure is never
+A case that is not in the host's list of differences (Cortex: `differences.json`) must agree with the
+current code. context-guru allows no difference: `accLibraryDisagrees` skips only cases that the library
+itself fails. The current figure is never
 stored: the agreement test computes it each time it runs (§10.4).
 
 ### 10.3 What makes the list exhaustive
@@ -169,10 +183,10 @@ reason.
 
 | Test | Where | Passes when |
 |---|---|---|
-| `accountant` unit test | context-guru | `accountant.Compute` returns `expected` for every case, including the expected `Boundary`, `Phase` and break for every cache case ([§5.2](design.md#52-classifying-a-break)). The internal comparison has its own unit tests. |
-| Agreement with the current code | context-guru | The test runs `dash.Event.Price` on each case's input. Each case not in `differences.json` equals `expected` within one micro-dollar. Each `differs` entry really differs, so a stale entry fails. |
+| `accountant` unit test | accountant (this repository) | `accountant.Compute` returns `expected` for every case, including the expected `Boundary`, `Phase` and break for every cache case ([§5.2](design.md#52-classifying-a-break)). The internal comparison has its own unit tests. |
+| Agreement with the current code | context-guru | `TestProxyPathMatchesTheAccountantCases` feeds each case to the `Trackers` and prices the `Result` the way the proxy does (`SetAccountant`, `AccountantFigure`). It does not run the proxy's body builder, operation builder or fallback gates (wiring W6.3 to W6.5). Every step net, every component figure and the thread total equal `expected`. No difference is allowed; a case the library itself fails is skipped with its reason (`accLibraryDisagrees`). |
 | Agreement with the Cortex rules | Cortex, until step 10 | The same test with `pruneDraft`, `compactionDraft` and `rewritePenalty`, for the tool-prune and rewrite-penalty cases. It is removed with those rules. |
-| Review of the differences | PR review | Every `differs` entry cites a spec or design section, and a reviewer approves `differences.json`. |
+| Review of the differences | PR review | Every `differs` entry cites a spec or design section, and a reviewer approves the host's `differences.json` (Cortex) or skip entry (context-guru). |
 | Cortex contract test | Cortex | Cortex builds the same inputs through its own plugins and its Tracker, and gets `expected`. A type change in the library fails the Cortex build on upgrade. |
 | Shadow steps | both | Every logged difference matches a `differs` entry. |
 | Removal gate | both | No rule is removed while a `notCovered` entry uses it. |

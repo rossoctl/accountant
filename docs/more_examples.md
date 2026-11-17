@@ -168,7 +168,7 @@ F2, F4, F5, H2, H5. Where the result is not what the plan predicted or needs a n
 - **A1** expects a break effect that moves no token. The client's last breakpoint before the edit is also
   where the provider stopped reading, so nothing moves. Whether the library should add the effect at all
   when nothing moves is not stated in §5.2. The case lists this in `open`.
-- **A4** agrees with cg, so it needs no entry in `differences.json`. **B3** and **B4** now agree too: the play adapter
+- **A4** agrees with cg, so it needs no entry in cg's list of differences. **B3** and **B4** now agree too: the play adapter
   passes the provider and the TTL tier, so cg uses its 30-minute and 1h floors.
 - **E3, E4, E5** are listed `notCovered`. cg books its `headttl` credit outside the per-component figures
   and the adapter does not feed it, so cg shows 0.
