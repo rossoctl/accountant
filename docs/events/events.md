@@ -6,7 +6,7 @@ Status: design, not implemented. Epic: [rossoctl/accountant#85](https://github.c
 **structural event**. Each proxy exports its events to **one central collector**. Researchers read the
 collected events to study usage patterns, find bottlenecks, and compare caching strategies.
 
-It is a nested Go module, like [`metrics`](metrics.md). The root module keeps importing only the standard
+It is a nested Go module, like [`metrics`](../metrics/metrics.md). The root module keeps importing only the standard
 library (R3). The module imports the OpenTelemetry **logs** API only. The SDK, the exporter and the
 collector address belong to the host.
 
@@ -500,7 +500,7 @@ last forwarded body. Two rules bound that state:
 1. `WithMaxThreads(n)`: when a new thread would exceed `n`, the module drops the thread it used least
    recently. The next request of that thread has no `common_prefix`.
 2. `ForgetThread`: the host calls it when it drops the thread from its own accountant state (§W5.3 in
-   `cortex-wiring.md`), so the two stay matched.
+   [`cortex-wiring.md`](../cortex-wiring.md)), so the two stay matched.
 
 ## 9. Transport and the central collector
 
@@ -609,7 +609,7 @@ FROM gaps GROUP BY producer_id, run_id HAVING lost > 0;
 | Host | Work |
 |---|---|
 | context-guru proxy | Already imports accountant. Build the `Emitter`; fill `HostFacts` from the proxy's request timing and response parse; emit a `Ping` event from the keeper for each decision; hook `Close` to shutdown. |
-| Cortex | Imports accountant only after the wiring in `cortex-wiring.md` lands. Timing comes from the listener; response facts from `inference-parser`; ping decisions from the `context-guru` plugin's keep-alive. |
+| Cortex | Imports accountant only after the wiring in [`cortex-wiring.md`](../cortex-wiring.md) lands. Timing comes from the listener; response facts from `inference-parser`; ping decisions from the `context-guru` plugin's keep-alive. |
 
 Both hosts need:
 

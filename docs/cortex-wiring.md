@@ -501,7 +501,7 @@ How the proxy books what passes:
 
 ### W6.7 Metrics
 
-The proxy uses `github.com/rossoctl/accountant/metrics` ([metrics.md](metrics.md)):
+The proxy uses `github.com/rossoctl/accountant/metrics` ([metrics.md](metrics/metrics.md)):
 
 - `acmetrics.New(meter, pricer, WithComponents(...))`. The pricer maps each tier to the
   `modelinfo` rate. An unknown model returns an estimated zero (`proxy/metricsink.go`).
