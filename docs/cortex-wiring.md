@@ -496,8 +496,9 @@ How the proxy books what passes:
 - **Compaction (R55).** `RequestMeta.Compaction` is `CompactionUnknown` after a compaction that the
   proxy found by phrase match. Otherwise it is empty (`proxy/agentcompaction.go`).
 - **Billing.** The proxy sets `Billing{Mode: BillingAPI}` on every request. It does not tell a
-  subscription from an API key. Cortex must set it from the credential by the rule in design §7.1. That
-  rule names a helper, `accountant.BillingFrom`, which is not built yet.
+  subscription from an API key. Cortex must set it from the credential by the rule in design §7.1,
+  using the library's `accountant.BillingFrom`. The proxy itself still hard-codes `BillingAPI`
+  until it adopts `BillingFrom` too (tracked in Cortex's own `docs/accounting-differences.json`).
 
 ### W6.7 Metrics
 
