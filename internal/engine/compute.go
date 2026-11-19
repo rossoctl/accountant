@@ -724,9 +724,9 @@ func (c *calcState) clientEdited(i int) bool {
 
 // addedContentGone says whether the forwarded body carries no added content in section s: the forwarded
 // section has as many items as the client section, and each item has the client item's size or the size an
-// in-place change, active or reported, gives it. Then the host stopped adding what an active change added there, for
-// example after its configuration changed, and the client did not edit anything, so the Q12 rule cannot end
-// the change (accountant#89). If the change stayed, the sum check would count its bytes on every later
+// in-place change, active or reported, gives it. Then the host stopped adding what an active change added
+// there, for example after its configuration changed, and the client did not edit anything, so the Q12 rule
+// cannot end the change (accountant#89). If the change stayed, the sum check would count its bytes on every later
 // request of the thread.
 //
 // The rule ends a change only on proof. The messages section is left out: its positions go through the
@@ -755,15 +755,20 @@ func (c *calcState) addedContentGone(s Section) bool {
 // inPlaceSize says whether an in-place change on the whole item at client position p gives it the size n.
 // The change can be active or reported: a host that stops adding content and first trims an item in the same
 // request forwards the trimmed size there (accountant#96). With the counts equal and no added content in the
-// section, the client and the forwarded index are the same. The change's own position counts the content
-// that changes before it added (clientSide).
+// section, the client and the forwarded index are the same. An active change's position counts the content
+// that changes before it added (clientSide). A reported change's position is in this request's forwarded
+// section, which holds no added content if the rule holds, so it is a client index as it is.
 func (c *calcState) inPlaceSize(p Position, n int) bool {
 	for k, it := range c.items {
 		if it.ended || it.bad != "" || it.op.Kind != KindRewrite || it.op.DryRun ||
 			it.op.MessageSplice != nil || len(it.op.Spans) > 0 {
 			continue
 		}
-		if sp := it.spans[0]; c.clientSide(k, sp.from) == p && sp.before.Bytes > 0 && sp.after.Bytes == n {
+		at := it.spans[0].from
+		if it.active {
+			at = c.clientSide(k, at)
+		}
+		if sp := it.spans[0]; at == p && sp.before.Bytes > 0 && sp.after.Bytes == n {
 			return true
 		}
 	}
@@ -901,9 +906,12 @@ func (c *calcState) addedBefore(k int, p Position, endedOnly bool) int {
 	n := 0
 	// Only items up to k: a position is in the operator's own output, and that has only the content of the
 	// changes before it in pipeline order (§4.3). c.items is in pipeline order, and item k's own earlier
-	// spans are in its output too.
+	// spans are in its output too. A change reported now never saw content that ended in this request: the
+	// host no longer forwards it, so its position does not count it. An active change's position was stored
+	// while the host still forwarded that content, so it does (accountant#96).
+	reported := !c.items[k].active
 	for _, it := range c.items[:k+1] {
-		if it.op.Kind != KindRewrite || it.op.DryRun || it.bad != "" || (endedOnly && !it.ended) {
+		if it.op.Kind != KindRewrite || it.op.DryRun || it.bad != "" || (endedOnly && !it.ended) || (reported && it.ended) {
 			continue
 		}
 		for _, sp := range it.spans {

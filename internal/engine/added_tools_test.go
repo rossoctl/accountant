@@ -644,3 +644,68 @@ func TestIssue96AddedContentEndsWhenAReportedChangeExplainsTheSection(t *testing
 		t.Fatalf("break ChangeID = %q, want cg:trim:t0: the new trim changed the position too", e.ChangeID)
 	}
 }
+
+// PR #104 review: a change reported in the request where added content ends never saw that content, so its
+// position does not count it. Request 1 adds X after client tool 0. On request 2 the client edits tool 0, so X
+// ends (Q12), and the host does not add X. A new change of client tool 2 is reported at tool(2).
+func reportedAfterEnded(t *testing.T, op Operation, fwd2 []byte, usage Usage) Result {
+	t.Helper()
+	tools := mediaTools()
+	ms := [][]byte{text("m0", 4000)}
+	ts := NewTrackers()
+	noChecks(t, req{at: t0, client: NewBody(tools, nil, ms), facts: exact5m, usage: mediaUsage(400),
+		ops: []Operation{rewrite("a", "context-guru.expand", "cg:expand:decl-added", tool(1), 0, 400)},
+		fwd: NewBody([][]byte{tools[0], text("x", 400), tools[1], tools[2]}, nil, ms)}.run(ts))
+	client2 := [][]byte{text("d0", 4000), tools[1], tools[2]}
+	res := req{at: t0.Add(10 * time.Second), client: NewBody(client2, nil, ms), facts: exact5m, usage: usage,
+		ops: []Operation{op}, fwd: NewBody([][]byte{client2[0], tools[1], fwd2}, nil, ms)}.run(ts)
+	if got := activeIDs(ts); len(got) != 1 || got[0] != op.ChangeID {
+		t.Fatalf("Active = %v, want only %s", got, op.ChangeID)
+	}
+	noChecks(t, res)
+	return res
+}
+
+func TestIssue96AReportedTrimAfterEndedAddedContentReadsItsOwnItem(t *testing.T) {
+	res := reportedAfterEnded(t, rewrite("s", "context-guru.trim", "cg:trim:t2", tool(2), 4000, 2000),
+		text("r2", 2000), mediaUsage(0))
+	if got := tierSum(findOp(t, res, "s").Saved); got < mediaTrimTokens-2 || got > mediaTrimTokens+2 {
+		t.Fatalf("saved %d, want about %d: the trim cut text only", got, mediaTrimTokens)
+	}
+}
+
+func TestIssue96AReportedGrowthAfterEndedAddedContentReadsItsOwnItem(t *testing.T) {
+	res := reportedAfterEnded(t, rewrite("g", "context-guru.expand", "cg:expand:grow-t2", tool(2), 4000, 6000),
+		text("g2", 6000), Usage{Input: (4000+6000+4000+wrapper)/4 + 1600})
+	if got := tierSum(findOp(t, res, "g").Caused); got < 498 || got > 502 {
+		t.Fatalf("caused %d, want about 500: the growth added text only", got)
+	}
+}
+
+// The #89 rule with a reported trim after X's slot: the host stops adding X at tool(0) and first trims client
+// tool 1, which it reports at tool(1), as X is not in its input. X ends, and on request 3 the trim stays at
+// client tool 1.
+func TestIssue96AddedContentEndsWhenAReportedChangeAfterItsSlotExplainsTheSection(t *testing.T) {
+	ts := NewTrackers()
+	tools := shiftTools()
+	system := []blk{b("s0", 2000)}
+	ms := []blk{b("m0", 5000), b("m1", 5000)}
+	client := mk(tools, system, ms)
+	noChecks(t, req{at: t0, client: client, clientBPs: bps5(sys(0), msg(1)), facts: exact5m,
+		ops: []Operation{rewrite("a", "context-guru.expand", "cg:expand:decl-added", tool(0), 0, 340)},
+		fwd: mk(with([]blk{b("x", 340)}, tools...), system, ms), usage: Usage{CacheWrite: 5540, Input: 10000}}.run(ts))
+	fwd := mk([]blk{tools[0], b("r1", 600), tools[2]}, system, ms)
+	res := req{at: t0.Add(10 * time.Second), client: client, clientBPs: bps5(sys(0), msg(1)), facts: exact5m,
+		ops: []Operation{rewrite("s", "context-guru.trim", "cg:trim:t1", tool(1), 1200, 600)},
+		fwd: fwd, usage: Usage{CacheWrite: 4600, Input: 10000}}.run(ts)
+	if got := activeIDs(ts); len(got) != 1 || got[0] != "cg:trim:t1" {
+		t.Fatalf("Active = %v, want only cg:trim:t1", got)
+	}
+	noChecks(t, res)
+	res = req{at: t0.Add(20 * time.Second), client: client, clientBPs: bps5(sys(0), msg(1)), facts: exact5m,
+		fwd: fwd, usage: Usage{CacheRead: 4600, Input: 10000}}.run(ts)
+	if got := activeIDs(ts); len(got) != 1 || got[0] != "cg:trim:t1" {
+		t.Fatalf("request 3: Active = %v, want only cg:trim:t1", got)
+	}
+	noChecks(t, res)
+}

@@ -631,7 +631,8 @@ Rules that follow from the table:
   client's, so it names the last one: the provider writes up to it. This is attribution only; it moves no
   priced figure. The attribution rule (§6.5) allows both.
 - **The ChangeID** of a `ttlPremium` with no active `headttl:` change is the change of the last 1h breakpoint
-  that a reported operation covers (the scan goes on past a 1h breakpoint no operation covers), or empty.
+  that an applied operation, reported or active, covers (the scan goes on past a 1h breakpoint no operation
+  covers), or empty.
   Attribution only.
 - **Relation to the next request (`markPayback`, accountant#52).** The entry this request wrote up to L_f is
   read by the next request. The client body has no entry there: its last breakpoint is earlier, so it bills those
@@ -1861,7 +1862,8 @@ Where a question has test cases, a host that compares them with its own code mar
       or system section has as many items as the client section, and each item has the client item's size
       or the size that an in-place change on that whole item gives it. The change can be active, or reported
       in this request: a host that stops adding the content and first trims an item in the same request
-      forwards the trimmed size there (accountant#96). The host's configuration
+      forwards the trimmed size there (accountant#96). A reported change's position is then a client index
+      as it is, because its input holds no added content. The host's configuration
       changed (for example to preset `off`, or to a preset that keeps one in-place change and drops the
       added content) and the client edited nothing, so the rule above cannot fire. If the change stayed,
       the sum check would fail by its bytes on every later request. The rule ends a change only on proof.
@@ -1890,6 +1892,9 @@ Where a question has test cases, a host that compares them with its own code mar
     item without the added content. The tier of a cost and the media of a size after come from the
     forwarded item without the added content that ended. The `ChangeID` of a cache effect (§5.2 row 1, a
     `markPremium`, a `ttlPremium`) comes from the forwarded item without the added content that ended too.
+    A change reported in the request where added content ends never saw that content: the host no longer
+    forwards it. So its position counts only the added content that stays, and nothing is taken out of it
+    for the content that ended, neither in the pricing nor in its stored position.
 
     A break that a change leaves behind when it ends has no `ChangeID` (§5.2 row 1), because the change
     is no longer reported or active. It is part of the bill difference (§6.3). When added content in tools
