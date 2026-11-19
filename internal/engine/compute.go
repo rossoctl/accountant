@@ -488,7 +488,9 @@ func (c *calcState) rangeMedia(k int, s Size, sp span, isBefore bool) nonText {
 // rangeBody is the non-text and the text bytes of a range in the body that holds it (see
 // rangeMedia). ok is false when the range does not map onto that body.
 func (c *calcState) rangeBody(k int, sp span, isBefore bool) (nt nonText, text int, ok bool) {
-	body, from, to := c.client, sp.from, sp.to
+	// In tools or system the range counts content that earlier changes added: clientSide and fwdSide take
+	// it out (accountant#96).
+	body, from, to := c.client, c.clientSide(k, sp.from), c.clientSide(k, sp.to)
 	if !isBefore {
 		body = c.fwd
 		var ok1, ok2 bool
@@ -496,8 +498,8 @@ func (c *calcState) rangeBody(k int, sp span, isBefore bool) (nt nonText, text i
 			from, ok1 = c.toFwdSkipping(k, sp.from)
 			to, ok2 = c.toFwdSkipping(k, sp.to)
 		} else {
-			from, ok1 = c.toFwd(k, sp.from)
-			to, ok2 = c.toFwd(k, sp.to)
+			from, ok1 = c.fwdSide(k, sp.from)
+			to, ok2 = c.fwdSide(k, sp.to)
 		}
 		if !ok1 || !ok2 {
 			return nonText{}, 0, false
@@ -722,7 +724,7 @@ func (c *calcState) clientEdited(i int) bool {
 
 // addedContentGone says whether the forwarded body carries no added content in section s: the forwarded
 // section has as many items as the client section, and each item has the client item's size or the size an
-// active in-place change gives it. Then the host stopped adding what an active change added there, for
+// in-place change, active or reported, gives it. Then the host stopped adding what an active change added there, for
 // example after its configuration changed, and the client did not edit anything, so the Q12 rule cannot end
 // the change (accountant#89). If the change stayed, the sum check would count its bytes on every later
 // request of the thread.
@@ -750,12 +752,14 @@ func (c *calcState) addedContentGone(s Section) bool {
 	return true
 }
 
-// inPlaceSize says whether an active in-place change on the whole item at client position p gives it the
-// size n. With the counts equal and no added content in the section, the client and the forwarded index are
-// the same. The change's own position counts the content that changes before it added (clientSide).
+// inPlaceSize says whether an in-place change on the whole item at client position p gives it the size n.
+// The change can be active or reported: a host that stops adding content and first trims an item in the same
+// request forwards the trimmed size there (accountant#96). With the counts equal and no added content in the
+// section, the client and the forwarded index are the same. The change's own position counts the content
+// that changes before it added (clientSide).
 func (c *calcState) inPlaceSize(p Position, n int) bool {
 	for k, it := range c.items {
-		if !it.active || it.ended || it.bad != "" || it.op.Kind != KindRewrite || it.op.DryRun ||
+		if it.ended || it.bad != "" || it.op.Kind != KindRewrite || it.op.DryRun ||
 			it.op.MessageSplice != nil || len(it.op.Spans) > 0 {
 			continue
 		}
@@ -1342,7 +1346,14 @@ func (c *calcState) cacheEffects(res *Result) {
 	switch {
 	case c.fwdFD <= c.prevExt && fwdFDCli < c.clientFD: // row 1
 		if !c.modelChangeBreak(res) {
-			c.addBreak(res, c.readEnd, c.changeAt(c.fwdFD))
+			id := ""
+			if k := c.itemAt(c.fwdFD); k >= 0 && !(c.items[k].active && c.endedAddedAt(c.fwdFD)) {
+				// An active change on the item that moved into the slot of added content that ended forwards
+				// the same bytes as before: the ended change left the break, and it has no ChangeID (design
+				// Q12, accountant#96). A change reported now changed the position too.
+				id = c.items[k].op.ChangeID
+			}
+			c.addBreak(res, c.readEnd, id)
 		}
 		return
 	case c.clientFD <= c.prevExtCli && fwdFDCli >= c.clientFD: // row 2
@@ -1468,22 +1479,50 @@ func (c *calcState) settingFrom(op Operation) (int, bool) {
 
 // changeAt is the ChangeID of the applied operation whose forwarded span covers the flat position.
 func (c *calcState) changeAt(at int) string {
+	if k := c.itemAt(at); k >= 0 {
+		return c.items[k].op.ChangeID
+	}
+	return ""
+}
+
+// itemAt is the index of the applied operation whose forwarded span covers the flat position, or -1.
+func (c *calcState) itemAt(at int) int {
 	for k, it := range c.items {
 		if it.ended || it.bad != "" || it.op.DryRun || it.op.Kind != KindRewrite {
 			continue
 		}
 		for _, sp := range it.spans {
-			from, ok1 := c.toFwd(k, sp.from)
-			to, ok2 := c.toFwd(k, sp.to)
+			from, ok1 := c.fwdSide(k, sp.from)
+			to, ok2 := c.fwdSide(k, sp.to)
 			if !ok1 || !ok2 {
 				continue
 			}
 			if f, t := mustFlat(c.fwd, from), mustFlat(c.fwd, to); f <= at && at <= t {
-				return it.op.ChangeID
+				return k
 			}
 		}
 	}
-	return ""
+	return -1
+}
+
+// endedAddedAt says whether content that an active change added in tools or system ended in this request
+// with its slot at the flat forwarded position at. The previous request forwarded that content, so its end
+// changes the forwarded prefix there. The slot is mapped as fwdSide maps any position of the change.
+func (c *calcState) endedAddedAt(at int) bool {
+	for k, it := range c.items {
+		if !it.ended || !it.active || it.bad != "" || it.op.DryRun || it.op.Kind != KindRewrite {
+			continue
+		}
+		for _, sp := range it.spans {
+			if sp.before.Bytes != 0 || sp.from.Section == SectionMessages {
+				continue
+			}
+			if p, _ := c.fwdSide(k, sp.from); insertionPoint(c.fwd, p) == at {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // addBreak adds a break that moves the forwarded tokens after from, up to B*, from read to write.
@@ -2031,12 +2070,14 @@ func (c *calcState) price(res *Result) {
 					c.hostGap += d - (c.ratio.sizeOf(sp.before.Bytes, bm) - c.ratio.sizeOf(sp.after.Bytes, am))
 				}
 				if d > 0 {
-					c.addTier(&p.Saved, c.client, false, mustFlat(c.client, sp.from), c.bstar, c.clientBPs, d)
+					// in tools or system the position counts content that earlier changes added (accountant#96)
+					from := c.clientSide(k, sp.from)
+					c.addTier(&p.Saved, c.client, false, mustFlat(c.client, from), c.bstar, c.clientBPs, d)
 					if !it.op.DryRun {
-						c.interaction(res, sp.from, d)
+						c.interaction(res, from, d)
 					}
 				} else if d < 0 {
-					fp, _ := c.toFwd(k, sp.from)
+					fp, _ := c.fwdSide(k, sp.from)
 					if sp.before.Bytes == 0 && it.op.MessageSplice != nil {
 						fp, _ = c.toFwdSkipping(k, sp.from) // an inserted item sits in the slot its own splice opened
 					}

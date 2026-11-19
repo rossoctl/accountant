@@ -1859,7 +1859,9 @@ Where a question has test cases, a host that compares them with its own code mar
       ends the change too;
     - **for content the operator added, the host stopped adding it** (accountant#89). The forwarded tools
       or system section has as many items as the client section, and each item has the client item's size
-      or the size that an active in-place change on that whole item gives it. The host's configuration
+      or the size that an in-place change on that whole item gives it. The change can be active, or reported
+      in this request: a host that stops adding the content and first trims an item in the same request
+      forwards the trimmed size there (accountant#96). The host's configuration
       changed (for example to preset `off`, or to a preset that keeps one in-place change and drops the
       added content) and the client edited nothing, so the rule above cannot fire. If the change stayed,
       the sum check would fail by its bytes on every later request. The rule ends a change only on proof.
@@ -1883,12 +1885,18 @@ Where a question has test cases, a host that compares them with its own code mar
 
     Content that later changes added is not counted. The pipeline order is the order of the items: active
     changes first, then reported ones. So content that a reported change adds before an active change, or
-    an active change that the host reports again, is not counted either. Only the end rules and the stored
-    positions are mapped. The pricing still reads an in-place change in tools or system at its reported
-    position, which can place its tier or its media on the wrong client item (accountant#96).
+    an active change that the host reports again, is not counted either. The pricing maps the positions
+    the same way (accountant#96). The tier of a saving and the media of a size before come from the client
+    item without the added content. The tier of a cost and the media of a size after come from the
+    forwarded item without the added content that ended. The `ChangeID` of a cache effect (§5.2 row 1, a
+    `markPremium`, a `ttlPremium`) comes from the forwarded item without the added content that ended too.
 
     A break that a change leaves behind when it ends has no `ChangeID` (§5.2 row 1), because the change
-    is no longer reported or active. It is part of the bill difference (§6.3).
+    is no longer reported or active. It is part of the bill difference (§6.3). When added content in tools
+    or system ends, the first difference is its slot, and the item after it moves into that slot. A change
+    on that item that is active forwards the same bytes as before, so it did not change the position, and
+    the break names no change. A change on that item reported in this request changed the position too,
+    and the break names it (accountant#96).
 
     It does not find a change that ends with bytes identical to the changed form. The sum and
     conservation checks (§6.5) still catch a wrong guess after the fact. The proposal that the operator

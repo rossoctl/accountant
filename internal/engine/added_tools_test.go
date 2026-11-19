@@ -403,3 +403,244 @@ func TestAnInPlaceChangeAfterAddedContentEndsWhenAnotherOperatorTakesItOver(t *t
 		t.Fatalf("Active = %v, want cg:expand:decl-added and cg:sweep:t1", got)
 	}
 }
+
+// accountant#96: the pricing of an in-place change in tools reads its reported position as a client index.
+// One breakpoint sits on client tool 0, so a trim of client tool 0 is inside the written prefix and saves a
+// cache write. The host adds X at tool(0) first, so the trim is reported at tool(1). Read as a client index,
+// that is client tool 1, which is after the breakpoint, so the saving is priced as input.
+func trimTier(t *testing.T, withAdded bool) TierTokens {
+	t.Helper()
+	tools := shiftTools()
+	system := []blk{b("s0", 2000)}
+	ms := []blk{b("m0", 5000), b("m1", 5000)}
+	ops := []Operation{rewrite("s", "context-guru.trim", "cg:trim:t0", tool(0), 1000, 600)}
+	fwdTools := []blk{b("r0", 600), tools[1], tools[2]}
+	fwdBP, write := tool(0), 600
+	if withAdded {
+		ops = []Operation{rewrite("a", "context-guru.expand", "cg:expand:decl-added", tool(0), 0, 340),
+			rewrite("s", "context-guru.trim", "cg:trim:t0", tool(1), 1000, 600)}
+		fwdTools = append([]blk{b("x", 340)}, fwdTools...)
+		fwdBP, write = tool(1), 940
+	}
+	res := req{at: t0, client: mk(tools, system, ms), clientBPs: bps5(tool(0)), ops: ops,
+		fwd: mk(fwdTools, system, ms), fwdBPs: bps5(fwdBP), facts: exact5m,
+		usage: Usage{CacheWrite: write, Input: 14200}}.run(NewTrackers())
+	noChecks(t, res)
+	return findOp(t, res, "s").Saved
+}
+
+func TestIssue96ControlTrimWithoutAddedContentSavesAWrite(t *testing.T) {
+	if got := trimTier(t, false); got != (TierTokens{CacheWrite5m: 400}) {
+		t.Fatalf("saved %+v, want 400 cache write", got)
+	}
+}
+
+func TestIssue96TrimAfterAddedContentSavesTheSameWrite(t *testing.T) {
+	if got := trimTier(t, true); got != (TierTokens{CacheWrite5m: 400}) {
+		t.Fatalf("saved %+v, want 400 cache write (as without added content)", got)
+	}
+}
+
+// mediaTools are client tools for the accountant#96 media cases: text, a 400,000-byte image, text.
+func mediaTools() [][]byte {
+	return [][]byte{text("c0", 4000), imageBlock(400000), text("c2", 4000)}
+}
+
+// mediaTrimTokens is the text a trim of client tool 0 from 4000 to 2000 bytes saves: 2000 bytes at 4 a token.
+const mediaTrimTokens = 500
+
+// mediaUsage bills the forwarded tools, at 4 bytes a token for text and 1600 for the image, and a
+// 4000-byte message.
+func mediaUsage(addedBytes int) Usage {
+	return Usage{Input: (addedBytes+2000+4000+4000+wrapper)/4 + 1600}
+}
+
+func assertTextTrim(t *testing.T, res Result) {
+	t.Helper()
+	noChecks(t, res)
+	if got := tierSum(findOp(t, res, "s").Saved); got < mediaTrimTokens-2 || got > mediaTrimTokens+2 {
+		t.Fatalf("saved %d, want about %d: the trim cut text only", got, mediaTrimTokens)
+	}
+}
+
+// Control: no added content. The trim of client tool 0 saves text.
+func TestIssue96ControlTrimBeforeAnImageSavesText(t *testing.T) {
+	tools := mediaTools()
+	ms := [][]byte{text("m0", 4000)}
+	res := req{at: t0, client: NewBody(tools, nil, ms), facts: exact5m, usage: mediaUsage(0),
+		ops: []Operation{rewrite("s", "context-guru.trim", "cg:trim:t0", tool(0), 4000, 2000)},
+		fwd: NewBody([][]byte{text("r0", 2000), tools[1], tools[2]}, nil, ms)}.run(NewTrackers())
+	assertTextTrim(t, res)
+}
+
+// The host adds X at tool(0), so the trim is reported at tool(1). Read as a client index, its before range
+// is the image, and part of the saving is priced as media.
+func TestIssue96TrimAfterAddedContentReadsItsOwnClientItemForMedia(t *testing.T) {
+	tools := mediaTools()
+	ms := [][]byte{text("m0", 4000)}
+	res := req{at: t0, client: NewBody(tools, nil, ms), facts: exact5m, usage: mediaUsage(400),
+		ops: []Operation{rewrite("a", "context-guru.expand", "cg:expand:decl-added", tool(0), 0, 400),
+			rewrite("s", "context-guru.trim", "cg:trim:t0", tool(1), 4000, 2000)},
+		fwd: NewBody([][]byte{text("x", 400), text("r0", 2000), tools[1], tools[2]}, nil, ms)}.run(NewTrackers())
+	assertTextTrim(t, res)
+}
+
+// On request 2 the host stops adding X and keeps the trim. The trim's stored position still counts X, so
+// read in the forwarded body without the ended X, its after range is the image.
+func TestIssue96TrimAfterEndedAddedContentReadsItsOwnForwardedItemForMedia(t *testing.T) {
+	ts := NewTrackers()
+	tools := mediaTools()
+	ms := [][]byte{text("m0", 4000)}
+	noChecks(t, req{at: t0, client: NewBody(tools, nil, ms), facts: exact5m, usage: mediaUsage(400),
+		ops: []Operation{rewrite("a", "context-guru.expand", "cg:expand:decl-added", tool(0), 0, 400),
+			rewrite("s", "context-guru.trim", "cg:trim:t0", tool(1), 4000, 2000)},
+		fwd: NewBody([][]byte{text("x", 400), text("r0", 2000), tools[1], tools[2]}, nil, ms)}.run(ts))
+	res := req{at: t0.Add(10 * time.Second), client: NewBody(tools, nil, ms), facts: exact5m, usage: mediaUsage(0),
+		fwd: NewBody([][]byte{text("r0", 2000), tools[1], tools[2]}, nil, ms)}.run(ts)
+	if got := activeIDs(ts); len(got) != 1 || got[0] != "cg:trim:t0" {
+		t.Fatalf("Active = %v, want only cg:trim:t0", got)
+	}
+	noChecks(t, res)
+	p := findOp(t, res, "active:cg:trim:t0")
+	if got := tierSum(p.Saved); got < mediaTrimTokens-2 || got > mediaTrimTokens+2 {
+		t.Fatalf("saved %d, want about %d: the trim cut text only", got, mediaTrimTokens)
+	}
+}
+
+// accountant#96, the forwarded side of a cost: the host adds X at tool(0) and grows client tool 0 from 1000 to
+// 1500 bytes, at tool(1) in its output. On request 2, after the TTL, it stops adding X and keeps the growth, which is
+// forwarded at tool(0) with a breakpoint on it, so its cost is a cache write. Read without taking out the ended X, it is
+// at tool(1), after the breakpoint, and its cost is priced as input.
+func TestIssue96GrowthAfterEndedAddedContentIsPricedAtItsOwnForwardedItem(t *testing.T) {
+	ts := NewTrackers()
+	tools := shiftTools()
+	system := []blk{b("s0", 2000)}
+	ms := []blk{b("m0", 5000), b("m1", 5000)}
+	client := mk(tools, system, ms)
+	noChecks(t, req{at: t0, client: client, facts: exact5m, usage: Usage{Input: 340 + 1500 + 2200 + 12000},
+		ops: []Operation{rewrite("a", "context-guru.expand", "cg:expand:decl-added", tool(0), 0, 340),
+			rewrite("g", "context-guru.expand", "cg:expand:grow-t0", tool(1), 1000, 1500)},
+		fwd: mk([]blk{b("x", 340), b("g0", 1500), tools[1], tools[2]}, system, ms)}.run(ts))
+	// after the TTL, so the request is cold and the breakpoint, not B*, decides the tier
+	res := req{at: t0.Add(10 * time.Minute), client: client, facts: exact5m,
+		fwd: mk([]blk{b("g0", 1500), tools[1], tools[2]}, system, ms), fwdBPs: bps5(tool(0)),
+		usage: Usage{CacheWrite: 1500, Input: 2200 + 12000}}.run(ts)
+	if got := activeIDs(ts); len(got) != 1 || got[0] != "cg:expand:grow-t0" {
+		t.Fatalf("Active = %v, want only cg:expand:grow-t0", got)
+	}
+	noChecks(t, res)
+	if p := findOp(t, res, "active:cg:expand:grow-t0"); p.Caused != (TierTokens{CacheWrite5m: 500}) {
+		t.Fatalf("caused %+v, want 500 cache write", p.Caused)
+	}
+}
+
+// accountant#96, the interaction (§6.2): the issue 19 case in system. A ping rescued the request and kept
+// s0 and s1 (to the breakpoint on s1). The host adds X after s0 and masks s1, at sys(2) in its output. The
+// mask saves 1201 tokens at the read tier, and the interaction books them write -> read. Read as a client
+// index, sys(2) is s2, past the ping's extent, and the interaction is lost.
+func TestIssue96InteractionReadsTheMaskedClientItem(t *testing.T) {
+	system := []blk{b("s0", 1255), b("s1", 1214), b("s2", 50)}
+	ms := []blk{b("m1", 100)}
+	client := mk(nil, system, ms)
+	f := pingFacts()
+	f.PingRead = ptr(sys(1))
+	ts := NewTrackers()
+	noChecks(t, req{at: t0.Add(20 * time.Minute), client: client, clientBPs: bps5(sys(1)), facts: f,
+		usage: Usage{CacheWrite: 2469, Input: 150}}.run(ts))
+	res := req{at: t0.Add(28 * time.Minute), client: client, clientBPs: bps5(sys(1)), facts: f,
+		ops: []Operation{rewrite("a", "context-guru.expand", "cg:expand:decl-added", sys(1), 0, 40),
+			rewrite("op1", "mask", "mask:1", sys(2), 1214, 13)},
+		fwd:    mk(nil, []blk{b("s0", 1255), b("x", 40), b("s1m", 13), b("s2", 50)}, ms),
+		fwdBPs: bps5(sys(2)), usage: Usage{CacheRead: 1255, CacheWrite: 53, Input: 150}}.run(ts)
+	noChecks(t, res)
+	if p := findOp(t, res, "op1"); p.Saved != (TierTokens{CacheRead: 1201}) {
+		t.Fatalf("mask saved %+v, want 1201 booked at the read tier", p.Saved)
+	}
+	if res.Interaction != (TierTokens{CacheWrite5m: 1201}) || res.InteractionCaused != (TierTokens{CacheRead: 1201}) {
+		t.Fatalf("interaction %+v caused %+v, want 1201 write -> read", res.Interaction, res.InteractionCaused)
+	}
+}
+
+// attributionSession is the accountant#96 setup for cache-effect attribution: the host adds X at tool(0) and
+// trims client tool 1 (1200 -> 600), at tool(2) in its output. Request 1 has a client breakpoint on tool 0.
+// Request 2, after the TTL, has the client breakpoints clientBPs, stops adding X, keeps the trim, and forwards the
+// breakpoints fwdBPs.
+func attributionSession(t *testing.T, clientBPs, fwdBPs []Breakpoint, usage Usage) Result {
+	t.Helper()
+	ts := NewTrackers()
+	tools := shiftTools()
+	system := []blk{b("s0", 2000)}
+	ms := []blk{b("m0", 5000), b("m1", 5000)}
+	client := mk(tools, system, ms)
+	noChecks(t, req{at: t0, client: client, clientBPs: bps5(tool(0)), fwdBPs: bps5(tool(1)), facts: exact5m,
+		usage: Usage{CacheWrite: 1340, Input: 600 + 1000 + 12000},
+		ops: []Operation{rewrite("a", "context-guru.expand", "cg:expand:decl-added", tool(0), 0, 340),
+			rewrite("s", "context-guru.trim", "cg:trim:t1", tool(2), 1200, 600)},
+		fwd: mk([]blk{b("x", 340), tools[0], b("r1", 600), tools[2]}, system, ms)}.run(ts))
+	// after the TTL: a cold request has no row 1 break, which would price the writes itself
+	res := req{at: t0.Add(10 * time.Minute), client: client, clientBPs: clientBPs, facts: exact5m,
+		fwd: mk([]blk{tools[0], b("r1", 600), tools[2]}, system, ms), fwdBPs: fwdBPs, usage: usage}.run(ts)
+	if got := activeIDs(ts); len(got) != 1 || got[0] != "cg:trim:t1" {
+		t.Fatalf("Active = %v, want only cg:trim:t1", got)
+	}
+	noChecks(t, res)
+	return res
+}
+
+// The host adds a breakpoint on the trimmed item, at tool(1) once X ended. The markPremium has the
+// ChangeID of the operation whose span covers that breakpoint: the trim. Read without taking out the ended X,
+// the trim is at tool(2), and the premium names no change.
+func TestIssue96MarkPremiumNamesTheChangeAfterEndedAddedContent(t *testing.T) {
+	res := attributionSession(t, bps5(tool(0)), bps5(tool(0), tool(1)), Usage{CacheWrite: 1600, Input: 13000})
+	if e := effect(t, res, EffectMarkPremium); e.ChangeID != "cg:trim:t1" {
+		t.Fatalf("markPremium ChangeID = %q, want cg:trim:t1", e.ChangeID)
+	}
+}
+
+// The client sets a 5m breakpoint on tool 1, and the host forwards it at 1h on the trimmed item. The
+// ttlPremium has the ChangeID of the operation that covers that 1h breakpoint: the trim.
+func TestIssue96TTLPremiumNamesTheChangeAfterEndedAddedContent(t *testing.T) {
+	res := attributionSession(t, bps5(tool(1)), []Breakpoint{{Pos: tool(1), TTL: "1h"}},
+		Usage{CacheWrite: 1600, CacheWrite1h: 1600, Input: 13000})
+	if e := effect(t, res, EffectTTLPremium); e.ChangeID != "cg:trim:t1" {
+		t.Fatalf("ttlPremium ChangeID = %q, want cg:trim:t1", e.ChangeID)
+	}
+}
+
+// accountant#96, §5.2 row 1: the host adds X at tool(0) and trims client tool 0, at tool(1) in its output. On
+// request 2 it stops adding X and keeps the trim. The first difference is X's slot, where the trimmed item now
+// sits. X's end changed that position, not the trim, which forwards the same bytes as before. A break that a
+// change leaves behind when it ends has no ChangeID.
+func TestIssue96ARowOneBreakThatEndedAddedContentLeavesNamesNoChange(t *testing.T) {
+	_, res := shiftSession(t, shiftTools(), []blk{b("r0", 600), shiftTools()[1], shiftTools()[2]})
+	noChecks(t, res)
+	if e := effect(t, res, EffectBreak); e.ChangeID != "" {
+		t.Fatalf("break ChangeID = %q, want none: the ended X left it", e.ChangeID)
+	}
+}
+
+// The host stops adding X and, in the same request, first trims client tool 0 (reported at tool(0), as X is
+// gone from its input). The section has the client's item count, and the one item that differs has the size
+// the reported trim gives it, so X ends (accountant#89). On main only an active in-place change could explain
+// a size, so X stayed and the sum check failed. The trim is new and sits at the first difference, so it
+// changed that position too, and the row 1 break names it.
+func TestIssue96AddedContentEndsWhenAReportedChangeExplainsTheSection(t *testing.T) {
+	ts := NewTrackers()
+	tools := shiftTools()
+	system := []blk{b("s0", 2000)}
+	ms := []blk{b("m0", 5000), b("m1", 5000)}
+	client := mk(tools, system, ms)
+	noChecks(t, req{at: t0, client: client, clientBPs: bps5(sys(0), msg(1)), facts: exact5m,
+		ops: []Operation{rewrite("a", "context-guru.expand", "cg:expand:decl-added", tool(0), 0, 340)},
+		fwd: mk(with([]blk{b("x", 340)}, tools...), system, ms), usage: Usage{CacheWrite: 5540, Input: 10000}}.run(ts))
+	res := req{at: t0.Add(10 * time.Second), client: client, clientBPs: bps5(sys(0), msg(1)), facts: exact5m,
+		ops: []Operation{rewrite("s", "context-guru.trim", "cg:trim:t0", tool(0), 1000, 600)},
+		fwd: mk([]blk{b("r0", 600), tools[1], tools[2]}, system, ms), usage: Usage{CacheWrite: 4800, Input: 10000}}.run(ts)
+	if got := activeIDs(ts); len(got) != 1 || got[0] != "cg:trim:t0" {
+		t.Fatalf("Active = %v, want only cg:trim:t0", got)
+	}
+	noChecks(t, res)
+	if e := effect(t, res, EffectBreak); e.ChangeID != "cg:trim:t0" {
+		t.Fatalf("break ChangeID = %q, want cg:trim:t0: the new trim changed the position too", e.ChangeID)
+	}
+}
