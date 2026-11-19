@@ -167,3 +167,111 @@ func TestAnAddedToolEndsWhenAChangeOnALaterRequestAddedBeforeIt(t *testing.T) {
 		t.Fatalf("Active = %v, want only cg:expand:decl-b", got)
 	}
 }
+
+// accountant#89: the host adds a tool declaration on request 1, then its configuration changes (preset off)
+// and later requests forward the client body unchanged, without the declaration. The client edited nothing, so
+// the Q12 rule cannot end the change. The forwarded tools are the client's own again, so the change ends. On
+// main it stayed, and the sum check failed by -340 bytes on every later request of the thread.
+func TestAnAddedToolEndsWhenTheHostStopsAddingIt(t *testing.T) {
+	ts := NewTrackers()
+	tools := msgs(3, 1000)
+	system := []blk{b("s0", 2000)}
+	ms := []blk{b("m0", 5000), b("m1", 5000)}
+	client := mk(tools, system, ms)
+	add := rewrite("a", "context-guru.expand", "cg:expand:decl-added", tool(3), 0, 340)
+	noSumFailure(t, req{at: t0, client: client, clientBPs: bps5(sys(0), msg(1)), facts: exact5m,
+		ops: []Operation{add}, fwd: mk(with(tools, b("t3", 340)), system, ms), usage: Usage{CacheWrite: 3500}}.run(ts))
+	if got := activeIDs(ts); len(got) != 1 {
+		t.Fatalf("after request 1: Active = %v, want the added declaration", got)
+	}
+	for i := 1; i <= 2; i++ {
+		res := req{at: t0.Add(time.Duration(i) * 10 * time.Second), client: client, clientBPs: bps5(sys(0), msg(1)),
+			facts: exact5m, fwd: mk(tools, system, ms), usage: Usage{CacheWrite: 3500}}.run(ts)
+		noChecks(t, res)
+		if got := activeIDs(ts); len(got) != 0 {
+			t.Fatalf("request %d: Active = %v, want none", i+1, got)
+		}
+	}
+}
+
+// Negative control for accountant#89: the host keeps adding the declaration and the client sends the same body.
+// The forwarded tools are not the client's, so the change stays.
+func TestAnAddedToolStaysWhileTheHostKeepsAddingIt(t *testing.T) {
+	ts := NewTrackers()
+	tools := msgs(3, 1000)
+	system := []blk{b("s0", 2000)}
+	ms := []blk{b("m0", 5000), b("m1", 5000)}
+	client := mk(tools, system, ms)
+	fwd := mk(with(tools, b("t3", 340)), system, ms)
+	add := rewrite("a", "context-guru.expand", "cg:expand:decl-added", tool(3), 0, 340)
+	req{at: t0, client: client, clientBPs: bps5(sys(0), msg(1)), facts: exact5m,
+		ops: []Operation{add}, fwd: fwd, usage: Usage{CacheWrite: 3500}}.run(ts)
+	res := req{at: t0.Add(10 * time.Second), client: client, clientBPs: bps5(sys(0), msg(1)),
+		facts: exact5m, fwd: fwd, usage: Usage{CacheRead: 3500}}.run(ts)
+	noSumFailure(t, res)
+	if got := activeIDs(ts); len(got) != 1 {
+		t.Fatalf("Active = %v, want the added declaration", got)
+	}
+}
+
+// A DryRun forwards the client's own body by design (R12), so the forwarded tools equal the client's on every
+// request. That is no proof that the host stopped adding it: the DryRun change stays, and "would have saved"
+// shows on every request (§4.6).
+func TestAnAddedDryRunToolStaysWhenTheForwardedToolsAreTheClients(t *testing.T) {
+	ts := NewTrackers()
+	tools := msgs(3, 1000)
+	system := []blk{b("s0", 2000)}
+	ms := []blk{b("m0", 5000), b("m1", 5000)}
+	client := mk(tools, system, ms)
+	add := rewrite("a", "context-guru.expand", "cg:expand:decl-added", tool(3), 0, 340)
+	add.DryRun = true
+	noSumFailure(t, req{at: t0, client: client, clientBPs: bps5(sys(0), msg(1)), facts: exact5m,
+		ops: []Operation{add}, usage: Usage{CacheWrite: 3500}}.run(ts))
+	res := req{at: t0.Add(10 * time.Second), client: client, clientBPs: bps5(sys(0), msg(1)),
+		facts: exact5m, usage: Usage{CacheRead: 3500}}.run(ts)
+	noSumFailure(t, res)
+	if got := activeIDs(ts); len(got) != 1 {
+		t.Fatalf("Active = %v, want the DryRun added declaration", got)
+	}
+}
+
+// The host keeps an in-place rewrite of tool 0 (1000 -> 600) and stops adding the declaration, as a preset
+// change that keeps one lever and drops another does. Tool 0 has the size the active rewrite gives it, so
+// the forwarded tools carry no added content: the added change ends, and the rewrite stays.
+func TestAnAddedToolEndsWhenTheHostStopsAddingItButKeepsAnInPlaceChange(t *testing.T) {
+	ts := NewTrackers()
+	tools := msgs(3, 1000)
+	system := []blk{b("s0", 2000)}
+	ms := []blk{b("m0", 5000), b("m1", 5000)}
+	client := mk(tools, system, ms)
+	shrunk := []blk{b("r0", 600), tools[1], tools[2]}
+	shrink := rewrite("s", "context-guru.trim", "cg:trim:t0", tool(0), 1000, 600)
+	add := rewrite("a", "context-guru.expand", "cg:expand:decl-added", tool(3), 0, 340)
+	noSumFailure(t, req{at: t0, client: client, clientBPs: bps5(sys(0), msg(1)), facts: exact5m,
+		ops: []Operation{shrink, add}, fwd: mk(with(shrunk, b("t3", 340)), system, ms),
+		usage: Usage{CacheWrite: 3500}}.run(ts))
+	res := req{at: t0.Add(10 * time.Second), client: client, clientBPs: bps5(sys(0), msg(1)),
+		facts: exact5m, fwd: mk(shrunk, system, ms), usage: Usage{CacheWrite: 3500}}.run(ts)
+	noChecks(t, res)
+	if got := activeIDs(ts); len(got) != 1 || got[0] != "cg:trim:t0" {
+		t.Fatalf("Active = %v, want only cg:trim:t0", got)
+	}
+}
+
+// The rule covers the system section too: the host added a system block and stops adding it.
+func TestAnAddedSystemBlockEndsWhenTheHostStopsAddingIt(t *testing.T) {
+	ts := NewTrackers()
+	tools := msgs(3, 1000)
+	system := []blk{b("s0", 2000)}
+	ms := []blk{b("m0", 5000), b("m1", 5000)}
+	client := mk(tools, system, ms)
+	add := rewrite("a", "context-guru.expand", "cg:expand:sys-added", sys(1), 0, 500)
+	noSumFailure(t, req{at: t0, client: client, clientBPs: bps5(sys(0), msg(1)), facts: exact5m,
+		ops: []Operation{add}, fwd: mk(tools, with(system, b("s1", 500)), ms), usage: Usage{CacheWrite: 3500}}.run(ts))
+	res := req{at: t0.Add(10 * time.Second), client: client, clientBPs: bps5(sys(0), msg(1)),
+		facts: exact5m, usage: Usage{CacheWrite: 3500}}.run(ts)
+	noChecks(t, res)
+	if got := activeIDs(ts); len(got) != 0 {
+		t.Fatalf("Active = %v, want none", got)
+	}
+}
