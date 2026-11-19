@@ -93,7 +93,7 @@ func TestTheSpansCheckCarriesItsNumbers(t *testing.T) {
 	wantNums(t, f, map[string]int{"Want": 100, "WantAfter": 0, "Got": 150, "GotAfter": 0})
 }
 
-// The limit is a rule, not a claim, so it is in Limit; the operation's bytes are in Got.
+// The limit is a rule, not a claim, so it is in Limit; the bytes of the operation (or span) over it are in Got.
 func TestTheSizeRangeCheckCarriesItsNumbers(t *testing.T) {
 	op := rewrite("o1", "trim", "c1", msg(0), math.MaxInt, 0)
 	res := req{at: t0, client: mk(nil, nil, []blk{b("a", 2000)}), clientBPs: bps5(msg(0)), facts: exact5m,

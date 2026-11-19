@@ -1679,8 +1679,9 @@ The other checks have no numbers. `Detail` is built from these fields, and it ad
 - `media_tokens`: the media tokens after the cap.
 - `opaque_tokens`: the opaque bytes that have a count, and all the opaque bytes.
 - `size_tokens`: the numbers of the side that did not fail.
-- `bad_usage`, `ratio_range`, `media_unseen`, `breakpoints`: the usage, the breakpoint count and the forwarded bytes;
-  `media_unseen` also the unseen media blocks.
+- `bad_usage`, `ratio_range`, `media_unseen`, `breakpoints` of the request: the usage, the breakpoint count and the
+  forwarded bytes; `media_unseen` also the unseen media blocks.
+- `bad_usage` of one spend operation: the call usage, output and cost.
 
 The events schema sends the fields, never `Detail` (`docs/events/events.md` §6.8.1).
 

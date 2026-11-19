@@ -584,8 +584,9 @@ Some numbers in `Detail` have no field. They are not sent, because no query of t
 - `media_tokens`: the media tokens after the cap.
 - `opaque_tokens`: the opaque bytes that have a count, and all the opaque bytes.
 - `size_tokens`: the numbers of the side that did not fail.
-- `bad_usage`, `ratio_range`, `media_unseen`, `breakpoints`: the usage, the breakpoint count and the forwarded bytes;
-  `media_unseen` also the unseen media blocks.
+- `bad_usage`, `ratio_range`, `media_unseen`, `breakpoints` of the request: the usage, the breakpoint count and the
+  forwarded bytes; `media_unseen` also the unseen media blocks.
+- `bad_usage` of one spend operation: the call usage, output and cost.
 
 If a query needs one of them, add a field here and in `CheckFailure` first.
 

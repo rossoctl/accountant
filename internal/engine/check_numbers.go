@@ -29,7 +29,7 @@ func conservationFailure(want, got int) CheckFailure {
 	return f
 }
 
-// sizeRangeFailure: got is the operation's bytes. The limit is a rule, not a claim, so it has its own
+// sizeRangeFailure: got is the bytes of the operation, or of its span, that is over the limit. The limit is a rule, not a claim, so it has its own
 // field and the failure has no Want.
 func sizeRangeFailure(operator string, got, gotAfter, limit, limitAfter int) CheckFailure {
 	f := CheckFailure{Check: CheckSizeRange, Operator: operator,
