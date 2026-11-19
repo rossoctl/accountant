@@ -27,6 +27,10 @@ type wireThread struct {
 	PrevPrint *wirePrint  `json:"prevPrint,omitempty"`
 	Cache     CacheState  `json:"cache"`
 	Version   uint64      `json:"stateVersion"`
+	// Requests and FirstApplied are absent in a snapshot made before they existed. Restore then
+	// gives 0 and nil, and each active change ages from the next request (snapshotVersion stays 1).
+	Requests     uint64            `json:"requests,omitempty"`
+	FirstApplied map[string]uint64 `json:"firstApplied,omitempty"`
 }
 
 // wireBody is a Body whose 64-bit hashes are decimal strings, so a JavaScript reader does not round
@@ -97,7 +101,8 @@ func (ts *Trackers) Snapshot() ([]byte, error) {
 	threads := make([]wireThread, 0, len(ts.m))
 	for k, t := range ts.m {
 		s := t.snapshot()
-		wt := wireThread{Key: k, Created: t.created, Active: s.Active, Cache: s.Cache, Version: s.Version}
+		wt := wireThread{Key: k, Created: t.created, Active: s.Active, Cache: s.Cache, Version: s.Version,
+			Requests: s.Requests, FirstApplied: s.FirstApplied}
 		if p := s.PrevPrint; p != nil {
 			wt.PrevPrint = &wirePrint{Thread: p.Thread, Model: p.Model, ModelKey: p.ModelKey, At: p.At, Client: toWireBody(p.Client),
 				Forwarded: toWireBody(p.Forwarded), ClientBreakpoints: p.ClientBreakpoints,
@@ -136,7 +141,14 @@ func (ts *Trackers) Restore(data []byte) error {
 		if _, dup := m[wt.Key]; dup {
 			return fmt.Errorf("accountant: restore: thread key %q twice", wt.Key)
 		}
-		st := ThreadState{Active: wt.Active, Cache: wt.Cache, Version: wt.Version}
+		st := ThreadState{Active: wt.Active, Cache: wt.Cache, Version: wt.Version, Requests: wt.Requests,
+			FirstApplied: withFirstApplied(wt.Active, wt.FirstApplied, wt.Requests)}
+		for _, first := range st.FirstApplied {
+			// EndRequest records a change at the request it has not yet counted: Requests + 1.
+			if first > st.Requests+1 {
+				return fmt.Errorf("accountant: restore: thread %q: a change entered after the next request", wt.Key)
+			}
+		}
 		if p := wt.PrevPrint; p != nil {
 			c, err := fromWireBody(p.Client)
 			if err != nil {

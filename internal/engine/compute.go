@@ -314,7 +314,9 @@ func (r *Request) calc(s ThreadState, usage Usage) (Result, ThreadState) {
 	c.checks(&res)
 	c.checkUsage(&res)
 	c.conservation(&res)
-	return res, c.nextState()
+	next := c.nextState()
+	res.ActiveOps, res.OldestActiveTurns = activeAge(next)
+	return res, next
 }
 
 // compaction records the host's verdict of a client compaction and the changes that ended on this
@@ -2198,7 +2200,8 @@ func (c *calcState) activeOps() []Operation {
 // nextState is the state after this request: the applied rewrite and setting operations in client
 // space, this request's fingerprint, and what it left cached (§4.6, §6.1).
 func (c *calcState) nextState() ThreadState {
-	next := ThreadState{Version: c.s.Version, Active: c.activeOps()}
+	next := ThreadState{Version: c.s.Version, Active: c.activeOps(), Requests: c.s.Requests + 1}
+	next.FirstApplied = withFirstApplied(next.Active, c.s.FirstApplied, next.Requests)
 	fp := &Fingerprint{Thread: c.r.thread.ID, Model: c.r.meta.Model, ModelKey: c.r.meta.ModelKey, At: c.r.meta.At, Client: c.client, Forwarded: c.fwd,
 		ClientBreakpoints: c.r.clientBreakpoints, ForwardedBreakpoints: c.r.breakpoints}
 	if c.downgraded() { // the entry was written at 5m: the next request must not judge it by the 1h it asked for

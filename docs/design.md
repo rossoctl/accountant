@@ -1157,6 +1157,11 @@ type ThreadState struct {
     PrevPrint *Fingerprint // this thread's previous request; nil = none (§5.2)
     Cache     CacheState   // what the previous request left cached; zero value = unknown (question 11)
     Version   uint64       // +1 at each replace; the optimistic lock (R53)
+    Requests  uint64       // the requests of this thread that Compute stored; not Version (a request
+                           // that reports a change replaces the state twice)
+    FirstApplied map[string]uint64 // ChangeID of each operation in Active -> the request on which it
+                           // entered Active. A report of the same ChangeID again keeps the first value.
+                           // EndRequest records a new change at Requests + 1, the request not yet counted.
 }
 
 // Trackers holds one Tracker for each thread. It is safe for concurrent use.
@@ -1424,7 +1429,16 @@ type Result struct {
     Recomputed bool         // another request replaced the ThreadState first (R53, §6.1)
     Phase    CachePhase     // the cache phase it used (§5.2). For the host's own checks, never an input
     Compaction *CompactionRecord // set when the host reported a client compaction (R55); changes no figure
+    ActiveOps  int          // rewrite and setting operations in Active after this request (§4.6)
+    OldestActiveTurns int   // requests since the oldest of them entered Active; 0 when it entered on
+                            // this request, and 0 when nothing is active
 }
+
+// ActiveOps and OldestActiveTurns change no figure. They are for the host's events (events.md §6.8).
+// A count that rises while the thread adds no new change shows a change that did not end
+// (accountant#70). A change can stay for the whole session, so a high OldestActiveTurns alone is not
+// an error. A snapshot made before these fields restores with no record: its changes then age from
+// the Restore, so the value is a lower bound. The snapshot format stays version 1.
 
 // CompactionRecord echoes the host's verdict and lists the changes that ended on this request.
 type CompactionRecord struct {

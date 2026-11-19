@@ -526,16 +526,16 @@ this reason (§9.1).
 | `acct.interaction` | tier map | A | `Result.Interaction`: on a rescued request, the tokens the client body would have billed cold. |
 | `acct.interaction_caused` | tier map | A | `Result.InteractionCaused`: what the operations already book for those tokens. Price `interaction` minus `interaction_caused`, as the host does (design.md §6.2). |
 | `acct.storage_tokens` | int? | A | `Result.StorageTokens`. |
-| `acct.active_ops` | int? | A | Active in-place operations in the thread state. A count that keeps rising shows a stale operation before the money does. Needs an accountant change (below). |
-| `acct.oldest_op_turns` | int? | A | Requests of the thread since the oldest active operation was first applied. Needs an accountant change (below). |
+| `acct.active_ops` | int? | A | Active rewrite and setting operations in the thread state. A count that keeps rising shows a stale operation. `Result.ActiveOps`. |
+| `acct.oldest_op_turns` | int? | A | Requests of the thread since the oldest active operation was first applied. `Result.OldestActiveTurns`. |
 | `acct.estimate_held` | bool? | H | The host held a price estimate instead of the measured figure. |
 
 A tier map is `{input, cache_write_5m, cache_write_1h, cache_read}`, the `TierTokens` fields.
 
-`acct.active_ops` and `acct.oldest_op_turns` need a change in the accountant. Today the active operations
-are in `ThreadState.Active`, which is not public, and no operation records when it was first applied.
-`Result` gets two fields: the count of active operations, and the request count since the oldest one was
-first applied. Until then, the module leaves both fields absent.
+`acct.active_ops` is `Result.ActiveOps`, and `acct.oldest_op_turns` is `Result.OldestActiveTurns`
+(design.md §6.3, accountant#91). The first is the count of rewrite and setting operations still active after
+the request. The second is the requests since the oldest of them became active. A change can stay active for the whole session, so do not alert on `acct.oldest_op_turns`
+alone. After a restore from a snapshot older than these fields, the age starts again at the restore.
 
 ### 6.8.1 Failed checks
 

@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"maps"
 	"reflect"
 	"slices"
 	"strings"
@@ -14,6 +15,47 @@ type ThreadState struct {
 	PrevPrint *Fingerprint // this thread's previous request; nil = none (§5.2)
 	Cache     CacheState   // what the previous request left cached; zero value = unknown
 	Version   uint64       // +1 at each replace; the optimistic lock (R53)
+	// Requests is the count of this thread's requests that Compute stored. It is not Version: a
+	// request that reports a change replaces the state twice (EndRequest and Compute).
+	Requests uint64
+	// FirstApplied maps the ChangeID of each operation in Active to the request (a value of Requests)
+	// on which it entered Active. A reported operation that replaces an active one with its ChangeID
+	// keeps the first value, so a change that the host reports again does not look new. Code makes a
+	// new map for each new state and never changes a stored one.
+	FirstApplied map[string]uint64
+}
+
+// withFirstApplied returns the FirstApplied map for active: the value in prev for a ChangeID that
+// prev holds, else n. It holds no other ChangeID, so an ended change is dropped and starts again at
+// the request on which it comes back. It is nil when active is empty.
+func withFirstApplied(active []Operation, prev map[string]uint64, n uint64) map[string]uint64 {
+	if len(active) == 0 {
+		return nil
+	}
+	out := make(map[string]uint64, len(active))
+	for _, op := range active {
+		if first, ok := prev[op.ChangeID]; ok {
+			out[op.ChangeID] = first
+		} else {
+			out[op.ChangeID] = n
+		}
+	}
+	return out
+}
+
+// activeAge is the count of active operations in s and the requests since the oldest of them entered
+// Active (Result.ActiveOps and Result.OldestActiveTurns). Both are 0 when nothing is active.
+func activeAge(s ThreadState) (count, oldest int) {
+	if len(s.Active) == 0 {
+		return 0, 0
+	}
+	first := s.Requests
+	for _, op := range s.Active {
+		if f, ok := s.FirstApplied[op.ChangeID]; ok && f < first {
+			first = f
+		}
+	}
+	return len(s.Active), int(s.Requests - first)
 }
 
 // Tracker keeps the state of one thread between requests.
@@ -41,6 +83,7 @@ func (t *Tracker) snapshot() ThreadState {
 	defer t.mu.Unlock()
 	s := t.state
 	s.Active = append([]Operation(nil), t.state.Active...)
+	s.FirstApplied = maps.Clone(t.state.FirstApplied)
 	return s
 }
 
@@ -173,6 +216,9 @@ func (r *Request) EndRequest(thread Thread, forwarded Body, breakpoints []Breakp
 		}
 		next := s
 		next.Active = active
+		// The request is not counted until Compute stores it, so it is request s.Requests + 1. A
+		// request that fails before Compute keeps the record, and its change ages from here.
+		next.FirstApplied = withFirstApplied(active, s.FirstApplied, s.Requests+1)
 		if t.replace(s.Version, next) {
 			r.start = next
 			r.start.Version = s.Version + 1
