@@ -403,3 +403,87 @@ func TestAnInPlaceChangeAfterAddedContentEndsWhenAnotherOperatorTakesItOver(t *t
 		t.Fatalf("Active = %v, want cg:expand:decl-added and cg:sweep:t1", got)
 	}
 }
+
+// accountant#100: request 1 is the #94 setup. On request 2 the host stops adding X, and a DryRun D is reported
+// at tool(2). D ran after the host stopped adding X, so its position never counted X: it is stored at tool(2).
+// Before, the rebase for ended content took X out of D too and stored it at tool(1).
+func reportedAfterAddedEnds(t *testing.T) (*Trackers, []blk, []blk) {
+	t.Helper()
+	ts := NewTrackers()
+	tools := shiftTools()
+	system := []blk{b("s0", 2000)}
+	ms := []blk{b("m0", 5000), b("m1", 5000)}
+	add := rewrite("a", "context-guru.expand", "cg:expand:decl-added", tool(0), 0, 340)
+	trim := rewrite("s", "context-guru.trim", "cg:trim:t1", tool(1), 1000, 600)
+	noChecks(t, req{at: t0, client: mk(tools, system, ms), clientBPs: bps5(sys(0), msg(1)), facts: exact5m,
+		ops: []Operation{add, trim}, fwd: mk([]blk{b("x", 340), b("r0", 600), tools[1], tools[2]}, system, ms),
+		usage: Usage{CacheWrite: 3500}}.run(ts))
+	d := rewrite("d", "context-guru.extract", "cg:extract:t2", tool(2), 1000, 800)
+	d.DryRun = true
+	res := req{at: t0.Add(10 * time.Second), client: mk(tools, system, ms), clientBPs: bps5(sys(0), msg(1)),
+		facts: exact5m, ops: []Operation{d}, fwd: mk([]blk{b("r0", 600), tools[1], tools[2]}, system, ms),
+		usage: Usage{CacheWrite: 3500}}.run(ts)
+	noSumFailure(t, res)
+	return ts, system, ms
+}
+
+func TestAChangeReportedWhenAddedContentEndsIsStoredWhereItWasReported(t *testing.T) {
+	ts, _, _ := reportedAfterAddedEnds(t)
+	want := map[string]Position{"cg:trim:t1": tool(0), "cg:extract:t2": tool(2)}
+	active := ts.tracker(ThreadKey("s1", Thread{ID: "main"}), time.Time{}).snapshot().Active
+	if len(active) != len(want) {
+		t.Fatalf("Active = %v, want %v", activeIDs(ts), want)
+	}
+	for _, op := range active {
+		if op.At != want[op.ChangeID] {
+			t.Errorf("%s stored at %+v, want %+v", op.ChangeID, op.At, want[op.ChangeID])
+		}
+	}
+}
+
+// On request 3 the client edits only its tool 2. D is at tool(2), so the edit ends it; the trim of tool 0 stays.
+// Before, D read client tool 1, saw no edit, and stayed.
+func TestAChangeReportedWhenAddedContentEndsEndsOnAClientEditAtItsItem(t *testing.T) {
+	ts, system, ms := reportedAfterAddedEnds(t)
+	tools := shiftTools()
+	edited := []blk{tools[0], tools[1], b("e2", 1000)}
+	res := req{at: t0.Add(20 * time.Second), client: mk(edited, system, ms), clientBPs: bps5(sys(0), msg(1)),
+		facts: exact5m, fwd: mk([]blk{b("r0", 600), tools[1], b("e2", 1000)}, system, ms),
+		usage: Usage{CacheWrite: 3500}}.run(ts)
+	noSumFailure(t, res)
+	if got := activeIDs(ts); len(got) != 1 || got[0] != "cg:trim:t1" {
+		t.Fatalf("Active = %v, want only cg:trim:t1", got)
+	}
+}
+
+// accountant#100, review of #101: X trims client tool 0 and adds one tool after it, and T trims client tool 2,
+// at tool(3) in the output. On request 2 the host stops X, so restored ends it, and a reported P sweeps T's
+// output at tool(2). P ran without X's added tool, so it covers client tool 2 and is a chain partner of T: both
+// stay. Before, clientSide took X out of P's position too, P seemed to cover client tool 1, takenOver ended T,
+// and the sum check failed.
+func TestAReportedChainPartnerAfterEndedAddedContentKeepsTheChange(t *testing.T) {
+	ts := NewTrackers()
+	tools := []blk{b("c0", 1000), b("c1", 1200), b("c2", 1000), b("c3", 1000)}
+	system := []blk{b("s0", 2000)}
+	ms := []blk{b("m0", 5000), b("m1", 5000)}
+	x := rewrite("x", "context-guru.expand", "cg:expand:x", tool(0), 1000, 840)
+	x.Spans = []Span{
+		{Section: SectionTools, From: 0, To: 0, SizeBefore: Size{Bytes: 1000}, SizeAfter: Size{Bytes: 500}},
+		{Section: SectionTools, From: 1, To: 1, SizeAfter: Size{Bytes: 340}},
+	}
+	trim := rewrite("t", "context-guru.trim", "cg:trim:c2", tool(3), 1000, 700)
+	noChecks(t, req{at: t0, client: mk(tools, system, ms), clientBPs: bps5(sys(0), msg(1)), facts: exact5m,
+		ops:   []Operation{x, trim},
+		fwd:   mk([]blk{b("r0", 500), b("x", 340), tools[1], b("t2", 700), tools[3]}, system, ms),
+		usage: Usage{CacheWrite: 3500}}.run(ts))
+	p := rewrite("p", "context-guru.sweep", "cg:sweep:c2", tool(2), 700, 300)
+	res := req{at: t0.Add(10 * time.Second), client: mk(tools, system, ms), clientBPs: bps5(sys(0), msg(1)),
+		facts: exact5m, ops: []Operation{p},
+		fwd: mk([]blk{tools[0], tools[1], b("p2", 300), tools[3]}, system, ms), usage: Usage{CacheWrite: 3500}}.run(ts)
+	noChecks(t, res)
+	got := activeIDs(ts)
+	sort.Strings(got)
+	if len(got) != 2 || got[0] != "cg:sweep:c2" || got[1] != "cg:trim:c2" {
+		t.Fatalf("Active = %v, want cg:sweep:c2 and cg:trim:c2", got)
+	}
+}
