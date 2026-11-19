@@ -61,3 +61,20 @@ func TestPingOpsPricesStandaloneWithoutAnyThreadState(t *testing.T) {
 		t.Fatalf("unpriced = %+v", res.Unpriced)
 	}
 }
+
+// PingWindowID is the one rule for the window id: it equals what PingOps gives, for the primary
+// thread ("" becomes "main") and a named thread, with a window in a non-UTC zone.
+func TestPingWindowIDEqualsPingOpsWindow(t *testing.T) {
+	win := time.Date(2026, 10, 28, 15, 0, 0, 0, time.FixedZone("x", 3*3600))
+	for _, thread := range []string{"", "main", "side"} {
+		ops, facts := PingOps(Ping{Session: "s", ThreadID: thread, Window: win}, Billing{})
+		got := PingWindowID(thread, win)
+		if got != facts.PingWindow || got != ops.Ops[0].ChangeID {
+			t.Fatalf("thread %q: PingWindowID = %q, PingWindow = %q, ChangeID = %q",
+				thread, got, facts.PingWindow, ops.Ops[0].ChangeID)
+		}
+	}
+	if got, want := PingWindowID("", win), "ka:main:2026-10-28T12:00:00Z"; got != want {
+		t.Fatalf("PingWindowID(\"\") = %q, want %q", got, want)
+	}
+}
