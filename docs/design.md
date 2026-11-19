@@ -1882,8 +1882,12 @@ Where a question has test cases, a host that compares them with its own code mar
     change with both an added and an in-place span that ends through its in-place span counts as gone too.
     Added content measured no client bytes, so `takenOver` never sees it as a chain partner. When added
     content ends, it leaves `Active`, so the next request cannot take it out of a later change's position.
-    The stored position of every later change in tools or system therefore leaves out the content that
-    ended. Content that stays active stays counted, because the next request takes it out itself.
+    The stored position of every later active change in tools or system therefore leaves out the content
+    that ended. Content that stays active stays counted, because the next request takes it out itself. A
+    change reported in this request ran after the host stopped adding the content, so no position of it
+    counts the content that ended: not its client or forwarded position, and not its stored one
+    (accountant#100). Only active changes end in this request, and they come before reported ones in
+    pipeline order, so this holds for all ended content before a reported change.
 
     Content that later changes added is not counted. The pipeline order is the order of the items: active
     changes first, then reported ones. So content that a reported change adds before an active change, or
@@ -1892,9 +1896,7 @@ Where a question has test cases, a host that compares them with its own code mar
     item without the added content. The tier of a cost and the media of a size after come from the
     forwarded item without the added content that ended. The `ChangeID` of a cache effect (§5.2 row 1, a
     `markPremium`, a `ttlPremium`) comes from the forwarded item without the added content that ended too.
-    A change reported in the request where added content ends never saw that content: the host no longer
-    forwards it. So its position counts only the added content that stays, and nothing is taken out of it
-    for the content that ended, neither in the pricing nor in its stored position.
+    For a change reported in this request, nothing is taken out for the content that ended, as above.
 
     A break that a change leaves behind when it ends has no `ChangeID` (§5.2 row 1), because the change
     is no longer reported or active. It is part of the bill difference (§6.3). When added content in tools

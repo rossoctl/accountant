@@ -898,18 +898,19 @@ func (c *calcState) fwdSide(k int, p Position) (Position, bool) {
 }
 
 // addedBefore counts the items that changes up to k in pipeline order added before p in its section; with
-// endedOnly, only those of changes that ended. It is 0 in the messages section.
+// endedOnly, only those of changes that ended. It is 0 in the messages section. For a change reported in this
+// request, content that ended is never counted: the change ran after the host stopped adding it, so its input
+// did not have it (accountant#100). Only active changes end in this request, and they come first in pipeline
+// order, so this holds for every ended item before k.
 func (c *calcState) addedBefore(k int, p Position, endedOnly bool) int {
 	if p.Section == SectionMessages {
 		return 0
 	}
+	reported := !c.items[k].active
 	n := 0
 	// Only items up to k: a position is in the operator's own output, and that has only the content of the
 	// changes before it in pipeline order (§4.3). c.items is in pipeline order, and item k's own earlier
-	// spans are in its output too. A change reported now never saw content that ended in this request: the
-	// host no longer forwards it, so its position does not count it. An active change's position was stored
-	// while the host still forwarded that content, so it does (accountant#96).
-	reported := !c.items[k].active
+	// spans are in its output too.
 	for _, it := range c.items[:k+1] {
 		if it.op.Kind != KindRewrite || it.op.DryRun || it.bad != "" || (endedOnly && !it.ended) || (reported && it.ended) {
 			continue
@@ -2286,7 +2287,8 @@ func (c *calcState) activeOps() []Operation {
 // storedSpans is the spans of item k as the next request reads them. A position in tools or system counts the
 // content that changes before k added before it. A change that ended leaves Active, so the next request no
 // longer takes its content out of the position: take it out here (accountant#94). Content that stays active
-// stays counted, because the next request takes it out itself.
+// stays counted, because the next request takes it out itself. A change reported in this request never
+// counted the content that ended, so addedBefore gives 0 for it (accountant#100).
 func (c *calcState) storedSpans(k int, it *item) []span {
 	if it.op.Kind != KindRewrite {
 		return it.spans
