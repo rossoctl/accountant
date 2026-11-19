@@ -1468,8 +1468,20 @@ type CheckFailure struct {
                     // "shared_warm" | "bad_usage" | "ratio_range" | "media_unseen" | "breakpoints" |
                     // "media_tokens" | "size_tokens" | "size_range" | "opaque_tokens" (§6.5)
     Operator string // "" when the check is not about one operator
-    Detail   string // numbers only, no content
+    Detail   string // numbers only, no content; built from the fields below (§6.5)
+
+    Section Section // set for sum and shared_warm only
+    Index   *int    // shared_warm: the position
+
+    Want, WantAfter     *int     // what the bodies or the bill show; After for a check with two sides
+    Got, GotAfter       *int     // what the operations claim
+    Limit, LimitAfter   *int     // size_range only: the size limit, in bytes
+    Tokens, TokensAfter *int     // size_tokens only: the tokens of the side that failed
+    Bytes, BytesAfter   *int     // size_tokens only: the bytes of the side that failed
+    RatioMin, RatioMax  *float64 // size_tokens only: the bounds of the ratio (below)
 }
+
+func (c CheckFailure) Unit() string // "bytes" | "tokens" | "": the unit of Want, Got and Limit (§6.5)
 
 // OpID is unique inside the Result. A reported operation keeps its own ID. An active operation
 // applied again gets "active:" + its ChangeID, so it cannot collide with the IDs of this request (R6).
@@ -1665,6 +1677,37 @@ that the library adds later is classified in `Fatal` only, so it gates every hos
 have no check: attribution holds by construction, and the library does not test the order.
 `conservation` is informational on purpose: with `sum` passing it differs only by the ratio's rounding beyond its
 tolerance, so `Reliable` can be true while `conservation` is reported. A host that wants that signal reads `Result.Checks`.
+
+**The numbers of a failure.** A `CheckFailure` carries the numbers behind it in typed fields, so a host never parses
+`Detail`. A number is nil when the check has no such number; 0 is a real value. `Want` and `Got` always have the same
+unit, `Unit()`, so `Want - Got` has a meaning wherever both are set. `Unit()` depends only on `Check`.
+
+| Check | `Unit()` | `Want` (`WantAfter`) | `Got` (`GotAfter`) | Other fields |
+|---|---|---|---|---|
+| `sum` | bytes | Bytes the bodies changed in `Section` | Bytes the operations claim for `Section` | `Section` |
+| `conservation` | tokens | The bill difference | Tokens the operations claim | |
+| `spans` | bytes | Span bytes before (after) | The operation's bytes before (after) | |
+| `size_range` | bytes | — | The bytes before (after) of the operation, or of its span, that is over the limit | `Limit`, `LimitAfter` |
+| `size_tokens` | — | — | — | `Tokens`, `TokensAfter`, `Bytes`, `BytesAfter`, `RatioMin`, `RatioMax`, for the span (or the operation with no spans) that failed |
+| `media_tokens` | tokens | Tokens billed | The media price | |
+| `opaque_tokens` | tokens | Tokens billed | Tokens counted for the opaque bytes | |
+| `shared_warm` | — | — | — | `Section`, `Index` |
+
+A `size_tokens` failure sets only the side that failed: `Tokens` and `Bytes` for before, `TokensAfter` and
+`BytesAfter` for after. The other side passed, or had no count (`Tokens` 0) and was not checked. A side fails when
+tokens ÷ bytes is above `RatioMax`, or tokens ÷ text bytes is below `RatioMin`. The text bytes are the bytes less the
+media and opaque bytes of the range; they have no field, so a host must not repeat the rule from these numbers.
+
+The other checks have no numbers. `Detail` is built from these fields, and it adds some numbers that have no field:
+
+- `media_tokens`: the media tokens after the cap.
+- `opaque_tokens`: the opaque bytes that have a count, and all the opaque bytes.
+- `size_tokens`: the numbers of the side that did not fail.
+- `bad_usage`, `ratio_range`, `media_unseen`, `breakpoints` of the request: the usage, the breakpoint count and the
+  forwarded bytes; `media_unseen` also the unseen media blocks.
+- `bad_usage` of one spend operation: the call usage, output and cost.
+
+The events schema sends the fields, never `Detail` (`docs/events/events.md` §6.8.1).
 
 ## 7. Billing plans
 

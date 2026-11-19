@@ -220,6 +220,12 @@ const (
 	CheckOpaqueTokens = engine.CheckOpaqueTokens
 )
 
+// Units of [CheckFailure].Unit.
+const (
+	UnitBytes  = engine.UnitBytes
+	UnitTokens = engine.UnitTokens
+)
+
 // Machine-stable reasons in [Result].Unpriced.
 const (
 	ReasonEndRequestMissing = engine.ReasonEndRequestMissing
