@@ -667,12 +667,13 @@ operations that the accountant applied again.
 | `accepted` | bool? | H | The answer was used. |
 | `rejection` | enum? | H | Why the answer was not used. From `Names.Enums["acct.ops.call.rejection"]` (§8). |
 | `latency_ms` | int? | H | |
-| `cost` | float? | H | What the call cost, in `cost.currency`: the provider's or the gateway's own figure (`CallUsage.CostUSD`) when it reports one, else the host's price. The sum over a request is the cost of Context Guru's own model calls (the dashboard's `cg_llm_cost_usd`). |
+| `cost` | float? | H | What the call cost, in `cost.currency`: the provider's or the gateway's own figure (`CallUsage.CostUSD`, in US dollars) when it reports one and `cost.currency` is `usd`, else the host's price in `cost.currency`. The host never sends a dollar figure under another currency. The sum over a request is the cost of Context Guru's own model calls (the dashboard's `cg_llm_cost_usd`). |
 
 The host gives the H fields for each spend operation in `HostFacts.Calls`, keyed by the operation's `ID`.
 
-A keep-alive ping is not a spend operation of a request. A sweep question or a summary substitute is a ping
-(§6.10): the accountant prices it on its own, and its cost is `cg.ping.cost` on the ping event. So the cost
+A keep-alive ping is not a spend operation of a request. A ping of `cg.ping.kind` `sweep_question` or
+`summary` (§6.10) is priced by the accountant on its own, and its cost is `cg.ping.cost` on the ping event. A
+sweep question or a summary that is not sent as a ping is a spend operation (`call.purpose`). So the cost
 of a component's model calls is the `call.cost` of its spend operations (by `call.component`) plus the
 `cg.ping.cost` of its pings (by `cg.ping.kind`).
 
@@ -954,7 +955,7 @@ These values are not sent, because other fields already give them. A host must n
 | Pings in a gap; a manual ping | The ping events of the window; `cg.ping.kind` `manual`. |
 | Tokens by cache effect kind (keep-alive, split, TTL, ended, total) | Sum of `cache.effects` by `kind`. |
 | Saved and caused tokens, and savings, for each component | Sum of `acct.ops` by `operator`. |
-| Cost of context-guru's own model calls | `acct.ops[].call` of the spend operations. |
+| Cost of context-guru's own model calls | The `call.cost` of the spend operations, plus the `cg.ping.cost` of its pings (§6.9). |
 | Expands caused by the sweep | `cg.expand.by_origin` with `origin` `sweep`. |
 | Deferred and filtered tool counts and tokens | `tools.decl` by `state`. |
 | A digest of the tool declarations | `tools.decl[].id`. |
@@ -966,7 +967,7 @@ These values are not sent, because other fields already give them. A host must n
 | The wall time of the request and of the forward | The record `Timestamp` (`at`); `at` + `time.body_read_ms` + `time.pipeline_ms`. |
 | The number of tool results; of tool calls | The sum of `trigger.tool_results_by`; of `resp.tool_use_by`. |
 | The request is reliable | No entry of `acct.failed_checks` has `fatal` (the `requests` view, column `reliable`). |
-| Fallback because of observe mode | `cg.mode` `observe`. |
+| Fallback of the engine because of observe mode | `cg.mode` `observe`. This is not `acc_fallback` `observe`, which is the first gate of the host that failed (§6.12). |
 | The idle time of a ping; its model and route | The ping's `at` minus the previous request's `at`; the request that opened the window. |
 | Requests that hit a disabled client search | `cg.defer.client_search_disabled` on the requests. |
 | Which usage tiers the provider reported | A tier the provider did not report is absent (E4). |
@@ -1186,7 +1187,7 @@ groups arrive as JSON text. Researchers do not query this table.
 
 | View | One row is |
 |---|---|
-| `requests` | one request: the core columns (identity, client, route, model, time, tokens, cost, cache, trigger, response), the computed gaps (§6.4) and `reliable` (§6.8.1). The other groups are in their own views, so `SELECT *` stays readable. |
+| `requests` | one request: the core columns (identity, client, route, model, time, tokens, cost, cache, trigger, response), the computed gaps (§6.4), `reliable` (§6.8.1), `first_of_thread` and `pipeline_share` (below). The other groups are in their own views, so `SELECT *` stays readable. |
 | `request_shape` | one request: `body.in.*`, `body.out.*`, `tools.decl_known`, `limit.*` |
 | `cg_requests` | one request: every `cg.*` column, including `cg.ka.*` |
 | `ops`, `failed_checks`, `cache_effects`, `components`, `plugin_calls`, `tool_decls` | one entry of the list of that name, with the request's `at`, identity and `thread_id`, so no query needs `ARRAY JOIN` |
@@ -1195,6 +1196,7 @@ groups arrive as JSON text. Researchers do not query this table.
 | `threads` | one thread: request count, first and last time, tokens by tier, cache hit ratio, trigger counts |
 | `signals` | one client signal, with the session's next request, if there is one |
 | `gaps` | one gap in `producer.seq`: `producer_id`, `producer_run_id`, first missing seq, `missing` count |
+| `savings` | one `producer_id`, day and currency: the total saving, as the dashboard's `total_saved_usd`. It is `booked_preset` − the `call.cost` of the spend operations + `booked_split` + (`booked_keepalive` − the `cg.ping.cost` of the sent pings whose `cg.ping.kind` is not `manual`) + `booked_manual` + `booked_defer`. `booked_manual` is net, so a manual ping's cost is not taken off a second time. A ping has no `cost.currency`, so its cost joins on `cg.ping.currency` = `cost.currency`. (X2, K5) |
 
 **Derived columns.** Some checks need a value that other fields give. The views compute each one once, so
 each monitor does not write it again, and no field sends it twice (§6.14). A column can read fields of
@@ -1204,9 +1206,8 @@ from the typed table, so a researcher never joins by hand.
 | View, column | Computed as | Used by (context-guru `docs/invariants.md`) |
 |---|---|---|
 | `requests.reliable` | No entry of `acct.failed_checks` has `fatal`. | saving studies, K11 |
-| `requests.first_of_thread` | No earlier request of the same `session_hash` and `thread.id`, in any `producer_run_id`. NULL when that cannot be known: a `producer.seq` gap before the row in its run, or a row older than the table `TTL`. | X4 |
+| `requests.first_of_thread` | No earlier request of the same `session_hash` and `thread.id`, in any `producer_run_id`. NULL when the answer cannot be known: (1) a run of the same `producer_id` that holds rows of this session has a `producer.seq` gap at or before this row's `at`, so the earlier request may be the lost one, also after a restart; or (2) the session has rows near the `TTL` horizon (its first kept row is less than 1 day after now − `TTL`), so earlier rows may be deleted. A session that lasts more than 1 day can still look new; the margin is a choice. | X4 |
 | `requests.pipeline_share` | `booked_preset` ÷ (`cost.amount` + `booked_preset`). A query that sums it over many requests sums the two parts first, and groups by `cost.currency`. | X6 |
-| `savings` (a view: one row per `producer_id`, day and `cost.currency`) | The total saving, as the dashboard's `total_saved_usd`: `booked_preset` − the `call.cost` of the spend operations + `booked_split` + (`booked_keepalive` − the `cg.ping.cost` of the sent pings) + `booked_manual` + `booked_defer`. | X2, K5 |
 | `request_shape.search_tools_sent` | The entries of `tools.decl` with `search` true and `state` `sent` or `added`. More than 1 is a breach. | D6 |
 | `request_shape.defer_rebuild` | `none`, or `proven` / `unproven`: the `state` of a `tools.decl` entry changed against the previous request of the thread, on a request with `cache.phase` `cold` (`proven`) or not (`unproven`). | D2 |
 | `request_shape.defer_turned_off` | `cg.defer.retries_400` > 0, and no deferred tool on the later requests of the thread. | D5 |
