@@ -1801,6 +1801,15 @@ Where a question has test cases, a host that compares them with its own code mar
       in-place change with spans shaped keeps them too. Another operator that removes items and adds
       others of exactly the same sizes looks like no change.
 
+    **Positions of in-place changes after added content** (accountant#94). In tools or system, the
+    position of an in-place change is in its operator's input, so it counts the content that changes
+    before it in pipeline order added before it in the section. The end rules above read the client item
+    at that position without that content, as for added content. They read the forwarded item at that
+    position without the added content that ended. The rules decide added content first, so an in-place
+    change sees which added content the host still forwards. Content that later changes added is not
+    counted. Only the end rules map these positions. The pricing still reads an in-place change in tools or
+    system at its reported position, which can place its tier or its media on the wrong client item.
+
     A break that a change leaves behind when it ends has no `ChangeID` (§5.2 row 1), because the change
     is no longer reported or active. It is part of the bill difference (§6.3).
 
