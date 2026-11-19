@@ -494,10 +494,19 @@ no usage (an upstream error, a denied request); a 0 is a real 0. `cost.*` are mo
 | `cost.estimated` | bool? | H | The `Pricer` said estimated. |
 | `cost.source` | enum? | H | `gateway` (the gateway's own figure) \| `modelled` (priced from tokens). Cortex: `cost.Source`. |
 | `cost.provenance` | enum? | H | `authoritative` \| `configured` \| `discovered` \| `bundled`. Cortex: `cost.Provenance`. |
-| `cost.currency` | enum? | H | `usd` \| `credits` \| `other`. The unit of `cost.amount` and of every other money field of the record. |
+| `cost.currency` | enum? | H | `usd` \| `credits` \| `other`. The unit of `cost.amount` and of the booked extras. Present whenever the record has a money field; absent only when it has none. |
 | `cost.refused` | enum? | H | The host refused a cost figure: `cost_implausible` \| `usage_implausible` \| `incomplete` \| `other`. Cortex: `cost.RejectedReason`, `cost.Incomplete`. |
 
 ### 6.8 Cache state and accountant result (request)
+
+`cache.*` (except `cache.host_*`), `acct.*` and `acct.ops` come from the `Result` of `Compute`. A host does not
+call `Compute` for a request that failed before a response, or that a plugin denied (cortex-wiring.md §W5.3, "A failed request").
+On such a request these fields do not apply, and `acct.computed` is false. Storage keeps them `Nullable` for
+this reason (§9.1).
+
+| Field | Type | Source | Meaning |
+|---|---|---|---|
+| `acct.computed` | bool | M | The host gave a `Result` (`Request.Result` is not nil). When false, every field below except `cache.host_*` does not apply. |
 
 | Field | Type | Source | Meaning |
 |---|---|---|---|
@@ -555,7 +564,7 @@ What `want` and `got` are, for each check that has numbers:
 | `conservation` | tokens | The bill difference | Tokens the operations claim |
 | `spans` | bytes | Span bytes before (after) the change | The operation's bytes before (after) |
 | `size_range` | bytes | The operation's bytes before (after) | The limit before (after) |
-| `size_tokens` | tokens | The operation's tokens before (after) | The operation's bytes before (after); with `ratio_min`, `ratio_max` |
+| `size_tokens` | tokens (`want`), bytes (`got`) | The operation's tokens before (after) | The operation's bytes before (after); with `ratio_min`, `ratio_max`. The check fails when tokens ÷ bytes is outside the range, so `want - got` has no meaning here. |
 | `media_tokens` | tokens | Tokens billed | The media price |
 | `opaque_tokens` | tokens | Tokens billed | The tokens counted for the opaque bytes |
 
@@ -578,7 +587,9 @@ claims a change that is no longer in the body.
    ```
 
 2. If one check and section has a constant delta, one operation is the cause. `sum` has no `operator`, so
-   read the `acct.ops` of the same request (the `ops` view) whose `at.section` is that section. If the delta
+   read the `acct.ops` of the same request (the `ops` view). A stale operation is usually a re-applied one
+   (`reapplied` true), which has no `at`. Match it by `change` to the earlier request of the thread that first
+   reported it: there `at.section` and the sizes are set. If the delta
    grows over the turns of a thread, an operation was not retired. Read `acct.active_ops` and
    `acct.oldest_op_turns` on the same thread to confirm.
 3. If `fatal` is true, the figures of that request are not measured. The `requests` view gives this as the
@@ -756,12 +767,13 @@ window.
 | `cg.ping.refuse_reason` | enum? | H | `cost_ceiling` \| `below_min_prefix` \| `max_pings` \| `too_large` \| `thinking_enabled` \| `not_opted_in` \| `done` \| `over_budget` \| `no_credential` \| `credential_expired` \| `dead_credential` \| `model_unpriced` \| `unsupported_route` \| `route_breaker` \| `evicted` \| `shutdown` \| `other`. |
 | `cg.ping.scheduled_offset_ms` | int? | H | When the timer was due, relative to the previous request's `t0`. Does not apply to a `manual` ping. The idle time at the decision is the ping's `at` minus the previous request's `at` (the `pings` view, column `idle_ms`); the timer lateness is `idle_ms` minus this field. |
 | `cg.ping.prefix_tokens` | int? | H | Billed prefix the ping would replay. |
-| `cg.ping.projected_cost` | float? | H | Cost the keeper projected, in `cost.currency`. |
+| `cg.ping.projected_cost` | float? | H | Cost the keeper projected, in `cg.ping.currency`. |
 | `cg.ping.status` | int? | H | Upstream status (sent and failed only). |
 | `cg.ping.error_kind` | enum? | H | As `resp.error_kind`, without `denied` and `client_canceled`, which a ping cannot have. |
 | `cg.ping.latency_ms` | int? | H | Send to last byte. |
 | `cg.ping.tokens` | (tier map + `output`)? | A | `Ping.Usage`. Sent pings only. |
-| `cg.ping.cost` | float? | H | As `cost.amount`. |
+| `cg.ping.cost` | float? | H | As `cost.amount`, in `cg.ping.currency`. |
+| `cg.ping.currency` | enum? | H | As `cost.currency`. Present whenever `projected_cost` or `cost` is present. A query that adds ping costs groups by it. |
 
 A ping uses the model and the route of the request that opened its window, so it does not repeat
 `model.*` and `route.*`. The `pings` view joins them from that request.
@@ -799,7 +811,7 @@ Three things have similar names:
 |---|---|---|
 | `stats.*` | `accountant.stats` only | The module's own counters for this run. |
 | `extras` | `accountant.stats` only | The **declarations** of this run's extras: key, type, enum values. It is the schema of the `x.*` fields. |
-| `x.<kind>.<key>` | request, ping and stats records | The extra **values** (§6.12). |
+| `x.<service.name>.<key>` | request, ping and stats records | The extra **values** (§6.12). |
 
 ### 6.12 Host extras
 
@@ -953,9 +965,10 @@ func NewHasher(key []byte, hashKeyID string) (*Hasher, error) // key at least 32
 
 type Producer struct {
     ID, Kind, Version string // §6.1
-    EngineVersion     string // optional
+    EngineVersion     string // optional; a version string, checked like client.version
     RunID             string // set by NewProducer: random, one for each process start
 }
+// New and ResourceAttributes check the formats again, so a Producer built by hand cannot skip them.
 func NewProducer(id, kind, version string) (Producer, error) // checks the formats of §6.1
 
 // ResourceAttributes gives the §6.1 resource attributes of p. The host adds them to the resource of the
@@ -971,8 +984,15 @@ type Names struct {
     Plugins      []string            // §6.9.4 plugins[].name
     BuiltinTools []string            // §6.5.2 tools.decl[].name
     Presets      []string            // §6.9.1 cg.preset
-    Reasons      map[string][]string // the declared enum of each component's and plugin's reason, by name
+    Reasons      map[string][]string // the reason enum of each component and plugin, keyed
+                                     // "component:<name>" or "plugin:<name>", so the two never collide
+    Enums        map[string][]string // the values of every other host enum, keyed by field name:
+                                     // "cg.sweep.warm_gate", "cg.defer.client_search_disabled",
+                                     // "cg.defer.probe", "cg.ka.strategy", "cg.ka.skip_reason",
+                                     // "cache.host_miss_reason", "acct.ops.call.rejection"
 }
+// A host enum field with no declared list is sent as "other". New returns an error for a value that does
+// not match the enum-value format of §6.12.
 func WithNames(n Names) Option
 func WithStatsInterval(d time.Duration) Option
 func WithExtra(key string, t ExtraType) Option          // §6.12; New returns its error
@@ -983,16 +1003,17 @@ type ExtraType struct{ /* kind, enum values */ }
 var Int, Float, Bool, Duration, Hashed ExtraType
 func Enum(values ...string) ExtraType
 
-// Request is what the host gives for one request, after Compute.
+// Request is what the host gives for one request, after Compute, or after a failure with no Compute.
 type Request struct {
     Meta                accountant.RequestMeta
     Thread              accountant.Thread
     Client, Forwarded   accountant.Body // body.in, body.out
     ClientBP, ForwardBP []accountant.Breakpoint
     Facts               accountant.EntryFacts
-    Ops                 []accountant.Operation // the inputs, for §6.9 sizes and positions; matched to PricedOp.OpID
+    Ops                 []accountant.Operation // the inputs, for §6.9 sizes and positions; matched to PricedOp.OpID.
+                                               // An empty or repeated ID matches nothing: those fields stay absent
     Usage               accountant.Usage
-    Result              accountant.Result
+    Result              *accountant.Result // nil when the host did not call Compute: acct.computed is false
     Host                HostFacts // §6.2–§6.9.4 fields marked H, in one sub-struct per prefix; pointers for optional values
     Extra               map[string]any // §6.12; declared keys only
 }
@@ -1004,8 +1025,10 @@ func (e *Emitter) Request(r Request)
 // acct.ops[].call, keyed by Operation.ID). CG.ConfigJSON is hashed into cg.engine.config_hash, never sent.
 
 type Ping struct {
-    Ping   accountant.Ping // as for PingOps; the zero value for a refused ping
-    Window string          // accountant.PingFacts.PingWindow; the module hashes it into cg.ping.window
+    Ping   accountant.Ping // as for PingOps. A refused ping fills Session, ThreadID, Model and Host too;
+                           // only Usage stays zero
+    Window string          // the keep-alive window id: accountant.PingWindowID(thread, window start), the
+                           // same id PingOps puts in PingFacts.PingWindow; the module hashes it
     Host   PingHostFacts   // §6.10 fields marked H, and the config JSON for cg.engine.config_hash
     Extra  map[string]any  // §6.12; declared keys only
 }
@@ -1022,6 +1045,10 @@ func (e *Emitter) ForgetThread(session, thread string) // the host calls it when
 func (e *Emitter) Close() // emits the last accountant.stats event
 func (e *Emitter) ExportErrorHandler() otel.ErrorHandler
 ```
+
+A refused ping has no `PingOps` call, so the host cannot read `PingFacts.PingWindow`. The accountant exports
+the rule that `PingOps` uses (`PingWindowID`), and the host calls it for every decision, so the window id
+has one format in one place. This is the third accountant change (§10).
 
 The module computes `common_prefix`, so it keeps, for each thread, a copy of the cumulative hashes of the
 last forwarded body. Two rules bound that state:
@@ -1083,7 +1110,7 @@ groups arrive as JSON text. Researchers do not query this table.
   `Map(String, UInt32)` column.
 - Extras become two map columns, `x_num Map(String, Float64)` and `x_str Map(String, String)` (§6.12).
 - A scalar field becomes a `Nullable` column when the field **or its group** can be absent: every `?` field,
-  and every field of a group that can "not apply" (`body.out.*`, `cg.*`, each `cg.*` sub-group). An absent
+  and every field of a group that can "not apply" (`body.out.*`, `cache.*` and `acct.*` when `acct.computed` is false, `cg.*`, each `cg.*` sub-group). An absent
   value is stored as `NULL`, so E4 holds in storage: a `NULL` is unknown or not applicable, a `0` is a real
   zero. Only a field that every record of its table has is a plain column.
 - ClickHouse has no `Nullable(Array)`, `Nullable(Map)` or `Nullable(Tuple)`. So:
@@ -1156,7 +1183,7 @@ Keep-alive value: share of windows with a sent ping that rescued the next reques
 
 ```sql
 SELECT intDiv(last_sent_idle_ms, 60000) AS idle_min, avg(rescued) AS rescue_rate,
-       count() AS windows, sum(ping_cost) AS cost
+       count() AS windows, cg_ping_currency AS currency, sum(ping_cost) AS cost
 FROM ping_windows WHERE sent > 0 AND rescued IS NOT NULL
 GROUP BY idle_min ORDER BY idle_min;
 ```
@@ -1202,8 +1229,8 @@ Not sent from Cortex: `Seq` (`producer.seq` covers gaps), `Tunnel` and `TunnelRe
 `HTTPMethod` and `HTTPPath` (a path segment can hold a secret), `Client.Raw`, `Identity.Scopes`,
 `Error.Message`, the TLS version and cipher, `AgentRole` (§6.14), `IsAction`, and every content field.
 
-The accountant needs two changes for this schema: `CheckFailure` gets typed number fields (§6.8.1), and
-`Result` gets the count and the age of the active operations (§6.8).
+The accountant needs three changes for this schema: `CheckFailure` gets typed number fields (§6.8.1),
+`Result` gets the count and the age of the active operations (§6.8), and `PingWindowID` is exported (§8).
 
 Both hosts need:
 
@@ -1214,7 +1241,7 @@ Both hosts need:
 
 ## 11. Left to the builder
 
-- The exact Go names of `HostFacts` and `PingFacts`, and which fields are pointers.
+- The exact Go names of `HostFacts` and `PingHostFacts`, and which fields are pointers.
 - How the module encodes nested groups (map values or flattened dotted keys), as long as the collector
   transform and the storage schema match it.
 - The DDL of the typed tables, the materialized views and the curated views (§9.1).
@@ -1226,7 +1253,7 @@ Both hosts need:
   `trigger.kind`; a refused ping; two pings in one window and one rescue; a restart (new `run_id`); the E2 reflection test; a fuzz test that no input string reaches an attribute unchecked;
   an extra of each type, an undeclared extra and a wrong-type extra (dropped and counted); a failed `sum` check
   with its numbers; a request with one MCP tool (its name is not sent); each signal; a Cortex request that a
-  plugin denied.
+  plugin denied (no `Compute`); a refused ping; a host enum with no declared list (sent as `other`).
 
 ## 12. Open questions
 
