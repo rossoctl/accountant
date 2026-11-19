@@ -821,6 +821,9 @@ func (c *calcState) takenOver(k int, it *item) bool {
 			continue
 		}
 		for _, os := range o.spans {
+			if os.before.Bytes == 0 {
+				continue // added content measured no client bytes, so it cannot have used this change's output
+			}
 			from, to := c.clientSide(j, os.from), c.clientSide(j, os.to)
 			if from.Section == cp.Section && from.Index <= cp.Index && cp.Index <= to.Index &&
 				!c.sawClientBytes(span{from, to, os.before, os.after}) {
@@ -2222,19 +2225,37 @@ func (c *calcState) checks(res *Result) {
 // activeOps is the rewrite and setting operations that are still applied, in client space (§4.3).
 func (c *calcState) activeOps() []Operation {
 	var out []Operation
-	for _, it := range c.items {
+	for k, it := range c.items {
 		if it.ended || it.bad != "" || it.op.ChangeID == "" || (it.op.Kind != KindRewrite && it.op.Kind != KindSetting) {
 			continue
 		}
 		op := it.op
-		op.At = it.spans[0].from
+		spans := c.storedSpans(k, it)
+		op.At = spans[0].from
 		if len(op.Spans) > 0 {
-			op.Spans = make([]Span, len(it.spans))
-			for i, sp := range it.spans {
+			op.Spans = make([]Span, len(spans))
+			for i, sp := range spans {
 				op.Spans[i] = Span{Section: sp.from.Section, From: sp.from.Index, To: sp.to.Index, SizeBefore: sp.before, SizeAfter: sp.after}
 			}
 		}
 		out = append(out, op)
+	}
+	return out
+}
+
+// storedSpans is the spans of item k as the next request reads them. A position in tools or system counts the
+// content that changes before k added before it. A change that ended leaves Active, so the next request no
+// longer takes its content out of the position: take it out here (accountant#94). Content that stays active
+// stays counted, because the next request takes it out itself.
+func (c *calcState) storedSpans(k int, it *item) []span {
+	if it.op.Kind != KindRewrite {
+		return it.spans
+	}
+	out := make([]span, len(it.spans))
+	for i, sp := range it.spans {
+		sp.from.Index -= c.addedBefore(k, sp.from, true)
+		sp.to.Index -= c.addedBefore(k, sp.to, true)
+		out[i] = sp
 	}
 	return out
 }
