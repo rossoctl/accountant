@@ -63,7 +63,8 @@ The module imports only the standard library, so any host can use it. `boundary_
 | [docs/issue_cases.md](docs/issue_cases.md) | Test cases drawn from issues, and which are written as cases |
 | [docs/cached-prefix.md](docs/cached-prefix.md) | How providers decide what a cache read covers |
 | [docs/cortex-wiring.md](docs/cortex-wiring.md) | How Cortex and context-guru plug it in |
-| [docs/metrics.md](docs/metrics.md) | The `metrics` module: counters, labels and the `Pricer` contract |
+| [docs/metrics/metrics.md](docs/metrics/metrics.md) | The `metrics` module: counters, labels and the `Pricer` contract |
+| [docs/events/events.md](docs/events/events.md) | The `events` module (design): structural events for each request and ping, central collection |
 
 ## Test cases
 

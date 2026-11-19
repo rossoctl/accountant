@@ -1466,7 +1466,7 @@ type TierTokens struct {
 }
 
 // The hook for a host's metrics (Observer, Observation, Multi) is not part of this library. It lives in
-// the metrics module: see [metrics.md](metrics.md).
+// the metrics module: see [metrics.md](metrics/metrics.md).
 
 type CacheEffectKind string // break | rescue | split | ttlPremium | ttlRescue | markPremium | markPayback
 
