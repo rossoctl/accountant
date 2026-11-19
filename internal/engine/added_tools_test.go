@@ -455,3 +455,35 @@ func TestAChangeReportedWhenAddedContentEndsEndsOnAClientEditAtItsItem(t *testin
 		t.Fatalf("Active = %v, want only cg:trim:t1", got)
 	}
 }
+
+// accountant#100, review of #101: X trims client tool 0 and adds one tool after it, and T trims client tool 2,
+// at tool(3) in the output. On request 2 the host stops X, so restored ends it, and a reported P sweeps T's
+// output at tool(2). P ran without X's added tool, so it covers client tool 2 and is a chain partner of T: both
+// stay. Before, clientSide took X out of P's position too, P seemed to cover client tool 1, takenOver ended T,
+// and the sum check failed.
+func TestAReportedChainPartnerAfterEndedAddedContentKeepsTheChange(t *testing.T) {
+	ts := NewTrackers()
+	tools := []blk{b("c0", 1000), b("c1", 1200), b("c2", 1000), b("c3", 1000)}
+	system := []blk{b("s0", 2000)}
+	ms := []blk{b("m0", 5000), b("m1", 5000)}
+	x := rewrite("x", "context-guru.expand", "cg:expand:x", tool(0), 1000, 840)
+	x.Spans = []Span{
+		{Section: SectionTools, From: 0, To: 0, SizeBefore: Size{Bytes: 1000}, SizeAfter: Size{Bytes: 500}},
+		{Section: SectionTools, From: 1, To: 1, SizeAfter: Size{Bytes: 340}},
+	}
+	trim := rewrite("t", "context-guru.trim", "cg:trim:c2", tool(3), 1000, 700)
+	noChecks(t, req{at: t0, client: mk(tools, system, ms), clientBPs: bps5(sys(0), msg(1)), facts: exact5m,
+		ops:   []Operation{x, trim},
+		fwd:   mk([]blk{b("r0", 500), b("x", 340), tools[1], b("t2", 700), tools[3]}, system, ms),
+		usage: Usage{CacheWrite: 3500}}.run(ts))
+	p := rewrite("p", "context-guru.sweep", "cg:sweep:c2", tool(2), 700, 300)
+	res := req{at: t0.Add(10 * time.Second), client: mk(tools, system, ms), clientBPs: bps5(sys(0), msg(1)),
+		facts: exact5m, ops: []Operation{p},
+		fwd: mk([]blk{tools[0], tools[1], b("p2", 300), tools[3]}, system, ms), usage: Usage{CacheWrite: 3500}}.run(ts)
+	noChecks(t, res)
+	got := activeIDs(ts)
+	sort.Strings(got)
+	if len(got) != 2 || got[0] != "cg:sweep:c2" || got[1] != "cg:trim:c2" {
+		t.Fatalf("Active = %v, want cg:sweep:c2 and cg:trim:c2", got)
+	}
+}
