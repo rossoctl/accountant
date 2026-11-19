@@ -28,7 +28,7 @@ type wireThread struct {
 	Cache     CacheState  `json:"cache"`
 	Version   uint64      `json:"stateVersion"`
 	// Requests and FirstApplied are absent in a snapshot made before they existed. Restore then
-	// gives 0 and nil, and each active change ages from the next request (snapshotVersion stays 1).
+	// gives 0 and nil, and each active change ages from the Restore (snapshotVersion stays 1).
 	Requests     uint64            `json:"requests,omitempty"`
 	FirstApplied map[string]uint64 `json:"firstApplied,omitempty"`
 }
@@ -119,8 +119,9 @@ func (ts *Trackers) Snapshot() ([]byte, error) {
 }
 
 // Restore replaces the state of every thread with the one in data, made by [Trackers.Snapshot]. On
-// an error it changes nothing. It refuses a snapshot with no threads field, an empty thread key, or
-// a key twice. An EndRequest that runs during Restore can be lost: stop the traffic first. The count
+// an error it changes nothing. It refuses a snapshot with no threads field, an empty thread key, a
+// key twice, or a change recorded after the thread's next request (a firstApplied value above
+// requests + 1). An EndRequest that runs during Restore can be lost: stop the traffic first. The count
 // of [Trackers.Trimmed] is not part of the snapshot.
 func (ts *Trackers) Restore(data []byte) error {
 	var w wireSnapshot

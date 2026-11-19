@@ -26,13 +26,16 @@ type Result struct {
 	// the hours; the library does not know how long the cache is kept.
 	StorageTokens int
 	// ActiveOps is the count of rewrite and setting operations still active in the thread's state
-	// after this request (§4.6). A count that keeps rising while the thread adds no new changes shows
+	// after this request (§4.6). It includes an observe-mode (DryRun) change. A count that keeps rising while the thread adds no new changes shows
 	// a change that did not end (accountant#70).
 	ActiveOps int
 	// OldestActiveTurns is the count of requests since the oldest active operation entered the state:
 	// 0 when it entered on this request, and 0 when nothing is active. It counts requests that Compute
-	// stored. After a Restore of a snapshot that has no record (older than this field), the count
-	// starts again at the Restore. A change that stays for the whole session is normal, so this value
+	// stored. A DryRun change ages from the request on which it entered, and a switch to enforce does
+	// not start the age again. When another request of the thread stored its Compute first
+	// (Recomputed), the request that reported the change can get 1. After a Restore of a snapshot that
+	// has no record (older than this field), the count starts again at the Restore. Results that do
+	// not read the thread state (end_request_missing, ComputeStandalone) give 0 for both fields. A change that stays for the whole session is normal, so this value
 	// alone is not a sign of an error: read it with ActiveOps.
 	OldestActiveTurns int
 }

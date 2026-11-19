@@ -82,7 +82,7 @@ func TestActiveOpsCountsEveryChangeAndAgesTheOldest(t *testing.T) {
 }
 
 // A restart keeps the age. A snapshot made before the record existed restores without error, and its
-// changes age from the next request.
+// changes age from the Restore: 1 on the first request after it.
 func TestSnapshotRestoreKeepsTheAge(t *testing.T) {
 	opX := rewrite("opX", "context-guru.extract", "cg:extract:m2", msg(2), 5302, 5148)
 	ts, _ := inPlaceSession(t, inPlaceStep{size: 5302}, inPlaceStep{size: 5148, ops: []Operation{opX}},
@@ -111,6 +111,37 @@ func TestSnapshotRestoreKeepsTheAge(t *testing.T) {
 	}
 	if count, oldest := activeAge(fromOld.tracker(ThreadKey("s1", Thread{ID: "main"}), time.Time{}).snapshot()); count != 1 || oldest != 0 {
 		t.Fatalf("after an old snapshot: (%d, %d), want (1, 0)", count, oldest)
+	}
+	client := with(msgs(9, 3000), b("m9", 3000))
+	client[2] = b("c2", 5302)
+	fwd := append([]blk(nil), client...)
+	fwd[2] = b("f2", 5148)
+	next := req{at: t0.Add(time.Minute), client: mk(nil, ex2Sys, client), clientBPs: bps5(sys(0), msg(9)),
+		fwd: mk(nil, ex2Sys, fwd), facts: exact5m, usage: Usage{CacheWrite: 40000}}
+	if got := ageOf(next.run(fromOld)); got != (age{1, 1}) {
+		t.Fatalf("first request after an old snapshot: %v, want {1 1}", got)
+	}
+}
+
+// An observe-mode (DryRun) change is in the thread state, so ActiveOps counts it. Its age starts on
+// the request on which it entered, and the switch to enforce (the same ChangeID, DryRun false) does
+// not start it again.
+func TestADryRunChangeAgesFromWhenItEntered(t *testing.T) {
+	dry := rewrite("opX", "context-guru.extract", "cg:extract:m2", msg(2), 5302, 5148)
+	dry.DryRun = true
+	live := rewrite("opX", "context-guru.extract", "cg:extract:m2", msg(2), 5302, 5148)
+	_, res := inPlaceSession(t,
+		inPlaceStep{size: 5302, ops: []Operation{dry}},  // observe mode: the body is not changed
+		inPlaceStep{size: 5302},                         // X stays, still DryRun
+		inPlaceStep{size: 5148, ops: []Operation{live}}, // the switch to enforce
+		inPlaceStep{size: 5148},
+	)
+	want := []age{{1, 0}, {1, 1}, {1, 2}, {1, 3}}
+	for i, r := range res {
+		noChecks(t, r)
+		if got := ageOf(r); got != want[i] {
+			t.Fatalf("request %d: (ActiveOps, OldestActiveTurns) = %v, want %v", i, got, want[i])
+		}
 	}
 }
 
