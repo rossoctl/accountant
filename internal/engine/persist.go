@@ -27,6 +27,10 @@ type wireThread struct {
 	PrevPrint *wirePrint  `json:"prevPrint,omitempty"`
 	Cache     CacheState  `json:"cache"`
 	Version   uint64      `json:"stateVersion"`
+	// Requests and FirstApplied are absent in a snapshot made before they existed. Restore then
+	// gives 0 and nil, and each active change ages from the Restore (snapshotVersion stays 1).
+	Requests     uint64            `json:"requests,omitempty"`
+	FirstApplied map[string]uint64 `json:"firstApplied,omitempty"`
 }
 
 // wireBody is a Body whose 64-bit hashes are decimal strings, so a JavaScript reader does not round
@@ -97,7 +101,8 @@ func (ts *Trackers) Snapshot() ([]byte, error) {
 	threads := make([]wireThread, 0, len(ts.m))
 	for k, t := range ts.m {
 		s := t.snapshot()
-		wt := wireThread{Key: k, Created: t.created, Active: s.Active, Cache: s.Cache, Version: s.Version}
+		wt := wireThread{Key: k, Created: t.created, Active: s.Active, Cache: s.Cache, Version: s.Version,
+			Requests: s.Requests, FirstApplied: s.FirstApplied}
 		if p := s.PrevPrint; p != nil {
 			wt.PrevPrint = &wirePrint{Thread: p.Thread, Model: p.Model, ModelKey: p.ModelKey, At: p.At, Client: toWireBody(p.Client),
 				Forwarded: toWireBody(p.Forwarded), ClientBreakpoints: p.ClientBreakpoints,
@@ -114,8 +119,9 @@ func (ts *Trackers) Snapshot() ([]byte, error) {
 }
 
 // Restore replaces the state of every thread with the one in data, made by [Trackers.Snapshot]. On
-// an error it changes nothing. It refuses a snapshot with no threads field, an empty thread key, or
-// a key twice. An EndRequest that runs during Restore can be lost: stop the traffic first. The count
+// an error it changes nothing. It refuses a snapshot with no threads field, an empty thread key, a
+// key twice, or a change recorded after the thread's next request (a firstApplied value above
+// requests + 1). An EndRequest that runs during Restore can be lost: stop the traffic first. The count
 // of [Trackers.Trimmed] is not part of the snapshot.
 func (ts *Trackers) Restore(data []byte) error {
 	var w wireSnapshot
@@ -136,7 +142,14 @@ func (ts *Trackers) Restore(data []byte) error {
 		if _, dup := m[wt.Key]; dup {
 			return fmt.Errorf("accountant: restore: thread key %q twice", wt.Key)
 		}
-		st := ThreadState{Active: wt.Active, Cache: wt.Cache, Version: wt.Version}
+		st := ThreadState{Active: wt.Active, Cache: wt.Cache, Version: wt.Version, Requests: wt.Requests,
+			FirstApplied: withFirstApplied(wt.Active, wt.FirstApplied, wt.Requests)}
+		for _, first := range st.FirstApplied {
+			// EndRequest records a change at the request it has not yet counted: Requests + 1.
+			if first > st.Requests+1 {
+				return fmt.Errorf("accountant: restore: thread %q: a change entered after the next request", wt.Key)
+			}
+		}
 		if p := wt.PrevPrint; p != nil {
 			c, err := fromWireBody(p.Client)
 			if err != nil {

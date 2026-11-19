@@ -526,16 +526,23 @@ this reason (§9.1).
 | `acct.interaction` | tier map | A | `Result.Interaction`: on a rescued request, the tokens the client body would have billed cold. |
 | `acct.interaction_caused` | tier map | A | `Result.InteractionCaused`: what the operations already book for those tokens. Price `interaction` minus `interaction_caused`, as the host does (design.md §6.2). |
 | `acct.storage_tokens` | int? | A | `Result.StorageTokens`. |
-| `acct.active_ops` | int? | A | Active in-place operations in the thread state. A count that keeps rising shows a stale operation before the money does. Needs an accountant change (below). |
-| `acct.oldest_op_turns` | int? | A | Requests of the thread since the oldest active operation was first applied. Needs an accountant change (below). |
+| `acct.active_ops` | int? | A | Active rewrite and setting operations in the thread state. A count that keeps rising shows a stale operation. `Result.ActiveOps`. |
+| `acct.oldest_op_turns` | int? | A | Requests of the thread since the oldest active operation entered the thread state. `Result.OldestActiveTurns`. |
 | `acct.estimate_held` | bool? | H | The host held a price estimate instead of the measured figure. |
 
 A tier map is `{input, cache_write_5m, cache_write_1h, cache_read}`, the `TierTokens` fields.
 
-`acct.active_ops` and `acct.oldest_op_turns` need a change in the accountant. Today the active operations
-are in `ThreadState.Active`, which is not public, and no operation records when it was first applied.
-`Result` gets two fields: the count of active operations, and the request count since the oldest one was
-first applied. Until then, the module leaves both fields absent.
+`acct.active_ops` is `Result.ActiveOps`, and `acct.oldest_op_turns` is `Result.OldestActiveTurns`
+(design.md §6.3, accountant#91).
+
+- `acct.active_ops` is the count of rewrite and setting operations still active after the request. It
+  includes an observe-mode change (`DryRun`): it is in the thread state, so a stale one grows that state too.
+- `acct.oldest_op_turns` is the requests since the oldest of them entered the thread state, in observe
+  mode or not. A switch from observe mode to enforce does not start the age again.
+- A change can stay active for the whole session. Do not alert on `acct.oldest_op_turns` alone.
+- After a restore from a snapshot older than these fields, the age starts again at the restore.
+- Leave both fields absent when `Unpriced` holds `end_request_missing`, and for a standalone result
+  (`ComputeStandalone`). Those results do not read the thread state, so they give 0.
 
 ### 6.8.1 Failed checks
 
@@ -1246,8 +1253,9 @@ Not sent from Cortex: `Seq` (`producer.seq` covers gaps), `Tunnel` and `TunnelRe
 `HTTPMethod` and `HTTPPath` (a path segment can hold a secret), `Client.Raw`, `Identity.Scopes`,
 `Error.Message`, the TLS version and cipher, `AgentRole` (§6.14), `IsAction`, and every content field.
 
-The accountant needs three changes for this schema: `CheckFailure` gets typed number fields (§6.8.1),
-`Result` gets the count and the age of the active operations (§6.8), and `PingWindowID` is exported (§8).
+The accountant needs two changes for this schema: `CheckFailure` gets typed number fields (§6.8.1), and
+`PingWindowID` is exported (§8). `Result` has the count and the age of the active operations (§6.8,
+accountant#91).
 
 Both hosts need:
 
