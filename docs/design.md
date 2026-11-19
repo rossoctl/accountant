@@ -1788,7 +1788,15 @@ Where a question has test cases, a host that compares them with its own code mar
       taken out. Removals are not mapped: a change that removes whole items before the added content
       leaves the position too large, so a client edit after the content can end it. At the first
       position of a section, the item before it is the last one of the section before, and an edit there
-      ends the change too.
+      ends the change too;
+    - **for content the operator added, the host stopped adding it** (accountant#89). The forwarded tools
+      or system section has the client section's items again: the same count, and each item the same
+      size. The host's configuration changed (for example to preset `off`) and the client edited nothing,
+      so the rule above cannot fire. If the change stayed, the sum check would fail by its bytes on every
+      later request. The rule ends a change only on proof. It does not run for the messages section, whose
+      positions go through the splices. A host that drops only some of the added items leaves the section
+      larger than the client's, and every change there stays. Another operator that removes items and
+      adds others of exactly the same sizes looks like no change.
 
     A break that a change leaves behind when it ends has no `ChangeID` (§5.2 row 1), because the change
     is no longer reported or active. It is part of the bill difference (§6.3).

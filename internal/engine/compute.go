@@ -639,6 +639,8 @@ func (c *calcState) forwardPositions() {
 				// provider's order too, so an edit there ends the change.
 				if c.clientEdited(c.prevInsertionPoint(c.clientSide(k, sp.from)) - 1) {
 					it.ended = true
+				} else if c.addedContentGone(sp.from.Section) {
+					it.ended = true // the host stopped adding it (accountant#89)
 				}
 			} else if i, ok := c.client.flat(sp.from); !ok || c.clientEdited(i) {
 				it.ended = true // the client edited at or before it, or compacted (§4.3)
@@ -692,6 +694,34 @@ func (c *calcState) modelSettingEnded(it *item) bool {
 func (c *calcState) clientEdited(i int) bool {
 	p := c.s.PrevPrint
 	return p != nil && c.clientFD < len(p.Client.Pos) && c.clientFD <= i
+}
+
+// addedContentGone says whether the forwarded body carries no added content in section s: the forwarded
+// section has the client section's items, the same count and each item the same size. Then the host stopped
+// adding what an active change added there, for example after its configuration changed, and the client did
+// not edit anything, so the Q12 rule cannot end the change (accountant#89). If the change stayed, the sum
+// check would count its bytes on every later request of the thread.
+//
+// The rule ends a change only on proof. The messages section is left out: its positions go through the
+// splices. A host that drops only some of the added items leaves the section larger than the client's, and
+// the rule keeps every change there. Another operator that removes items and adds others of exactly the same
+// sizes would look like no change.
+func (c *calcState) addedContentGone(s Section) bool {
+	i := sectionIndex(s)
+	if s == SectionMessages || i < 0 || len(c.fwd.Pos) == 0 {
+		return false
+	}
+	cs, ce := c.client.Start[i], c.client.sectionEnd(i)
+	fs, fe := c.fwd.Start[i], c.fwd.sectionEnd(i)
+	if ce-cs != fe-fs {
+		return false
+	}
+	for j := 0; j < ce-cs; j++ {
+		if c.client.Pos[cs+j].Bytes != c.fwd.Pos[fs+j].Bytes {
+			return false
+		}
+	}
+	return true
 }
 
 // restored says whether the operator stopped applying a change that edited an item in place: the
