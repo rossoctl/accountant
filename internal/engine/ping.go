@@ -30,17 +30,31 @@ func (p PingFacts) Apply(f *EntryFacts) {
 	}
 }
 
+// pingThread gives the thread a ping is recorded on. The thread "" is the primary thread and
+// becomes "main".
+func pingThread(thread string) string {
+	if thread == "" {
+		return "main"
+	}
+	return thread
+}
+
+// PingWindowID gives the id of the keep-alive window that starts at start on thread: "ka:" + thread
+// + ":" + start (RFC 3339, UTC). The thread "" becomes "main". This is the one rule for the id.
+// PingOps uses it for the ChangeID and PingFacts.PingWindow, and a host uses it for a ping it does
+// not send (for example a refused ping), so every id for one window is the same string.
+func PingWindowID(thread string, start time.Time) string {
+	return "ka:" + pingThread(thread) + ":" + start.UTC().Format(time.RFC3339)
+}
+
 // PingOps turns a ping into a RequestOps with one spend, and returns the facts for the thread's
 // next real request. Price the RequestOps with ComputeStandalone. The thread "" is the primary
-// thread and becomes "main". The ChangeID is "ka:" + thread + ":" + the window start (RFC 3339,
-// UTC), and PingFacts.PingWindow is the same string, so the ping's cost and the rescue it earns
-// land on one change (design §4.4).
+// thread and becomes "main". The ChangeID is PingWindowID(thread, window start), and
+// PingFacts.PingWindow is the same string, so the ping's cost and the rescue it earns land on one
+// change (design §4.4).
 func PingOps(p Ping, b Billing) (RequestOps, PingFacts) {
-	id := p.ThreadID
-	if id == "" {
-		id = "main"
-	}
-	change := "ka:" + id + ":" + p.Window.UTC().Format(time.RFC3339)
+	id := pingThread(p.ThreadID)
+	change := PingWindowID(p.ThreadID, p.Window)
 	return RequestOps{
 			Version: 1,
 			Session: p.Session,

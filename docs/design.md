@@ -1235,6 +1235,10 @@ type PingFacts struct {
 }
 func (p PingFacts) Apply(f *EntryFacts) // copies LastPing, PingWindow and PingUsage (nil when zero)
 func PingOps(p Ping, b Billing) (RequestOps, PingFacts)
+// PingWindowID is the one rule for the window id that PingOps uses: "ka:" + thread + ":" + start in
+// RFC 3339 UTC, with "" as "main". A host calls it for a ping that PingOps does not see (a refused
+// one), so the id in its ping event equals the change of the rescue.
+func PingWindowID(thread string, start time.Time) string
 ```
 
 **What each call writes.**
