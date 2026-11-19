@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"sort"
 	"testing"
 	"time"
 )
@@ -273,5 +274,132 @@ func TestAnAddedSystemBlockEndsWhenTheHostStopsAddingIt(t *testing.T) {
 	noChecks(t, res)
 	if got := activeIDs(ts); len(got) != 0 {
 		t.Fatalf("Active = %v, want none", got)
+	}
+}
+
+// accountant#94: the host adds a tool at tool(0) and trims the client's first tool, at tool(1) in its output.
+// On request 2 it stops adding the tool and keeps the trim. The trim's position counted the added tool, so the
+// end rules read client tool 1 there: the trim looked restored and the added change looked kept. Expect: the
+// added change ends, the trim stays, and no check fails.
+func TestAnInPlaceChangeAfterAddedContentStaysWhenTheHostStopsAdding(t *testing.T) {
+	ts := NewTrackers()
+	tools := msgs(3, 1000)
+	system := []blk{b("s0", 2000)}
+	ms := []blk{b("m0", 5000), b("m1", 5000)}
+	client := mk(tools, system, ms)
+	add := rewrite("a", "context-guru.expand", "cg:expand:decl-added", tool(0), 0, 340)
+	trim := rewrite("s", "context-guru.trim", "cg:trim:t1", tool(1), 1000, 600)
+	noChecks(t, req{at: t0, client: client, clientBPs: bps5(sys(0), msg(1)), facts: exact5m,
+		ops: []Operation{add, trim}, fwd: mk([]blk{b("x", 340), b("r0", 600), tools[1], tools[2]}, system, ms),
+		usage: Usage{CacheWrite: 3500}}.run(ts))
+	res := req{at: t0.Add(10 * time.Second), client: client, clientBPs: bps5(sys(0), msg(1)), facts: exact5m,
+		fwd: mk([]blk{b("r0", 600), tools[1], tools[2]}, system, ms), usage: Usage{CacheWrite: 3500}}.run(ts)
+	noChecks(t, res)
+	if got := activeIDs(ts); len(got) != 1 || got[0] != "cg:trim:t1" {
+		t.Fatalf("Active = %v, want only cg:trim:t1", got)
+	}
+}
+
+// shiftTools are the client tools of shiftSession. Tool 1 has another size than tool 0, so a rule that reads the
+// wrong one of them fails.
+func shiftTools() []blk { return []blk{b("c0", 1000), b("c1", 1200), b("c2", 1000)} }
+
+// shiftSession is the #94 setup: the host adds X at tool(0) and trims client tool 0 (1000 -> 600), which is at
+// tool(1) in its output. Request 2 sends client2 and forwards fwd2 with no new ops.
+func shiftSession(t *testing.T, client2, fwd2 []blk) (*Trackers, Result) {
+	t.Helper()
+	ts := NewTrackers()
+	tools := shiftTools()
+	system := []blk{b("s0", 2000)}
+	ms := []blk{b("m0", 5000), b("m1", 5000)}
+	add := rewrite("a", "context-guru.expand", "cg:expand:decl-added", tool(0), 0, 340)
+	trim := rewrite("s", "context-guru.trim", "cg:trim:t1", tool(1), 1000, 600)
+	noChecks(t, req{at: t0, client: mk(tools, system, ms), clientBPs: bps5(sys(0), msg(1)), facts: exact5m,
+		ops: []Operation{add, trim}, fwd: mk([]blk{b("x", 340), b("r0", 600), tools[1], tools[2]}, system, ms),
+		usage: Usage{CacheWrite: 3500}}.run(ts))
+	res := req{at: t0.Add(10 * time.Second), client: mk(client2, system, ms), clientBPs: bps5(sys(0), msg(1)),
+		facts: exact5m, fwd: mk(fwd2, system, ms), usage: Usage{CacheWrite: 3500}}.run(ts)
+	return ts, res
+}
+
+// Control: the host keeps both changes and the client sends the same body. Both stay.
+func TestAnInPlaceChangeAfterAddedContentStaysWhileBothAreApplied(t *testing.T) {
+	tools := shiftTools()
+	ts, res := shiftSession(t, tools, []blk{b("x", 340), b("r0", 600), tools[1], tools[2]})
+	noChecks(t, res)
+	if got := activeIDs(ts); len(got) != 2 {
+		t.Fatalf("Active = %v, want both changes", got)
+	}
+}
+
+// The host stops trimming and keeps adding X. The trimmed item is client tool 0, which is forwarded at tool(1)
+// with its own size again, so restored ends the trim. On main, restored read client tool 1 there, and
+// takenOver ended the trim instead.
+func TestAnInPlaceChangeAfterAddedContentEndsWhenTheHostRestoresIt(t *testing.T) {
+	tools := shiftTools()
+	ts, res := shiftSession(t, tools, []blk{b("x", 340), tools[0], tools[1], tools[2]})
+	noChecks(t, res)
+	if got := activeIDs(ts); len(got) != 1 || got[0] != "cg:expand:decl-added" {
+		t.Fatalf("Active = %v, want only cg:expand:decl-added", got)
+	}
+}
+
+// The client edits its tool 1, after the trimmed tool 0. That is not an edit at or before the trim, so the trim
+// stays; the edit is after X's insertion point too, so X stays. On main the trim's position was read as
+// client tool 1, and the edit ended it.
+func TestAnInPlaceChangeAfterAddedContentStaysWhenTheClientEditsAfterIt(t *testing.T) {
+	tools := shiftTools()
+	edited := []blk{tools[0], b("e1", 1200), tools[2]}
+	ts, res := shiftSession(t, edited, []blk{b("x", 340), b("r0", 600), b("e1", 1200), tools[2]})
+	noSumFailure(t, res)
+	if got := activeIDs(ts); len(got) != 2 {
+		t.Fatalf("Active = %v, want both changes", got)
+	}
+}
+
+// After the added change ends, the trim is stored without X in its position. Requests 3 and 4 read the same
+// client tool 0, so the trim stays and no check fails. Before, the stored tool(1) read client tool 1 once X had
+// left Active, restored ended the trim, and the sum check failed by 400 bytes on every later request.
+func TestAnInPlaceChangeAfterAddedContentStaysOnLaterRequests(t *testing.T) {
+	tools := shiftTools()
+	fwd2 := []blk{b("r0", 600), tools[1], tools[2]}
+	ts, res := shiftSession(t, tools, fwd2)
+	noChecks(t, res)
+	system := []blk{b("s0", 2000)}
+	ms := []blk{b("m0", 5000), b("m1", 5000)}
+	for i := 2; i <= 3; i++ {
+		res := req{at: t0.Add(time.Duration(i) * 10 * time.Second), client: mk(tools, system, ms),
+			clientBPs: bps5(sys(0), msg(1)), facts: exact5m, fwd: mk(fwd2, system, ms),
+			usage: Usage{CacheRead: 3300}}.run(ts)
+		noChecks(t, res)
+		if got := activeIDs(ts); len(got) != 1 || got[0] != "cg:trim:t1" {
+			t.Fatalf("request %d: Active = %v, want only cg:trim:t1", i+1, got)
+		}
+	}
+}
+
+// The host still adds X, and another operator now rewrites client tool 0 (reported at tool(1), 1000 -> 300). The
+// trim is not reported, so takenOver must end it. X sits before client tool 0 but measured no client bytes, so it
+// is not a chain partner of the trim.
+func TestAnInPlaceChangeAfterAddedContentEndsWhenAnotherOperatorTakesItOver(t *testing.T) {
+	ts := NewTrackers()
+	tools := shiftTools()
+	system := []blk{b("s0", 2000)}
+	ms := []blk{b("m0", 5000), b("m1", 5000)}
+	client := mk(tools, system, ms)
+	add := rewrite("a", "context-guru.expand", "cg:expand:decl-added", tool(0), 0, 340)
+	trim := rewrite("s", "context-guru.trim", "cg:trim:t1", tool(1), 1000, 600)
+	noChecks(t, req{at: t0, client: client, clientBPs: bps5(sys(0), msg(1)), facts: exact5m,
+		ops: []Operation{add, trim}, fwd: mk([]blk{b("x", 340), b("r0", 600), tools[1], tools[2]}, system, ms),
+		usage: Usage{CacheWrite: 3500}}.run(ts))
+	y := rewrite("y", "context-guru.sweep", "cg:sweep:t1", tool(1), 1000, 300)
+	res := req{at: t0.Add(10 * time.Second), client: client, clientBPs: bps5(sys(0), msg(1)), facts: exact5m,
+		ops: []Operation{y}, fwd: mk([]blk{b("x", 340), b("y0", 300), tools[1], tools[2]}, system, ms),
+		usage: Usage{CacheWrite: 3500}}.run(ts)
+	noSumFailure(t, res)
+	got := activeIDs(ts)
+	sort.Strings(got)
+	if len(got) != 2 || got[0] != "cg:expand:decl-added" || got[1] != "cg:sweep:t1" {
+		t.Fatalf("Active = %v, want cg:expand:decl-added and cg:sweep:t1", got)
 	}
 }
