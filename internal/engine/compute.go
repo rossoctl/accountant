@@ -623,38 +623,19 @@ func (c *calcState) downgraded() bool {
 // that are no longer in the client body (a client compaction). It also ends an active model setting
 // on the request that ends the model change (modelSettingEnded).
 func (c *calcState) forwardPositions() {
-	for k, it := range c.items {
+	for _, it := range c.items {
 		if it.active && c.modelSettingEnded(it) {
 			it.ended = true
 		}
-		if !it.active || it.op.Kind != KindRewrite { // a setting has no position (§4.6)
-			continue
-		}
-		for _, sp := range it.spans {
-			if sp.before.Bytes == 0 {
-				// Content the operator added: its position is in forwarded space, and the client body has
-				// nothing there. It ends only when the client edited what precedes it (design Q12, §4.3). That
-				// item is measured in the previous client body: when the client removed it, the new body has no
-				// item there to compare (accountant#70, case A). The position counts the content that changes
-				// before it in pipeline order added before it in its section, which the client body does not have. In the first position of a section the
-				// item before it is the last one of the section before, and that one precedes it in the
-				// provider's order too, so an edit there ends the change.
-				if c.clientEdited(c.prevInsertionPoint(c.clientSide(k, sp.from)) - 1) {
-					it.ended = true
-				} else if !it.op.DryRun && c.addedContentGone(sp.from.Section) {
-					// The host stopped adding it (accountant#89). A DryRun forwards the client's own body by
-					// design, so an equal section is no proof for it.
-					it.ended = true
-				}
-			} else if i, ok := c.client.flat(sp.from); !ok || c.clientEdited(i) {
-				it.ended = true // the client edited at or before it, or compacted (§4.3)
+	}
+	// Added content first. An in-place change after added content in its section has a position that counts
+	// that content, so it needs to know which added content the host still forwards (accountant#94).
+	for _, added := range [2]bool{true, false} {
+		for k, it := range c.items {
+			if !it.active || it.op.Kind != KindRewrite { // a setting has no position (§4.6)
+				continue
 			}
-			fp, ok := c.toFwd(k, sp.from)
-			if !ok {
-				it.ended = true
-			} else if c.restored(it, sp, fp) {
-				it.ended = true
-			}
+			c.endSpans(k, it, added)
 		}
 	}
 	// A change that ended can free the one before it in a chain, so repeat until none ends.
@@ -664,6 +645,45 @@ func (c *calcState) forwardPositions() {
 			if it.active && !it.ended && c.takenOver(k, it) {
 				it.ended, ended = true, true
 			}
+		}
+	}
+}
+
+// endSpans applies the end rules to the spans of active item k that added content (added) or edited client
+// content in place (not added).
+func (c *calcState) endSpans(k int, it *item, added bool) {
+	for _, sp := range it.spans {
+		if (sp.before.Bytes == 0) != added {
+			continue
+		}
+		if added {
+			// Content the operator added: its position is in forwarded space, and the client body has
+			// nothing there. It ends only when the client edited what precedes it (design Q12, §4.3). That
+			// item is measured in the previous client body: when the client removed it, the new body has no
+			// item there to compare (accountant#70, case A). The position counts the content that changes
+			// before it in pipeline order added before it in its section, which the client body does not have. In the first position of a section the
+			// item before it is the last one of the section before, and that one precedes it in the
+			// provider's order too, so an edit there ends the change.
+			if c.clientEdited(c.prevInsertionPoint(c.clientSide(k, sp.from)) - 1) {
+				it.ended = true
+			} else if !it.op.DryRun && c.addedContentGone(sp.from.Section) {
+				// The host stopped adding it (accountant#89). A DryRun forwards the client's own body by
+				// design, so an equal section is no proof for it.
+				it.ended = true
+			}
+			if _, ok := c.toFwd(k, sp.from); !ok {
+				it.ended = true
+			}
+			continue
+		}
+		if i, ok := c.client.flat(c.clientSide(k, sp.from)); !ok || c.clientEdited(i) {
+			it.ended = true // the client edited at or before it, or compacted (§4.3)
+		}
+		fp, ok := c.fwdSide(k, sp.from)
+		if !ok {
+			it.ended = true
+		} else if c.restored(k, it, sp, fp) {
+			it.ended = true
 		}
 	}
 }
@@ -730,15 +750,16 @@ func (c *calcState) addedContentGone(s Section) bool {
 	return true
 }
 
-// inPlaceSize says whether an active in-place change on the whole item at p gives it the size n. With the
-// counts equal and no added content in the section, the client and the forwarded index are the same.
+// inPlaceSize says whether an active in-place change on the whole item at client position p gives it the
+// size n. With the counts equal and no added content in the section, the client and the forwarded index are
+// the same. The change's own position counts the content that changes before it added (clientSide).
 func (c *calcState) inPlaceSize(p Position, n int) bool {
-	for _, it := range c.items {
+	for k, it := range c.items {
 		if !it.active || it.ended || it.bad != "" || it.op.Kind != KindRewrite || it.op.DryRun ||
 			it.op.MessageSplice != nil || len(it.op.Spans) > 0 {
 			continue
 		}
-		if sp := it.spans[0]; sp.from == p && sp.before.Bytes > 0 && sp.after.Bytes == n {
+		if sp := it.spans[0]; c.clientSide(k, sp.from) == p && sp.before.Bytes > 0 && sp.after.Bytes == n {
 			return true
 		}
 	}
@@ -754,12 +775,13 @@ func (c *calcState) inPlaceSize(p Position, n int) bool {
 // two active in-place changes the later one is restored under the earlier one's smaller prefix and
 // the hashes differ. The item's own size does not depend on the prefix, so the test is the size: the
 // forwarded item has the client item's size again, and the change gave it another (sp.before differs
-// from sp.after here). Another operator rewriting the item to exactly that size would look restored.
-func (c *calcState) restored(it *item, sp span, fp Position) bool {
+// from sp.after here). Another operator rewriting the item to exactly that size would look restored. The
+// client item is at the change's position without the content that changes before it added (clientSide).
+func (c *calcState) restored(k int, it *item, sp span, fp Position) bool {
 	if it.op.DryRun || it.op.MessageSplice != nil || sp.before.Bytes == 0 || sp.before.Bytes == sp.after.Bytes {
 		return false // a DryRun forwards the client's own item by design
 	}
-	ci, ok1 := c.client.flat(sp.from)
+	ci, ok1 := c.client.flat(c.clientSide(k, sp.from))
 	fi, ok2 := c.fwd.flat(fp)
 	if !ok1 || !ok2 {
 		return false
@@ -787,7 +809,7 @@ func (c *calcState) takenOver(k int, it *item) bool {
 	if sp.before.Bytes == 0 || c.hasSplice() {
 		return false
 	}
-	fp, ok := c.toFwd(k, sp.from)
+	fp, ok := c.fwdSide(k, sp.from)
 	if !ok {
 		return false
 	}
@@ -795,13 +817,18 @@ func (c *calcState) takenOver(k int, it *item) bool {
 	if !ok || int(c.fwd.Pos[fi].Bytes) == sp.after.Bytes {
 		return false
 	}
+	cp := c.clientSide(k, sp.from)
 	for j, o := range c.items {
 		if j == k || o.ended || o.bad != "" || o.op.Kind != KindRewrite || o.op.DryRun {
 			continue
 		}
 		for _, os := range o.spans {
-			if os.from.Section == sp.from.Section && os.from.Index <= sp.from.Index && sp.from.Index <= os.to.Index &&
-				!c.sawClientBytes(os) {
+			if os.before.Bytes == 0 {
+				continue // added content measured no client bytes, so it cannot have used this change's output
+			}
+			from, to := c.clientSide(j, os.from), c.clientSide(j, os.to)
+			if from.Section == cp.Section && from.Index <= cp.Index && cp.Index <= to.Index &&
+				!c.sawClientBytes(span{from, to, os.before, os.after}) {
 				return false // it measured another operator's output: a chain
 			}
 		}
@@ -842,16 +869,37 @@ func insertionPoint(b Body, p Position) int {
 
 // clientSide takes out of the forwarded position of item k's added content the items that changes before it
 // in pipeline order added before it in the same section. The messages section is not mapped here: its positions go through the splices.
+// An in-place change in tools or system has its position in the same space, so it maps the same way
+// (accountant#94).
 func (c *calcState) clientSide(k int, p Position) Position {
+	p.Index -= c.addedBefore(k, p, false)
+	return p
+}
+
+// fwdSide maps the position of item k's in-place change into the forwarded body. In the messages section that
+// is toFwd. In tools or system the position is in k's input, which has the content that changes before k
+// added; the forwarded body has that content too, except what ended, for example because the host stopped
+// adding it (accountant#94). Content that later changes added is not counted, as in clientSide.
+func (c *calcState) fwdSide(k int, p Position) (Position, bool) {
 	if p.Section == SectionMessages {
-		return p
+		return c.toFwd(k, p)
+	}
+	p.Index -= c.addedBefore(k, p, true)
+	return p, true
+}
+
+// addedBefore counts the items that changes up to k in pipeline order added before p in its section; with
+// endedOnly, only those of changes that ended. It is 0 in the messages section.
+func (c *calcState) addedBefore(k int, p Position, endedOnly bool) int {
+	if p.Section == SectionMessages {
+		return 0
 	}
 	n := 0
 	// Only items up to k: a position is in the operator's own output, and that has only the content of the
 	// changes before it in pipeline order (§4.3). c.items is in pipeline order, and item k's own earlier
 	// spans are in its output too.
 	for _, it := range c.items[:k+1] {
-		if it.op.Kind != KindRewrite || it.op.DryRun || it.bad != "" {
+		if it.op.Kind != KindRewrite || it.op.DryRun || it.bad != "" || (endedOnly && !it.ended) {
 			continue
 		}
 		for _, sp := range it.spans {
@@ -860,8 +908,7 @@ func (c *calcState) clientSide(k int, p Position) Position {
 			}
 		}
 	}
-	p.Index -= n
-	return p
+	return n
 }
 
 // prevInsertionPoint is the insertion point in the previous request's client body. The client items before
@@ -2180,19 +2227,37 @@ func (c *calcState) checks(res *Result) {
 // activeOps is the rewrite and setting operations that are still applied, in client space (§4.3).
 func (c *calcState) activeOps() []Operation {
 	var out []Operation
-	for _, it := range c.items {
+	for k, it := range c.items {
 		if it.ended || it.bad != "" || it.op.ChangeID == "" || (it.op.Kind != KindRewrite && it.op.Kind != KindSetting) {
 			continue
 		}
 		op := it.op
-		op.At = it.spans[0].from
+		spans := c.storedSpans(k, it)
+		op.At = spans[0].from
 		if len(op.Spans) > 0 {
-			op.Spans = make([]Span, len(it.spans))
-			for i, sp := range it.spans {
+			op.Spans = make([]Span, len(spans))
+			for i, sp := range spans {
 				op.Spans[i] = Span{Section: sp.from.Section, From: sp.from.Index, To: sp.to.Index, SizeBefore: sp.before, SizeAfter: sp.after}
 			}
 		}
 		out = append(out, op)
+	}
+	return out
+}
+
+// storedSpans is the spans of item k as the next request reads them. A position in tools or system counts the
+// content that changes before k added before it. A change that ended leaves Active, so the next request no
+// longer takes its content out of the position: take it out here (accountant#94). Content that stays active
+// stays counted, because the next request takes it out itself.
+func (c *calcState) storedSpans(k int, it *item) []span {
+	if it.op.Kind != KindRewrite {
+		return it.spans
+	}
+	out := make([]span, len(it.spans))
+	for i, sp := range it.spans {
+		sp.from.Index -= c.addedBefore(k, sp.from, true)
+		sp.to.Index -= c.addedBefore(k, sp.to, true)
+		out[i] = sp
 	}
 	return out
 }
