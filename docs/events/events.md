@@ -506,7 +506,7 @@ this reason (§9.1).
 
 | Field | Type | Source | Meaning |
 |---|---|---|---|
-| `acct.computed` | bool | M | The host gave a `Result` (`Request.Result` is not nil). When false, every field below except `cache.host_*` does not apply. |
+| `acct.computed` | bool | M | The host gave a `Result` (`Request.Result` is not nil). When false, every field below that comes from `Result` does not apply. `cache.host_*`, `acct.estimate_held` (H) and the `EntryFacts` fields (`cache.entry_ttl_s`, `cache.lifetime`, `cache.min_cacheable`, `cache.shared_warm`) still apply when the host has them. |
 
 | Field | Type | Source | Meaning |
 |---|---|---|---|
@@ -631,7 +631,7 @@ operations that the accountant applied again.
 | `escalated` | bool? | H | The call went to a larger model after a first attempt. |
 | `candidate_tokens` | int? | H | Tokens the call could remove. |
 | `accepted` | bool? | H | The answer was used. |
-| `rejection` | enum? | H | Why the answer was not used. From the component's declared enum. |
+| `rejection` | enum? | H | Why the answer was not used. From `Names.Enums["acct.ops.call.rejection"]` (§8). |
 | `latency_ms` | int? | H | |
 
 The host gives the H fields for each spend operation in `HostFacts.Calls`, keyed by the operation's `ID`.
@@ -991,8 +991,9 @@ type Names struct {
                                      // "cg.defer.probe", "cg.ka.strategy", "cg.ka.skip_reason",
                                      // "cache.host_miss_reason", "acct.ops.call.rejection"
 }
-// A host enum field with no declared list is sent as "other". New returns an error for a value that does
-// not match the enum-value format of §6.12.
+// A host enum field with no declared list is sent as "other". New returns an error for a value of
+// Reasons or Enums that does not match the enum-value format of §6.12. The other lists hold names
+// (operators such as "context-guru.mask", tools such as "Bash"), checked as names, not as enum values.
 func WithNames(n Names) Option
 func WithStatsInterval(d time.Duration) Option
 func WithExtra(key string, t ExtraType) Option          // §6.12; New returns its error
@@ -1139,7 +1140,7 @@ groups arrive as JSON text. Researchers do not query this table.
 | `cg_requests` | one request: every `cg.*` column, including `cg.ka.*` |
 | `ops`, `failed_checks`, `cache_effects`, `components`, `plugin_calls`, `tool_decls` | one entry of the list of that name, with the request's `at`, identity and `thread_id`, so no query needs `ARRAY JOIN` |
 | `pings` | one ping decision, with `idle_ms` and the model and route of the request that opened its window |
-| `ping_windows` | one keep-alive window: its pings (sent, refused, failed), their total cost, the idle time of the last sent ping, and the next request of its thread joined on `cg.ping.window` = rescue `change`, with `rescued` (bool) and the rescued tokens. A window with no next request has `rescued` NULL. |
+| `ping_windows` | one keep-alive window: its pings (sent, refused, failed), their total cost and its `currency`, the idle time of the last sent ping, and the next request of its thread joined on `cg.ping.window` = rescue `change`, with `rescued` (bool) and the rescued tokens. A window with no next request has `rescued` NULL. |
 | `threads` | one thread: request count, first and last time, tokens by tier, cache hit ratio, trigger counts |
 | `signals` | one client signal, with the session's next request, if there is one |
 | `gaps` | one gap in `producer.seq`: `producer_id`, `producer_run_id`, first missing seq, `missing` count |
@@ -1183,9 +1184,9 @@ Keep-alive value: share of windows with a sent ping that rescued the next reques
 
 ```sql
 SELECT intDiv(last_sent_idle_ms, 60000) AS idle_min, avg(rescued) AS rescue_rate,
-       count() AS windows, cg_ping_currency AS currency, sum(ping_cost) AS cost
+       count() AS windows, currency, sum(ping_cost) AS cost
 FROM ping_windows WHERE sent > 0 AND rescued IS NOT NULL
-GROUP BY idle_min ORDER BY idle_min;
+GROUP BY idle_min, currency ORDER BY idle_min, currency;
 ```
 
 Missing events for each producer run (lost or refused; subtract `stats.refused` for the lost ones, §6.11):
