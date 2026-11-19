@@ -551,26 +551,41 @@ passed. Numbers only; `CheckFailure.Detail` is not sent.
 | `operator` | enum? | `CheckFailure.Operator`, from the operator allowlist (§6.9), else `other`. Absent when the check is not about one operator (for example `sum`). |
 | `section` | enum? | `tools` \| `system` \| `messages`, when the check is about one section. |
 | `index` | int? | The position, when the check is about one position (`shared_warm`). |
-| `unit` | enum? | `bytes` \| `tokens`. The unit of `want` and `got`. |
+| `unit` | enum? | `bytes` \| `tokens`. The unit of `want` and `got`, and of `limit`. It depends only on `name`; the accountant gives it (`CheckFailure.Unit()`), so the module keeps no table of its own. Absent when the entry has no `want` and `got`. |
 | `want`, `want_after` | int? | What the bodies or the bill show. `want_after` only for a check with a before and an after side. |
 | `got`, `got_after` | int? | What the operations claim. `got_after` the same. |
+| `limit`, `limit_after` | int? | `size_range` only: the size limit before (after), in `unit`. |
+| `tokens`, `tokens_after` | int? | `size_tokens` only: the operation's tokens before (after). |
+| `bytes`, `bytes_after` | int? | `size_tokens` only: the operation's bytes before (after). |
 | `ratio_min`, `ratio_max` | float? | `size_tokens` only: the allowed tokens per byte. |
 
-What `want` and `got` are, for each check that has numbers:
+What the numbers are, for each check that has them:
 
-| Check | `unit` | `want` (`want_after`) | `got` (`got_after`) |
-|---|---|---|---|
-| `sum` | bytes | Bytes the bodies changed in `section` | Bytes the operations claim for `section` |
-| `conservation` | tokens | The bill difference | Tokens the operations claim |
-| `spans` | bytes | Span bytes before (after) the change | The operation's bytes before (after) |
-| `size_range` | bytes | The operation's bytes before (after) | The limit before (after) |
-| `size_tokens` | tokens (`want`), bytes (`got`) | The operation's tokens before (after) | The operation's bytes before (after); with `ratio_min`, `ratio_max`. The check fails when tokens ÷ bytes is outside the range, so `want - got` has no meaning here. |
-| `media_tokens` | tokens | Tokens billed | The media price |
-| `opaque_tokens` | tokens | Tokens billed | The tokens counted for the opaque bytes |
+| Check | `unit` | `want` (`want_after`) | `got` (`got_after`) | Other fields |
+|---|---|---|---|---|
+| `sum` | bytes | Bytes the bodies changed in `section` | Bytes the operations claim for `section` | `section` |
+| `conservation` | tokens | The bill difference | Tokens the operations claim | |
+| `spans` | bytes | Span bytes before (after) the change | The operation's bytes before (after) | |
+| `size_range` | bytes | — | The operation's bytes before (after) | `limit`, `limit_after`. A limit is a rule, not a claim, so it is not in `want`. |
+| `size_tokens` | — | — | — | `tokens`, `tokens_after`, `bytes`, `bytes_after`, `ratio_min`, `ratio_max`. The check fails when tokens ÷ bytes is outside the range. Two units and no difference, so the numbers are not in `want` and `got`. |
+| `media_tokens` | tokens | Tokens billed | The media price | |
+| `opaque_tokens` | tokens | Tokens billed | The tokens counted for the opaque bytes | |
 
-The other checks have no numbers, only `name`, `fatal` and the position fields.
+The other checks have no numbers, only `name`, `fatal` and the position fields. `shared_warm` has `section` and `index`.
 
-The difference is `want - got`; it is not sent.
+The difference is `want - got`; it is not sent. It has a meaning for every entry that has `want` and `got`, because
+the two have the same unit. An entry with `got` and no `want` (`size_range`) is left out of a difference.
+
+A number field is absent when the check has no such number. 0 is a real value (`sum` can have `want` 0), so
+the accountant must mark presence, and the module must not send 0 for an absent number.
+
+Some numbers in `Detail` have no field. They are not sent, because no query of this section needs them:
+
+- `media_tokens`: the media tokens after the cap.
+- `opaque_tokens`: the opaque bytes that have a count, and all the opaque bytes.
+- `bad_usage`: the usage numbers of the call.
+
+If a query needs one of them, add a field here and in `CheckFailure` first.
 
 How to debug with it. Example (accountant#70): one entry is
 `{name: sum, fatal: true, section: messages, unit: bytes, want: 12000, got: 13285}`. The
@@ -596,8 +611,9 @@ claims a change that is no longer in the body.
    column `reliable` (no fatal failed check), equal to `Result.Reliable()`. Leave those requests out of a
    saving study.
 
-This needs a change in the accountant: `CheckFailure` gets typed number fields, the ones of the table above. Today the numbers are only in
-`Detail`, a formatted string whose shape differs for each check. The module must not parse that string.
+This needs a change in the accountant (#90): `CheckFailure` gets typed number fields, the ones of the tables above,
+with a presence mark for each, and a `Unit()` method next to `Fatal()`. Today the numbers are only in `Detail`, a
+formatted string whose shape differs for each check. The module must not parse that string.
 
 ### 6.9 Operations (request)
 
