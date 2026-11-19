@@ -4,7 +4,7 @@ import "fmt"
 
 // The constructors of the failures that carry numbers (§6.5; docs/events/events.md §6.8.1). Each
 // one sets the typed fields first and builds Detail from them, so the string and the fields cannot
-// drift. Some numbers are in Detail only: they have no field (§6.8.1 lists them).
+// drift. Some numbers are in Detail only: they have no field (design.md §6.5 lists them).
 
 func intp(n int) *int { return &n }
 
@@ -38,14 +38,20 @@ func sizeRangeFailure(operator string, got, gotAfter, limit, limitAfter int) Che
 	return f
 }
 
-// sizeTokensFailure has two units and no difference, so its numbers are not in Want and Got.
-func sizeTokensFailure(operator string, tokens, tokensAfter, bytes, bytesAfter int) CheckFailure {
+// sizeTokensFailure has two units and no difference, so its numbers are not in Want and Got. Only the
+// side that failed gets fields: the other side passed, or had no count and was not checked, and its
+// numbers would look like a failure to a host that applies the ratio. Both sides stay in Detail.
+func sizeTokensFailure(operator string, before, after Size, badBefore, badAfter bool) CheckFailure {
 	lo, hi := minTokensPerByte, maxTokensPerByte
-	f := CheckFailure{Check: CheckSizeTokens, Operator: operator,
-		Tokens: intp(tokens), TokensAfter: intp(tokensAfter), Bytes: intp(bytes), BytesAfter: intp(bytesAfter),
-		RatioMin: &lo, RatioMax: &hi}
+	f := CheckFailure{Check: CheckSizeTokens, Operator: operator, RatioMin: &lo, RatioMax: &hi}
+	if badBefore {
+		f.Tokens, f.Bytes = intp(before.Tokens), intp(before.Bytes)
+	}
+	if badAfter {
+		f.TokensAfter, f.BytesAfter = intp(after.Tokens), intp(after.Bytes)
+	}
 	f.Detail = fmt.Sprintf("tokens=%d/%d bytes=%d/%d: outside %g..%g tokens a byte, bytes used",
-		*f.Tokens, *f.TokensAfter, *f.Bytes, *f.BytesAfter, *f.RatioMin, *f.RatioMax)
+		before.Tokens, after.Tokens, before.Bytes, after.Bytes, *f.RatioMin, *f.RatioMax)
 	return f
 }
 

@@ -1446,15 +1446,15 @@ type CheckFailure struct {
     Operator string // "" when the check is not about one operator
     Detail   string // numbers only, no content; built from the fields below (§6.5)
 
-    Section Section // "" when the check is not about one section (sum, shared_warm)
+    Section Section // set for sum and shared_warm only
     Index   *int    // shared_warm: the position
 
     Want, WantAfter     *int     // what the bodies or the bill show; After for a check with two sides
     Got, GotAfter       *int     // what the operations claim
     Limit, LimitAfter   *int     // size_range only: the size limit, in bytes
-    Tokens, TokensAfter *int     // size_tokens only: the operation's tokens
-    Bytes, BytesAfter   *int     // size_tokens only: the operation's bytes
-    RatioMin, RatioMax  *float64 // size_tokens only: the allowed tokens per byte
+    Tokens, TokensAfter *int     // size_tokens only: the tokens of the side that failed
+    Bytes, BytesAfter   *int     // size_tokens only: the bytes of the side that failed
+    RatioMin, RatioMax  *float64 // size_tokens only: the bounds of the ratio (below)
 }
 
 func (c CheckFailure) Unit() string // "bytes" | "tokens" | "": the unit of Want, Got and Limit (§6.5)
@@ -1663,15 +1663,26 @@ unit, `Unit()`, so `Want - Got` has a meaning wherever both are set. `Unit()` de
 | `sum` | bytes | Bytes the bodies changed in `Section` | Bytes the operations claim for `Section` | `Section` |
 | `conservation` | tokens | The bill difference | Tokens the operations claim | |
 | `spans` | bytes | Span bytes before (after) | The operation's bytes before (after) | |
-| `size_range` | bytes | — | The operation's bytes before (after) | `Limit`, `LimitAfter` |
-| `size_tokens` | — | — | — | `Tokens`, `TokensAfter`, `Bytes`, `BytesAfter`, `RatioMin`, `RatioMax`, for the span that failed |
+| `size_range` | bytes | — | The bytes before (after) of the operation, or of its span, that is over the limit | `Limit`, `LimitAfter` |
+| `size_tokens` | — | — | — | `Tokens`, `TokensAfter`, `Bytes`, `BytesAfter`, `RatioMin`, `RatioMax`, for the span (or the operation with no spans) that failed |
 | `media_tokens` | tokens | Tokens billed | The media price | |
 | `opaque_tokens` | tokens | Tokens billed | Tokens counted for the opaque bytes | |
 | `shared_warm` | — | — | — | `Section`, `Index` |
 
-The other checks have no numbers. `Detail` is built from these fields, and it adds some numbers that have no field: the
-media tokens after the cap (`media_tokens`), the counted and the total opaque bytes (`opaque_tokens`), and the usage
-of `bad_usage` and of checks 8 to 10. The events schema sends the fields, never `Detail` (`docs/events/events.md` §6.8.1).
+A `size_tokens` failure sets only the side that failed: `Tokens` and `Bytes` for before, `TokensAfter` and
+`BytesAfter` for after. The other side passed, or had no count (`Tokens` 0) and was not checked. A side fails when
+tokens ÷ bytes is above `RatioMax`, or tokens ÷ text bytes is below `RatioMin`. The text bytes are the bytes less the
+media and opaque bytes of the range; they have no field, so a host must not repeat the rule from these numbers.
+
+The other checks have no numbers. `Detail` is built from these fields, and it adds some numbers that have no field:
+
+- `media_tokens`: the media tokens after the cap.
+- `opaque_tokens`: the opaque bytes that have a count, and all the opaque bytes.
+- `size_tokens`: the numbers of the side that did not fail.
+- `bad_usage`, `ratio_range`, `media_unseen`, `breakpoints`: the usage, the breakpoint count and the forwarded bytes;
+  `media_unseen` also the unseen media blocks.
+
+The events schema sends the fields, never `Detail` (`docs/events/events.md` §6.8.1).
 
 ## 7. Billing plans
 

@@ -1970,8 +1970,7 @@ func (c *calcState) price(res *Result) {
 				bt, bx, bbad := c.sizeTokens(sp.before, bm)
 				at, ax, abad := c.sizeTokens(sp.after, am)
 				if bbad || abad {
-					res.Checks = append(res.Checks, sizeTokensFailure(it.op.Operator,
-						sp.before.Tokens, sp.after.Tokens, sp.before.Bytes, sp.after.Bytes))
+					res.Checks = append(res.Checks, sizeTokensFailure(it.op.Operator, sp.before, sp.after, bbad, abad))
 				}
 				if !bx || !ax {
 					estimated = true

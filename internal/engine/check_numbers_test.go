@@ -98,14 +98,13 @@ func TestTheSizeRangeCheckCarriesItsNumbers(t *testing.T) {
 	op := rewrite("o1", "trim", "c1", msg(0), math.MaxInt, 0)
 	res := req{at: t0, client: mk(nil, nil, []blk{b("a", 2000)}), clientBPs: bps5(msg(0)), facts: exact5m,
 		ops: []Operation{op}, usage: Usage{Input: 2000}}.run(NewTrackers())
-	f := findCheck(t, res, CheckSizeRange)
-	if f.Limit == nil || f.LimitAfter == nil || *f.Limit < 2000 || *f.Limit >= math.MaxInt {
-		t.Fatalf("Limit = %s LimitAfter = %s, want the client body's bytes", num(f.Limit), num(f.LimitAfter))
-	}
-	wantNums(t, f, map[string]int{"Got": math.MaxInt, "GotAfter": 0, "Limit": *f.Limit, "LimitAfter": *f.LimitAfter})
+	// Both limits are the client body's 2000 bytes: no body is forwarded, and no other operation adds room.
+	wantNums(t, findCheck(t, res, CheckSizeRange), map[string]int{"Got": math.MaxInt, "GotAfter": 0, "Limit": 2000, "LimitAfter": 2000})
 }
 
-// Two units and no difference, so the numbers are in Tokens and Bytes, not in Want and Got.
+// Two units and no difference, so the numbers are in Tokens and Bytes, not in Want and Got. Only the
+// side that failed is set: here the after side has no count, so it was not checked, and a host that
+// read TokensAfter 0 against BytesAfter would see a failure that did not happen.
 func TestTheSizeTokensCheckCarriesItsNumbers(t *testing.T) {
 	client := [][]byte{text("j", 10000), text("p", 40000)}
 	fwd := [][]byte{nil, text("p", 40000)}
@@ -113,7 +112,7 @@ func TestTheSizeTokensCheckCarriesItsNumbers(t *testing.T) {
 		SizeBefore: Size{Bytes: 10000, Tokens: 500000}}
 	res, _ := priceOne(t, client, fwd, op, Usage{Input: 12500})
 	f := findCheck(t, res, CheckSizeTokens)
-	wantNums(t, f, map[string]int{"Tokens": 500000, "TokensAfter": 0, "Bytes": 10000, "BytesAfter": 0})
+	wantNums(t, f, map[string]int{"Tokens": 500000, "Bytes": 10000})
 	if f.RatioMin == nil || f.RatioMax == nil || *f.RatioMin != minTokensPerByte || *f.RatioMax != maxTokensPerByte {
 		t.Errorf("RatioMin/RatioMax = %v/%v, want %g/%g", f.RatioMin, f.RatioMax, minTokensPerByte, maxTokensPerByte)
 	}
@@ -151,7 +150,10 @@ func TestDetailIsBuiltFromTheFields(t *testing.T) {
 		{sumFailure(SectionTools, 600, 0), map[string]int{"Want": 600, "Got": 0}, []string{"tools", "600", "0"}},
 		{spansFailure("p", 1, 2, 3, 4), map[string]int{"Want": 1, "WantAfter": 2, "Got": 3, "GotAfter": 4}, []string{"1/2", "3/4"}},
 		{sizeRangeFailure("p", 9, 8, 7, 6), map[string]int{"Got": 9, "GotAfter": 8, "Limit": 7, "LimitAfter": 6}, []string{"9/8", "7/6"}},
-		{sizeTokensFailure("p", 5, 4, 3, 2), map[string]int{"Tokens": 5, "TokensAfter": 4, "Bytes": 3, "BytesAfter": 2}, []string{"5/4", "3/2"}},
+		{sizeTokensFailure("p", Size{Tokens: 5, Bytes: 3}, Size{Tokens: 4, Bytes: 2}, true, true),
+			map[string]int{"Tokens": 5, "TokensAfter": 4, "Bytes": 3, "BytesAfter": 2}, []string{"5/4", "3/2"}},
+		{sizeTokensFailure("p", Size{Tokens: 5, Bytes: 3}, Size{Tokens: 4, Bytes: 2}, false, true),
+			map[string]int{"TokensAfter": 4, "BytesAfter": 2}, []string{"5/4", "3/2"}},
 		{mediaTokensFailure(100, 1600, 90, "n"), map[string]int{"Want": 100, "Got": 1600}, []string{"100", "1600", "90"}},
 		{sharedWarmFailure(Position{Section: SectionSystem, Index: 3}), map[string]int{"Index": 3}, []string{"system", "3"}},
 	} {

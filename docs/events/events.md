@@ -549,15 +549,15 @@ passed. Numbers only; `CheckFailure.Detail` is not sent.
 | `name` | enum | `CheckFailure.Check`: one of the accountant's `Check*` constants, else `other`. Today: `sum` \| `unique_change` \| `spans` \| `conservation` \| `shared_warm` \| `bad_usage` \| `ratio_range` \| `media_unseen` \| `breakpoints` \| `media_tokens` \| `opaque_tokens` \| `size_tokens` \| `size_range`. A module test compares this list with the constants, so a new check cannot become `other` unseen. |
 | `fatal` | bool | `CheckFailure.Fatal()`. |
 | `operator` | enum? | `CheckFailure.Operator`, from the operator allowlist (§6.9), else `other`. Absent when the check is not about one operator (for example `sum`). |
-| `section` | enum? | `tools` \| `system` \| `messages`, when the check is about one section. |
+| `section` | enum? | `tools` \| `system` \| `messages`. Set for `sum` and `shared_warm` only. |
 | `index` | int? | The position, when the check is about one position (`shared_warm`). |
 | `unit` | enum? | `bytes` \| `tokens`. The unit of `want` and `got`, and of `limit`. It depends only on `name`; the accountant gives it (`CheckFailure.Unit()`), so the module keeps no table of its own. Absent when the entry has no `want` and `got`. |
 | `want`, `want_after` | int? | What the bodies or the bill show. `want_after` only for a check with a before and an after side. |
 | `got`, `got_after` | int? | What the operations claim. `got_after` the same. |
 | `limit`, `limit_after` | int? | `size_range` only: the size limit before (after), in `unit`. |
-| `tokens`, `tokens_after` | int? | `size_tokens` only: the operation's tokens before (after). |
-| `bytes`, `bytes_after` | int? | `size_tokens` only: the operation's bytes before (after). |
-| `ratio_min`, `ratio_max` | float? | `size_tokens` only: the allowed tokens per byte. |
+| `tokens`, `tokens_after` | int? | `size_tokens` only: the tokens before (after) of the span, or of the operation with no spans, that failed. Only the side that failed is set. |
+| `bytes`, `bytes_after` | int? | `size_tokens` only: the bytes of the same side. |
+| `ratio_min`, `ratio_max` | float? | `size_tokens` only: the bounds of the ratio (below). |
 
 What the numbers are, for each check that has them:
 
@@ -566,8 +566,8 @@ What the numbers are, for each check that has them:
 | `sum` | bytes | Bytes the bodies changed in `section` | Bytes the operations claim for `section` | `section` |
 | `conservation` | tokens | The bill difference | Tokens the operations claim | |
 | `spans` | bytes | Span bytes before (after) the change | The operation's bytes before (after) | |
-| `size_range` | bytes | — | The operation's bytes before (after) | `limit`, `limit_after`. A limit is a rule, not a claim, so it is not in `want`. |
-| `size_tokens` | — | — | — | `tokens`, `tokens_after`, `bytes`, `bytes_after`, `ratio_min`, `ratio_max`. The check fails when tokens ÷ bytes is outside the range. Two units and no difference, so the numbers are not in `want` and `got`. |
+| `size_range` | bytes | — | The bytes before (after) of the operation, or of its span, that is over the limit | `limit`, `limit_after`. A limit is a rule, not a claim, so it is not in `want`. |
+| `size_tokens` | — | — | — | `tokens`, `tokens_after`, `bytes`, `bytes_after`, `ratio_min`, `ratio_max`. Two units and no difference, so the numbers are not in `want` and `got`. See below. |
 | `media_tokens` | tokens | Tokens billed | The media price | |
 | `opaque_tokens` | tokens | Tokens billed | The tokens counted for the opaque bytes | |
 
@@ -583,9 +583,16 @@ Some numbers in `Detail` have no field. They are not sent, because no query of t
 
 - `media_tokens`: the media tokens after the cap.
 - `opaque_tokens`: the opaque bytes that have a count, and all the opaque bytes.
-- `bad_usage`: the usage numbers of the call.
+- `size_tokens`: the numbers of the side that did not fail.
+- `bad_usage`, `ratio_range`, `media_unseen`, `breakpoints`: the usage, the breakpoint count and the forwarded bytes;
+  `media_unseen` also the unseen media blocks.
 
 If a query needs one of them, add a field here and in `CheckFailure` first.
+
+A `size_tokens` entry has only the side that failed: `tokens` and `bytes` for before, `tokens_after` and
+`bytes_after` for after. The other side passed, or had no count and was not checked. A side fails when tokens ÷ bytes
+is above `ratio_max`, or tokens ÷ text bytes is below `ratio_min`. The text bytes are the bytes less the media and
+opaque bytes; they are not sent, so a query must not repeat the rule from these numbers.
 
 How to debug with it. Example (accountant#70): one entry is
 `{name: sum, fatal: true, section: messages, unit: bytes, want: 12000, got: 13285}`. The
@@ -611,9 +618,10 @@ claims a change that is no longer in the body.
    column `reliable` (no fatal failed check), equal to `Result.Reliable()`. Leave those requests out of a
    saving study.
 
-This needs a change in the accountant (#90): `CheckFailure` gets typed number fields, the ones of the tables above,
-with a presence mark for each, and a `Unit()` method next to `Fatal()`. Today the numbers are only in `Detail`, a
-formatted string whose shape differs for each check. The module must not parse that string.
+The module reads the numbers from the typed fields of `CheckFailure` (#90): `Section`, `Index`, `Want`, `WantAfter`,
+`Got`, `GotAfter`, `Limit`, `LimitAfter`, `Tokens`, `TokensAfter`, `Bytes`, `BytesAfter`, `RatioMin` and `RatioMax`,
+each nil when absent, and `unit` from `CheckFailure.Unit()`. It never parses `Detail`, a formatted string whose shape
+differs for each check.
 
 ### 6.9 Operations (request)
 
@@ -1065,7 +1073,7 @@ func (e *Emitter) ExportErrorHandler() otel.ErrorHandler
 
 A refused ping has no `PingOps` call, so the host cannot read `PingFacts.PingWindow`. The accountant exports
 the rule that `PingOps` uses (`PingWindowID`), and the host calls it for every decision, so the window id
-has one format in one place. This is the third accountant change (§10).
+has one format in one place. This is one of the accountant changes of §10.
 
 The module computes `common_prefix`, so it keeps, for each thread, a copy of the cumulative hashes of the
 last forwarded body. Two rules bound that state:
@@ -1246,8 +1254,8 @@ Not sent from Cortex: `Seq` (`producer.seq` covers gaps), `Tunnel` and `TunnelRe
 `HTTPMethod` and `HTTPPath` (a path segment can hold a secret), `Client.Raw`, `Identity.Scopes`,
 `Error.Message`, the TLS version and cipher, `AgentRole` (§6.14), `IsAction`, and every content field.
 
-The accountant needs three changes for this schema: `CheckFailure` gets typed number fields (§6.8.1),
-`Result` gets the count and the age of the active operations (§6.8), and `PingWindowID` is exported (§8).
+The accountant needs two more changes for this schema: `Result` gets the count and the age of the active
+operations (§6.8), and `PingWindowID` is exported (§8). The typed numbers of `CheckFailure` (§6.8.1) are done (#90).
 
 Both hosts need:
 

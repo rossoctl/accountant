@@ -75,16 +75,16 @@ type CheckFailure struct {
 	Operator string // "" when the check is not about one operator
 	Detail   string // numbers only, no content; built from the fields below, with some numbers they do not hold
 
-	Section Section // "" when the check is not about one section (sum, shared_warm)
+	Section Section // set for sum and shared_warm only; "" for every other check
 	Index   *int    // the position, when the check is about one position (shared_warm)
 
 	Want, WantAfter *int // what the bodies or the bill show; the After value for a check with a before and an after side
 	Got, GotAfter   *int // what the operations claim
 
 	Limit, LimitAfter   *int     // size_range only: the size limit before (after), in bytes
-	Tokens, TokensAfter *int     // size_tokens only: the operation's tokens before (after)
-	Bytes, BytesAfter   *int     // size_tokens only: the operation's bytes before (after)
-	RatioMin, RatioMax  *float64 // size_tokens only: the allowed tokens per byte
+	Tokens, TokensAfter *int     // size_tokens only: the tokens of the span or operation that failed, before (after); only the side that failed is set
+	Bytes, BytesAfter   *int     // size_tokens only: its bytes, the same side
+	RatioMin, RatioMax  *float64 // size_tokens only: tokens / bytes must be at most RatioMax, and tokens / text bytes (bytes less media and opaque bytes) at least RatioMin
 }
 
 // Unit is the unit of Want, Got and Limit: UnitBytes, UnitTokens, or "" for a check that has no
