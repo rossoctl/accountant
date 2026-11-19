@@ -1790,13 +1790,16 @@ Where a question has test cases, a host that compares them with its own code mar
       position of a section, the item before it is the last one of the section before, and an edit there
       ends the change too;
     - **for content the operator added, the host stopped adding it** (accountant#89). The forwarded tools
-      or system section has the client section's items again: the same count, and each item the same
-      size. The host's configuration changed (for example to preset `off`) and the client edited nothing,
-      so the rule above cannot fire. If the change stayed, the sum check would fail by its bytes on every
-      later request. The rule ends a change only on proof. It does not run for the messages section, whose
-      positions go through the splices. A host that drops only some of the added items leaves the section
-      larger than the client's, and every change there stays. Another operator that removes items and
-      adds others of exactly the same sizes looks like no change.
+      or system section has as many items as the client section, and each item has the client item's size
+      or the size that an active in-place change on that whole item gives it. The host's configuration
+      changed (for example to preset `off`, or to a preset that keeps one in-place change and drops the
+      added content) and the client edited nothing, so the rule above cannot fire. If the change stayed,
+      the sum check would fail by its bytes on every later request. The rule ends a change only on proof.
+      A `DryRun` is exempt, because it forwards the client's body by design. The rule does not run for the
+      messages section, whose positions go through the splices. A host that drops only some of the added
+      items leaves the section larger than the client's, and every change there stays. An item that an
+      in-place change with spans shaped keeps them too. Another operator that removes items and adds
+      others of exactly the same sizes looks like no change.
 
     A break that a change leaves behind when it ends has no `ChangeID` (§5.2 row 1), because the change
     is no longer reported or active. It is part of the bill difference (§6.3).

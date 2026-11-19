@@ -639,8 +639,10 @@ func (c *calcState) forwardPositions() {
 				// provider's order too, so an edit there ends the change.
 				if c.clientEdited(c.prevInsertionPoint(c.clientSide(k, sp.from)) - 1) {
 					it.ended = true
-				} else if c.addedContentGone(sp.from.Section) {
-					it.ended = true // the host stopped adding it (accountant#89)
+				} else if !it.op.DryRun && c.addedContentGone(sp.from.Section) {
+					// The host stopped adding it (accountant#89). A DryRun forwards the client's own body by
+					// design, so an equal section is no proof for it.
+					it.ended = true
 				}
 			} else if i, ok := c.client.flat(sp.from); !ok || c.clientEdited(i) {
 				it.ended = true // the client edited at or before it, or compacted (§4.3)
@@ -697,15 +699,17 @@ func (c *calcState) clientEdited(i int) bool {
 }
 
 // addedContentGone says whether the forwarded body carries no added content in section s: the forwarded
-// section has the client section's items, the same count and each item the same size. Then the host stopped
-// adding what an active change added there, for example after its configuration changed, and the client did
-// not edit anything, so the Q12 rule cannot end the change (accountant#89). If the change stayed, the sum
-// check would count its bytes on every later request of the thread.
+// section has as many items as the client section, and each item has the client item's size or the size an
+// active in-place change gives it. Then the host stopped adding what an active change added there, for
+// example after its configuration changed, and the client did not edit anything, so the Q12 rule cannot end
+// the change (accountant#89). If the change stayed, the sum check would count its bytes on every later
+// request of the thread.
 //
 // The rule ends a change only on proof. The messages section is left out: its positions go through the
 // splices. A host that drops only some of the added items leaves the section larger than the client's, and
-// the rule keeps every change there. Another operator that removes items and adds others of exactly the same
-// sizes would look like no change.
+// the rule keeps every change there. An in-place change with spans says nothing about one item's size, so an
+// item it shaped keeps the added changes too. Another operator that removes items and adds others of exactly
+// the same sizes would look like no change. The caller exempts a DryRun.
 func (c *calcState) addedContentGone(s Section) bool {
 	i := sectionIndex(s)
 	if s == SectionMessages || i < 0 || len(c.fwd.Pos) == 0 {
@@ -717,11 +721,26 @@ func (c *calcState) addedContentGone(s Section) bool {
 		return false
 	}
 	for j := 0; j < ce-cs; j++ {
-		if c.client.Pos[cs+j].Bytes != c.fwd.Pos[fs+j].Bytes {
+		if got := c.fwd.Pos[fs+j].Bytes; got != c.client.Pos[cs+j].Bytes && !c.inPlaceSize(Position{s, j}, int(got)) {
 			return false
 		}
 	}
 	return true
+}
+
+// inPlaceSize says whether an active in-place change on the whole item at p gives it the size n. With the
+// counts equal and no added content in the section, the client and the forwarded index are the same.
+func (c *calcState) inPlaceSize(p Position, n int) bool {
+	for _, it := range c.items {
+		if !it.active || it.ended || it.bad != "" || it.op.Kind != KindRewrite || it.op.DryRun ||
+			it.op.MessageSplice != nil || len(it.op.Spans) > 0 {
+			continue
+		}
+		if sp := it.spans[0]; sp.from == p && sp.before.Bytes > 0 && sp.after.Bytes == n {
+			return true
+		}
+	}
+	return false
 }
 
 // restored says whether the operator stopped applying a change that edited an item in place: the
