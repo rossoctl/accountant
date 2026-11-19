@@ -59,11 +59,44 @@ const (
 	CheckOpaqueTokens = "opaque_tokens"
 )
 
+// The units of CheckFailure.Unit.
+const (
+	UnitBytes  = "bytes"
+	UnitTokens = "tokens"
+)
+
 // CheckFailure is a failed check (§6.5). A failure does not stop pricing, except size_range, which unprices the one operation (§6.5, check 13).
+//
+// The number fields hold the numbers behind the failure, so a host never parses Detail
+// (docs/events/events.md §6.8.1). A number is nil when the check has no such number; 0 is a real
+// value. Want and Got have the same unit, Unit(), so Want - Got always has a meaning.
 type CheckFailure struct {
 	Check    string // one of the Check constants
 	Operator string // "" when the check is not about one operator
-	Detail   string // numbers only, no content
+	Detail   string // numbers only, no content; built from the fields below, with some numbers they do not hold
+
+	Section Section // "" when the check is not about one section (sum, shared_warm)
+	Index   *int    // the position, when the check is about one position (shared_warm)
+
+	Want, WantAfter *int // what the bodies or the bill show; the After value for a check with a before and an after side
+	Got, GotAfter   *int // what the operations claim
+
+	Limit, LimitAfter   *int     // size_range only: the size limit before (after), in bytes
+	Tokens, TokensAfter *int     // size_tokens only: the operation's tokens before (after)
+	Bytes, BytesAfter   *int     // size_tokens only: the operation's bytes before (after)
+	RatioMin, RatioMax  *float64 // size_tokens only: the allowed tokens per byte
+}
+
+// Unit is the unit of Want, Got and Limit: UnitBytes, UnitTokens, or "" for a check that has no
+// Want and Got. It depends only on Check, so no host keeps a table of its own.
+func (c CheckFailure) Unit() string {
+	switch c.Check {
+	case CheckSum, CheckSpans, CheckSizeRange:
+		return UnitBytes
+	case CheckConservation, CheckMediaTokens, CheckOpaqueTokens:
+		return UnitTokens
+	}
+	return ""
 }
 
 // Fatal reports whether this failure means the list of operations or their attribution is wrong:

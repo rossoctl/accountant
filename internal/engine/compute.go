@@ -1476,8 +1476,7 @@ func (c *calcState) rescue(res *Result) {
 	if w := c.r.facts.SharedWarm; w != nil {
 		i, ok := c.fwd.flat(*w)
 		if !ok { // a host bug: a doubtful figure may only lower a saving, so credit nothing (R54)
-			res.Checks = append(res.Checks, CheckFailure{Check: CheckSharedWarm,
-				Detail: fmt.Sprintf("section=%q index=%d is not in the forwarded body", w.Section, w.Index)})
+			res.Checks = append(res.Checks, sharedWarmFailure(*w))
 			return
 		}
 		// a sibling kept this part warm without the ping (R54). Two floors, so n can be 1 token off the single
@@ -1927,8 +1926,7 @@ func (c *calcState) checkUsage(res *Result) {
 		case it.ended || it.active:
 		case it.bad == ReasonSizeRange:
 			sz, _ := bigSize(it.op, l)
-			res.Checks = append(res.Checks, CheckFailure{Check: CheckSizeRange, Operator: it.op.Operator,
-				Detail: fmt.Sprintf("size bytes=%d/%d limits=%d/%d: the operation is not priced", sz[0].Bytes, sz[1].Bytes, l.before, l.after)})
+			res.Checks = append(res.Checks, sizeRangeFailure(it.op.Operator, sz[0].Bytes, sz[1].Bytes, l.before, l.after))
 		case it.bad == ReasonBadUsage:
 			res.Checks = append(res.Checks, CheckFailure{Check: CheckBadUsage, Operator: it.op.Operator, Detail: callDetail(it.op)})
 		}
@@ -1972,9 +1970,8 @@ func (c *calcState) price(res *Result) {
 				bt, bx, bbad := c.sizeTokens(sp.before, bm)
 				at, ax, abad := c.sizeTokens(sp.after, am)
 				if bbad || abad {
-					res.Checks = append(res.Checks, CheckFailure{Check: CheckSizeTokens, Operator: it.op.Operator,
-						Detail: fmt.Sprintf("tokens=%d/%d bytes=%d/%d: outside %g..%g tokens a byte, bytes used",
-							sp.before.Tokens, sp.after.Tokens, sp.before.Bytes, sp.after.Bytes, minTokensPerByte, maxTokensPerByte)})
+					res.Checks = append(res.Checks, sizeTokensFailure(it.op.Operator,
+						sp.before.Tokens, sp.after.Tokens, sp.before.Bytes, sp.after.Bytes))
 				}
 				if !bx || !ax {
 					estimated = true
@@ -2102,8 +2099,7 @@ func (c *calcState) conservation(res *Result) {
 	net -= c.hostGap   // the ratio's figure: host tokens are exact and the bodies are not
 	want -= c.mediaGap // those operations are unpriced: their tokens are in the bill difference only
 	if d := want - net; d > tol+1 || d < -(tol+1) {
-		res.Checks = append(res.Checks, CheckFailure{Check: CheckConservation,
-			Detail: fmt.Sprintf("bill difference=%d ops=%d tokens", want, net)})
+		res.Checks = append(res.Checks, conservationFailure(want, net))
 	}
 }
 
@@ -2119,17 +2115,13 @@ func (c *calcState) checks(res *Result) {
 			note = "nothing is priced"
 		}
 		media := c.fwd.cumMedia(len(c.fwd.Pos)-1) / mediaBytesPerToken
-		res.Checks = append(res.Checks, CheckFailure{Check: CheckMediaTokens,
-			Detail: fmt.Sprintf("media price=%d tokens billed=%d: the bill is below the media price: the media is cut to %d tokens: %s",
-				media, c.usage.Input+c.usage.CacheRead+c.usage.CacheWrite, c.ratio.mediaTok, note)})
+		res.Checks = append(res.Checks, mediaTokensFailure(c.usage.Input+c.usage.CacheRead+c.usage.CacheWrite, media, c.ratio.mediaTok, note))
 	}
 	// With the media capped (check 11) the room is 0, so any count is dropped. The cause is the media,
 	// and media_tokens already reports it.
 	if c.ratio.countsDropped && !c.ratio.capped && !c.noUsage && c.invalid == "" {
 		all := c.fwd.between(-1, len(c.fwd.Pos)-1)
-		res.Checks = append(res.Checks, CheckFailure{Check: CheckOpaqueTokens,
-			Detail: fmt.Sprintf("opaque counts=%d tokens for %d of %d opaque bytes, tokens billed=%d: the counts are above what the bill leaves: the fixed price is used",
-				all.ctok, all.counted, all.opaque, c.usage.Input+c.usage.CacheRead+c.usage.CacheWrite)})
+		res.Checks = append(res.Checks, opaqueTokensFailure(c.usage.Input+c.usage.CacheRead+c.usage.CacheWrite, all.ctok, all.counted, all.opaque))
 	}
 	var got [3]int
 	seen := map[string]bool{}
@@ -2153,8 +2145,7 @@ func (c *calcState) checks(res *Result) {
 				b, a = b+s.SizeBefore.Bytes, a+s.SizeAfter.Bytes
 			}
 			if b != op.SizeBefore.Bytes || a != op.SizeAfter.Bytes {
-				res.Checks = append(res.Checks, CheckFailure{Check: CheckSpans, Operator: op.Operator,
-					Detail: fmt.Sprintf("spans=%d/%d op=%d/%d bytes", b, a, op.SizeBefore.Bytes, op.SizeAfter.Bytes)})
+				res.Checks = append(res.Checks, spansFailure(op.Operator, b, a, op.SizeBefore.Bytes, op.SizeAfter.Bytes))
 			}
 		}
 		if op.DryRun {
@@ -2169,8 +2160,7 @@ func (c *calcState) checks(res *Result) {
 	for s := range 3 {
 		want := c.client.sectionBytes(s) - c.fwd.sectionBytes(s)
 		if got[s] != want {
-			res.Checks = append(res.Checks, CheckFailure{Check: CheckSum,
-				Detail: fmt.Sprintf("section=%s ops=%d bodies=%d bytes", sections[s], got[s], want)})
+			res.Checks = append(res.Checks, sumFailure(sections[s], want, got[s]))
 		}
 	}
 }

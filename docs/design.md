@@ -1444,8 +1444,20 @@ type CheckFailure struct {
                     // "shared_warm" | "bad_usage" | "ratio_range" | "media_unseen" | "breakpoints" |
                     // "media_tokens" | "size_tokens" | "size_range" | "opaque_tokens" (§6.5)
     Operator string // "" when the check is not about one operator
-    Detail   string // numbers only, no content
+    Detail   string // numbers only, no content; built from the fields below (§6.5)
+
+    Section Section // "" when the check is not about one section (sum, shared_warm)
+    Index   *int    // shared_warm: the position
+
+    Want, WantAfter     *int     // what the bodies or the bill show; After for a check with two sides
+    Got, GotAfter       *int     // what the operations claim
+    Limit, LimitAfter   *int     // size_range only: the size limit, in bytes
+    Tokens, TokensAfter *int     // size_tokens only: the operation's tokens
+    Bytes, BytesAfter   *int     // size_tokens only: the operation's bytes
+    RatioMin, RatioMax  *float64 // size_tokens only: the allowed tokens per byte
 }
+
+func (c CheckFailure) Unit() string // "bytes" | "tokens" | "": the unit of Want, Got and Limit (§6.5)
 
 // OpID is unique inside the Result. A reported operation keeps its own ID. An active operation
 // applied again gets "active:" + its ChangeID, so it cannot collide with the IDs of this request (R6).
@@ -1641,6 +1653,25 @@ that the library adds later is classified in `Fatal` only, so it gates every hos
 have no check: attribution holds by construction, and the library does not test the order.
 `conservation` is informational on purpose: with `sum` passing it differs only by the ratio's rounding beyond its
 tolerance, so `Reliable` can be true while `conservation` is reported. A host that wants that signal reads `Result.Checks`.
+
+**The numbers of a failure.** A `CheckFailure` carries the numbers behind it in typed fields, so a host never parses
+`Detail`. A number is nil when the check has no such number; 0 is a real value. `Want` and `Got` always have the same
+unit, `Unit()`, so `Want - Got` has a meaning wherever both are set. `Unit()` depends only on `Check`.
+
+| Check | `Unit()` | `Want` (`WantAfter`) | `Got` (`GotAfter`) | Other fields |
+|---|---|---|---|---|
+| `sum` | bytes | Bytes the bodies changed in `Section` | Bytes the operations claim for `Section` | `Section` |
+| `conservation` | tokens | The bill difference | Tokens the operations claim | |
+| `spans` | bytes | Span bytes before (after) | The operation's bytes before (after) | |
+| `size_range` | bytes | — | The operation's bytes before (after) | `Limit`, `LimitAfter` |
+| `size_tokens` | — | — | — | `Tokens`, `TokensAfter`, `Bytes`, `BytesAfter`, `RatioMin`, `RatioMax`, for the span that failed |
+| `media_tokens` | tokens | Tokens billed | The media price | |
+| `opaque_tokens` | tokens | Tokens billed | Tokens counted for the opaque bytes | |
+| `shared_warm` | — | — | — | `Section`, `Index` |
+
+The other checks have no numbers. `Detail` is built from these fields, and it adds some numbers that have no field: the
+media tokens after the cap (`media_tokens`), the counted and the total opaque bytes (`opaque_tokens`), and the usage
+of `bad_usage` and of checks 8 to 10. The events schema sends the fields, never `Detail` (`docs/events/events.md` §6.8.1).
 
 ## 7. Billing plans
 
