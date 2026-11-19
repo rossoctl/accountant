@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1160 640" width="1160" height="640" role="img" aria-labelledby="t d" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">
 <title id="t">accountant/events: central collection of structural events</title>
-<desc id="d">Each user has a laptop. On each laptop an agent, such as Claude Code or Codex, sends its LLM requests through a local proxy: Cortex or the context-guru proxy. The proxy forwards each request to the LLM provider. The proxy holds the accountant and the events module, which turn each request and each keep-alive ping decision into one structural OpenTelemetry log event. Each proxy exports its events over OTLP/HTTP with TLS and a bearer token to one central deployment, drawn as a dashed frame: one OpenTelemetry Collector and one ClickHouse database. The Collector receives the events, drops unknown attributes (rule E3) and writes them with the clickhouse exporter to one shared ClickHouse database. In the database, the events land in the otel_logs table, materialized views turn them into typed tables, and curated views sit on top. Researchers, each with a read-only account, query the curated views with SQL from clickhouse-client, notebooks or Grafana. The hash key is held by the deployment owner, given to the proxies, and never stored in the database.</desc>
+<desc id="d">Each user has a laptop. On each laptop an agent, such as Claude Code or Codex, sends its LLM requests through a local proxy: Cortex or the context-guru proxy. The proxy forwards each request to the LLM provider. The proxy holds the accountant and the events module, which turn each request, each keep-alive ping decision and each client lifecycle signal into one structural OpenTelemetry log event. Each proxy exports its events over OTLP/HTTP with TLS and a bearer token to one central deployment, drawn as a dashed frame: one OpenTelemetry Collector and one ClickHouse database. The Collector receives the events, drops unknown attributes (rule E3) and writes them with the clickhouse exporter to one shared ClickHouse database. In the database, the events land in the otel_logs table, materialized views turn them into typed tables, and curated views sit on top. Researchers, each with a read-only account, query the curated views with SQL from clickhouse-client, notebooks or Grafana. The hash key is held by the deployment owner, given to the proxies, and never stored in the database.</desc>
 <defs>
   <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#24292f"/></marker>
   <marker id="g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#6e7781"/></marker>
@@ -108,13 +108,13 @@
   <text x="805" y="276" text-anchor="middle">materialized views</text>
   <rect x="705" y="304" width="200" height="56" rx="4" fill="#ffffff" stroke="#8250df"/>
   <text x="805" y="321" text-anchor="middle" font-weight="600">typed tables</text>
-  <text x="805" y="337" text-anchor="middle">request_events, ping_events</text>
-  <text x="805" y="352" text-anchor="middle">producer_events</text>
+  <text x="805" y="337" text-anchor="middle">request, ping, signal, stats</text>
+  <text x="805" y="352" text-anchor="middle">(*_events)</text>
   <rect x="705" y="375" width="200" height="90" rx="4" fill="#ffffff" stroke="#8250df"/>
   <text x="805" y="395" text-anchor="middle" font-weight="600">curated views</text>
-  <text x="805" y="413" text-anchor="middle">requests, pings</text>
-  <text x="805" y="430" text-anchor="middle">ping_windows</text>
-  <text x="805" y="447" text-anchor="middle">threads, gaps</text>
+  <text x="805" y="413" text-anchor="middle">requests, pings, signals</text>
+  <text x="805" y="430" text-anchor="middle">ping_windows, threads, gaps</text>
+  <text x="805" y="447" text-anchor="middle">ops, failed_checks, …</text>
   <line x1="805" y1="240" x2="805" y2="255" stroke="#24292f" stroke-width="1.5" marker-end="url(#a)"/>
   <line x1="805" y1="289" x2="805" y2="304" stroke="#24292f" stroke-width="1.5" marker-end="url(#a)"/>
   <line x1="805" y1="360" x2="805" y2="375" stroke="#24292f" stroke-width="1.5" marker-end="url(#a)"/>
@@ -138,7 +138,7 @@
 <!-- Legend and key note -->
 <g font-size="12" fill="#24292f">
   <line x1="430" y1="560" x2="470" y2="560" stroke="#9a6700" stroke-width="2"/>
-  <text x="478" y="564">OTel log events: one per request, one per ping decision, plus producer stats</text>
+  <text x="478" y="564">OTel log events: one per request, ping decision and client signal, plus stats</text>
   <line x1="430" y1="585" x2="470" y2="585" stroke="#6e7781" stroke-width="1.5" stroke-dasharray="5 3"/>
   <text x="478" y="589">LLM traffic: the request path, which the events never slow down</text>
   <text x="430" y="614">Hash key: held by the deployment owner, given to the proxies, never stored in the database.</text>
