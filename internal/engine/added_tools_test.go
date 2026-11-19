@@ -403,3 +403,55 @@ func TestAnInPlaceChangeAfterAddedContentEndsWhenAnotherOperatorTakesItOver(t *t
 		t.Fatalf("Active = %v, want cg:expand:decl-added and cg:sweep:t1", got)
 	}
 }
+
+// accountant#100: request 1 is the #94 setup. On request 2 the host stops adding X, and a DryRun D is reported
+// at tool(2). D ran after the host stopped adding X, so its position never counted X: it is stored at tool(2).
+// Before, the rebase for ended content took X out of D too and stored it at tool(1).
+func reportedAfterAddedEnds(t *testing.T) (*Trackers, []blk, []blk) {
+	t.Helper()
+	ts := NewTrackers()
+	tools := shiftTools()
+	system := []blk{b("s0", 2000)}
+	ms := []blk{b("m0", 5000), b("m1", 5000)}
+	add := rewrite("a", "context-guru.expand", "cg:expand:decl-added", tool(0), 0, 340)
+	trim := rewrite("s", "context-guru.trim", "cg:trim:t1", tool(1), 1000, 600)
+	noChecks(t, req{at: t0, client: mk(tools, system, ms), clientBPs: bps5(sys(0), msg(1)), facts: exact5m,
+		ops: []Operation{add, trim}, fwd: mk([]blk{b("x", 340), b("r0", 600), tools[1], tools[2]}, system, ms),
+		usage: Usage{CacheWrite: 3500}}.run(ts))
+	d := rewrite("d", "context-guru.extract", "cg:extract:t2", tool(2), 1000, 800)
+	d.DryRun = true
+	res := req{at: t0.Add(10 * time.Second), client: mk(tools, system, ms), clientBPs: bps5(sys(0), msg(1)),
+		facts: exact5m, ops: []Operation{d}, fwd: mk([]blk{b("r0", 600), tools[1], tools[2]}, system, ms),
+		usage: Usage{CacheWrite: 3500}}.run(ts)
+	noSumFailure(t, res)
+	return ts, system, ms
+}
+
+func TestAChangeReportedWhenAddedContentEndsIsStoredWhereItWasReported(t *testing.T) {
+	ts, _, _ := reportedAfterAddedEnds(t)
+	want := map[string]Position{"cg:trim:t1": tool(0), "cg:extract:t2": tool(2)}
+	active := ts.tracker(ThreadKey("s1", Thread{ID: "main"}), time.Time{}).snapshot().Active
+	if len(active) != len(want) {
+		t.Fatalf("Active = %v, want %v", activeIDs(ts), want)
+	}
+	for _, op := range active {
+		if op.At != want[op.ChangeID] {
+			t.Errorf("%s stored at %+v, want %+v", op.ChangeID, op.At, want[op.ChangeID])
+		}
+	}
+}
+
+// On request 3 the client edits only its tool 2. D is at tool(2), so the edit ends it; the trim of tool 0 stays.
+// Before, D read client tool 1, saw no edit, and stayed.
+func TestAChangeReportedWhenAddedContentEndsEndsOnAClientEditAtItsItem(t *testing.T) {
+	ts, system, ms := reportedAfterAddedEnds(t)
+	tools := shiftTools()
+	edited := []blk{tools[0], tools[1], b("e2", 1000)}
+	res := req{at: t0.Add(20 * time.Second), client: mk(edited, system, ms), clientBPs: bps5(sys(0), msg(1)),
+		facts: exact5m, fwd: mk([]blk{b("r0", 600), tools[1], b("e2", 1000)}, system, ms),
+		usage: Usage{CacheWrite: 3500}}.run(ts)
+	noSumFailure(t, res)
+	if got := activeIDs(ts); len(got) != 1 || got[0] != "cg:trim:t1" {
+		t.Fatalf("Active = %v, want only cg:trim:t1", got)
+	}
+}

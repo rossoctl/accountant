@@ -2237,9 +2237,11 @@ func (c *calcState) activeOps() []Operation {
 // storedSpans is the spans of item k as the next request reads them. A position in tools or system counts the
 // content that changes before k added before it. A change that ended leaves Active, so the next request no
 // longer takes its content out of the position: take it out here (accountant#94). Content that stays active
-// stays counted, because the next request takes it out itself.
+// stays counted, because the next request takes it out itself. Only an active change is rebased: a change
+// reported in this request ran after the host stopped adding the content, so its position never counted it
+// (accountant#100).
 func (c *calcState) storedSpans(k int, it *item) []span {
-	if it.op.Kind != KindRewrite {
+	if it.op.Kind != KindRewrite || !it.active {
 		return it.spans
 	}
 	out := make([]span, len(it.spans))
