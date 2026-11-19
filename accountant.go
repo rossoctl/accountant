@@ -82,7 +82,8 @@ func PingOps(p Ping, b Billing) (RequestOps, PingFacts) { return engine.PingOps(
 // PingWindowID gives the id of the keep-alive window that starts at start on thread: the ChangeID of
 // the ping's spend, [PingFacts].PingWindow, and the change of the rescue on the thread's next request.
 // The thread "" becomes "main". Use it for a ping that [PingOps] does not see, such as a refused one,
-// so the host does not copy the rule.
+// so the host does not copy the rule. It does not check start: a zero start gives
+// "ka:<thread>:0001-01-01T00:00:00Z".
 func PingWindowID(thread string, start time.Time) string { return engine.PingWindowID(thread, start) }
 
 // BillingFrom reads the client's upstream credential header (x-api-key or Authorization, as the

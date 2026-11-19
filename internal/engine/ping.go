@@ -42,7 +42,8 @@ func pingThread(thread string) string {
 // PingWindowID gives the id of the keep-alive window that starts at start on thread: "ka:" + thread
 // + ":" + start (RFC 3339, UTC). The thread "" becomes "main". This is the one rule for the id.
 // PingOps uses it for the ChangeID and PingFacts.PingWindow, and a host uses it for a ping it does
-// not send (for example a refused ping), so every id for one window is the same string.
+// not send (for example a refused ping), so every id for one window is the same string. It does not
+// check start: a zero start gives "ka:<thread>:0001-01-01T00:00:00Z", as PingOps does.
 func PingWindowID(thread string, start time.Time) string {
 	return "ka:" + pingThread(thread) + ":" + start.UTC().Format(time.RFC3339)
 }

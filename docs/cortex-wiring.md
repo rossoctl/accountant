@@ -72,7 +72,7 @@ the fields the dashboard groups by (`Strategy`, `Preset`, `StopReason`, `MaxToke
 | `KeepAliveReport` | `spend` context operation |
 |---|---|
 | `Session`, `Thread` | `RequestOps.Session`, `RequestOps.Thread` (`""`, the primary thread in `internal/thread`, becomes `"main"`) |
-| `Window` (new, additive: the start of the idle gap the ping served) | `ChangeID = "ka:" + Thread + ":" + Window`, with the mapped thread ID |
+| `Window` (new, additive: the start of the idle gap the ping served) | `ChangeID = accountant.PingWindowID(Thread, Window)`: `"ka:" + thread + ":" + Window` in RFC 3339 UTC, with `""` as `"main"` |
 | `Model` | `Call.Model` |
 | `Route` (the upstream the ping was sent to) | `Call.Host` |
 | `Provider` | not on the context operation; the host uses it to choose the lifetime kind (design §5.2) |

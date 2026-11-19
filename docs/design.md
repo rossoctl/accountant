@@ -1218,9 +1218,9 @@ func ComputeStandalone(ops RequestOps) Result
 
 // Ping is a keep-alive ping in the library's own terms: the host copies its report into it. PingOps
 // returns the one-spend RequestOps for ComputeStandalone, and the PingFacts for the thread's next
-// real request (EntryFacts.LastPing and PingWindow). The ChangeID is "ka:" + thread + ":" + the window
-// start in RFC 3339 UTC, and PingWindow is the same string, so a ping and its rescue share one change
-// (§4.4). The thread "" becomes "main". PingFacts also carries the ping's usage, from which the
+// real request (EntryFacts.LastPing and PingWindow). The ChangeID is PingWindowID(ThreadID, Window),
+// and PingWindow is the same string, so a ping and its rescue share one change (§4.4). The thread ""
+// becomes "main". PingFacts also carries the ping's usage, from which the
 // library derives PingRead when the host does not set it.
 type Ping struct {
     Session, ThreadID, Model, Host string
@@ -1237,7 +1237,8 @@ func (p PingFacts) Apply(f *EntryFacts) // copies LastPing, PingWindow and PingU
 func PingOps(p Ping, b Billing) (RequestOps, PingFacts)
 // PingWindowID is the one rule for the window id that PingOps uses: "ka:" + thread + ":" + start in
 // RFC 3339 UTC, with "" as "main". A host calls it for a ping that PingOps does not see (a refused
-// one), so the id in its ping event equals the change of the rescue.
+// one), so the id in its ping event equals the change of the rescue. It does not check start: a zero
+// start gives "ka:<thread>:0001-01-01T00:00:00Z", as PingOps does.
 func PingWindowID(thread string, start time.Time) string
 ```
 
