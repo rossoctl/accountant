@@ -1055,6 +1055,10 @@ How the library models it:
   5 minutes of the write is alive without the ping and gets no rescue. A return after `PingTTL` finds the entry cold.
 - **No premium.** A ping that asks 1h and reads writes nothing at 1h, so no `ttlPremium` exists to book. The ping's
   own cost is a `spend` that the host prices from the ping's usage.
+- **`PingTTL` must be 5m or 1h.** The engine prices no other lifetime. Another value is the host's risk: the library
+  uses it as the clock of the ping as given.
+- **A stale ping is ignored.** A ping that started before the previous request (`LastPing` not after `PrevPrint.At`)
+  kept nothing: that request wrote the entry after it. `PingTTL` is then ignored, as if it were 0 (R45).
 - **Known limits.** Only the last ping is known, so an earlier ping that asked 1h and a later one that asked 5m give
   5m, which is the right answer. A real request that reads at 1h books no rescue (the `headttl:` path books
   `ttlRescue` for that case). If the ping wrote at 1h (a first-party style rewrite), the host's own usage shows it
@@ -2010,7 +2014,6 @@ Four provider facts are inputs and no longer fixed in the code. A zero `Provider
 | `ReadGranularity` | the extent search, the read-beats-the-clock rule, the row 4 test | OpenAI before GPT-5.6 reports the cached count rounded down to a multiple of 128 (set 128, or leave 0). A provider that reports the exact count sets 1. |
 | `TTLs` | check 10 (`breakpoints`) | A Bedrock model may accept only `"5m"`. A TTL outside the list fails the check. The list can only narrow `"5m"` and `"1h"`: the clock and the tiers price no other lifetime, so any other string fails the check even when listed. An empty non-nil list allows only the empty TTL. |
 | `StorageBilled` | `Result.StorageTokens` | Gemini explicit caching bills the stored tokens by the hour. The result carries the tokens the request wrote (`CacheWrite`). The host multiplies by the hours and its rate. The library knows neither: the host decides when it deletes the cache. |
-
 | `ReadSetsTTL` | the clock (§5.2, "A read sets the TTL"), with `EntryFacts.PingTTL` | AWS Bedrock: a read sets the TTL of the part it reads, to the TTL of the reading request. A 1h ping on a 5m entry keeps it for 1 hour. The default (false) keeps the write-time TTL. |
 
 How a host describes each provider:

@@ -1225,10 +1225,15 @@ func (c *calcState) pingedTail(segs []entrySeg, gap, entryGap time.Duration, liv
 }
 
 // pingTTL is the TTL the last ping asked, when the provider lets a read set the TTL of an entry
-// (Provider.ReadSetsTTL) and the host gave it (EntryFacts.PingTTL). 0 otherwise: nothing changes then.
+// (Provider.ReadSetsTTL) and the host gave it (EntryFacts.PingTTL), and the ping came after the previous request. 0 otherwise: nothing changes then.
 func (c *calcState) pingTTL() time.Duration {
 	f := c.r.facts
 	if !f.Provider.ReadSetsTTL || f.LastPing.IsZero() || f.PingTTL <= 0 {
+		return 0
+	}
+	// A ping from before the previous request kept nothing: that request wrote the entry after it. A doubtful
+	// fact may only lower a saving (R45), so the ping TTL is ignored.
+	if prev := c.s.PrevPrint; prev == nil || !f.LastPing.After(prev.At) {
 		return 0
 	}
 	return f.PingTTL

@@ -314,7 +314,8 @@ numbers are not used: those requirements were dropped.
   TTL is only a guaranteed minimum (no documented maximum) never scores `cold` from elapsed time
   alone — that would invent a saving the provider may not have billed. See [§5.2](design.md#52-classifying-a-break).
   The clock uses the TTL the entry was written with, for each breakpoint of the previous request, and not the
-  TTL of the current request (accountant#40, #41). A billed `CacheRead` that covers a part of the entry proves
+  TTL of the current request (accountant#40, #41). One exception: a provider that sets `Provider.ReadSetsTTL` lets a keep-alive ping that read a part set its TTL
+  ([design §5.2](design.md#52-classifying-a-break), accountant#105). A billed `CacheRead` that covers a part of the entry proves
   it was alive, and beats the clock at any gap.
 
 ### D. Status and correctness
