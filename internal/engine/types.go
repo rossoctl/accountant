@@ -214,6 +214,10 @@ type EntryFacts struct {
 	// covers in that body, at the ping's own bytes-to-tokens ratio, is what it read (§4.4). A host
 	// that knows PingRead sets PingRead; PingUsage is for a host that only has the ping's usage.
 	PingUsage *Usage `json:"pingUsage,omitempty"`
+	// PingTTL is the TTL that the last ping asked on its breakpoints: 5m or 1h. The library reads it only when
+	// Provider.ReadSetsTTL is true and the ping read a part of the entry. 0 = not known: the library then
+	// judges the entry by the breakpoints of the previous request alone, as before.
+	PingTTL time.Duration `json:"pingTtl,omitempty"`
 	// SharedWarm is the longest prefix of this request's forwarded body that another thread of the same
 	// session read or wrote inside the TTL before this request. That prefix was warm without the ping,
 	// so a rescue does not credit it. Nil when no other thread touched the entry.
@@ -241,6 +245,12 @@ type Provider struct {
 	// explicit caching). Result.StorageTokens then holds the tokens the request wrote. The host
 	// multiplies it by the hours it keeps the cache and by its rate: the library knows neither.
 	StorageBilled bool `json:"storageBilled,omitempty"`
+	// ReadSetsTTL says a read sets the TTL of the part it reads, to the TTL of the reading request (AWS Bedrock,
+	// measured 2026-11-19). A read at 1h keeps the entry for 1 hour, and a later read at 5m sets it back to 5
+	// minutes. The reading request is a keep-alive ping: its TTL is EntryFacts.PingTTL. A real request already
+	// sets the TTL of its parts through its own breakpoints. False = a part keeps the TTL of the breakpoint
+	// that wrote it, and EntryFacts.PingTTL is ignored. Anthropic first-party is not measured: keep it false there.
+	ReadSetsTTL bool `json:"readSetsTTL,omitempty"`
 }
 
 // tolerance is the extent search slack in tokens for a read of n tokens.

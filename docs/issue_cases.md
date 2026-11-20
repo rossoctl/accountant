@@ -755,6 +755,20 @@ hand. Text is 4 bytes a token. The operator drops one thinking block: its signat
 
 The unit tests are in `internal/engine/opaque_count_test.go`.
 
+### A read that sets the TTL of the entry (accountant#105)
+
+Source: a measurement on AWS Bedrock, 2026-11-19. The host sets `Provider.ReadSetsTTL` and `EntryFacts.PingTTL`.
+Text is 4 bytes a token. Turn 9 caches 10,000 tokens at 5m. A ping at minute 4 reads them and writes nothing.
+
+| Case ID | What the spec requires |
+|---|---|
+| `keepalive/ping-1h-read-rescue/readsettl/5m` | The ping asks 1h. Turn 10 at minute 25 is past the 5m TTL and inside the hour from the ping. The library credits one `rescue`: 10,000 tokens, write to read. It books no premium, because the ping wrote nothing. |
+| `keepalive/ping-1h-read-rescue-ended/readsettl/5m` | The same ping, and turn 10 at minute 74, 70 minutes after the ping. The hour ended. The phase is `cold` and there is no rescue. |
+| `keepalive/ping-1h-read/property-off/5m` | The same ping and turn 10, but the host does not set `ReadSetsTTL`. `PingTTL` is ignored. The 5m entry expired at minute 25: `cold`, no rescue. This is the behavior before the property existed. |
+
+The unit tests are in `internal/engine/readsetsttl_test.go`. They also cover the return within 5 minutes
+(no rescue), a later 5m read that sets the entry back to 5 minutes, and a 5m ping that shortens a 1h entry.
+
 ## 10. Limits of this document
 
 - **The expected figures were computed by hand** from the spec's rules and the issue text. Cases 1, 3,
