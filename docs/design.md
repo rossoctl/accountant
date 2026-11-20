@@ -226,6 +226,9 @@ type EntryFacts struct {
     // from it (§5.2, the ping row): the extent its CacheRead + CacheWrite covers in the previous
     // forwarded body, which the ping replays, at the ping's own bytes-to-tokens ratio.
     PingUsage  *Usage
+    // PingTTL is the TTL the last ping asked (5m or 1h). Used only with Provider.ReadSetsTTL (§5.2,
+    // "A read sets the TTL"). 0 = not known: the entry is judged by the previous request's breakpoints alone.
+    PingTTL    time.Duration
     // SharedWarm is the longest prefix of this request's forwarded body that another thread of the same
     // session read or wrote inside the TTL before this request (R54). Nil when none did.
     SharedWarm *Position
@@ -239,6 +242,7 @@ type Provider struct {
     ReadGranularity int      // step of the reported cached count; the extent tolerance is one step plus 2%. 0 = 128, 1 = exact
     TTLs            []string // narrows "5m" and "1h" (no other string is priced); nil = both. Empty TTL is always valid
     StorageBilled   bool     // the provider bills cache storage by token and hour: Result.StorageTokens is set
+    ReadSetsTTL     bool     // a read sets the TTL of the part it reads, to the TTL of the reading request (§5.2)
 }
 
 type Kind string          // rewrite | spend | setting
@@ -492,7 +496,8 @@ conditions of the current `keepaliveSavedUSD`:
    (`EntryFacts.LastPing` is set).
 2. The **request gap** (§5.2), from the previous real request of the thread, is longer than the
    entry's TTL, so without a ping the entry would have expired. The TTL is the lifetime of the
-   breakpoint that wrote the entry, so a 1h entry is not rescued after 9 minutes. And the lifetime
+   breakpoint that wrote the entry, so a 1h entry is not rescued after 9 minutes. (With `Provider.ReadSetsTTL`, the TTL of what
+   the ping read is the TTL the ping asked, counted from the ping: §5.2, "A read sets the TTL".) And the lifetime
    is `exact` or `minimum`. A `minimum` is taken as the lifetime when a ping is what kept the entry:
    30 minutes is 30 minutes, so a rescue is added after a gap past it. This matches the current
    `keepaliveCreditFloorMs`, which credits OpenAI GPT-5.6+ after its 30-minute minimum. With no ping,
@@ -1016,6 +1021,49 @@ is still expired after 30 minutes. A 1h entry is alive after 10 minutes, whateve
 `CacheState.EntryTTL` keeps the `EntryFacts.TTL` of the writing request. A state from before that field (zero)
 falls back to the current `EntryFacts.TTL`.
 
+**A read sets the TTL (`Provider.ReadSetsTTL`, accountant#105).** By default a part of the entry lives as long
+as the breakpoint that wrote it. Some providers differ: a read sets the TTL of what it reads, to the TTL of the
+reading request. A host sets `Provider.ReadSetsTTL` for such a provider. The default keeps the write-time rule.
+
+Evidence (AWS Bedrock, through a litellm gateway, Haiku 5.5, Sonnet 5.5 and Opus 5.5, 2026-11-19, every step with a
+distinct body):
+
+- A request that asks 1h on a prefix cached at 5m is a read, not a write (15 of 15 runs). `cache_read` is the
+  full prefix. Only the tokens after the old extent are billed at the 1h write rate.
+- After that read the entry was read again at +7 min. A plain 5m entry was read at +60 s and gone at +7 min.
+- After a 1h read, a later 5m read set the entry back to 5 minutes (gone at +7 min).
+- So the TTL of an entry is the TTL asked by the last request that touched it, read or write. A read costs the
+  read rate at either TTL.
+
+Anthropic first-party is not measured. Octomind (one run for each model, 2026-10-31) saw a 5m to 1h switch rewrite
+the full prefix: `cache_read` 0 and a full 1h write. A host keeps `ReadSetsTTL` false there.
+
+How the library models it:
+
+- **A real request** needs nothing new. The state keeps its breakpoints (`ForwardedBreakpoints`), and the next request
+  judges each part by the TTL of the last request that touched it. A real 1h read stores 1h. A later real 5m read
+  stores 5m.
+- **A keep-alive ping** is not a request, so the state does not hold it. The host passes the TTL the ping asked in
+  `EntryFacts.PingTTL` (`Ping.TTL` and `PingFacts.PingTTL` carry it). The ping lives for one request: the next
+  request's own breakpoints replace it.
+- **With `ReadSetsTTL` and `PingTTL` set,** each part the ping read (up to `PingRead`) lives `PingTTL` from
+  `LastPing`, not its own TTL from the previous request. A 1h ping on a 5m entry makes the entry last until 1 hour
+  after the ping. A 5m ping on a 1h entry ends it 5 minutes after the ping.
+- **The rescue** is the keep-alive `rescue` of §4.4, with the `ChangeID` of the ping window. It is not a
+  `ttlRescue`: that kind belongs to a `headttl:` change on a real request. The rescue is credited when the request
+  gap is past the TTL that wrote the entry and the entry gap (from the ping) is inside `PingTTL`. A return within
+  5 minutes of the write is alive without the ping and gets no rescue. A return after `PingTTL` finds the entry cold.
+- **No premium.** A ping that asks 1h and reads writes nothing at 1h, so no `ttlPremium` exists to book. The ping's
+  own cost is a `spend` that the host prices from the ping's usage.
+- **`PingTTL` must be 5m or 1h.** The engine prices no other lifetime. Another value is the host's risk: the library
+  uses it as the clock of the ping as given.
+- **A stale ping is ignored.** A ping that started before the previous request (`LastPing` not after `PrevPrint.At`)
+  kept nothing: that request wrote the entry after it. `PingTTL` is then ignored, as if it were 0 (R45).
+- **Known limits.** Only the last ping is known, so an earlier ping that asked 1h and a later one that asked 5m give
+  5m, which is the right answer. A real request that reads at 1h books no rescue (the `headttl:` path books
+  `ttlRescue` for that case). If the ping wrote at 1h (a first-party style rewrite), the host's own usage shows it
+  and the library books no premium for the ping.
+
 **Mixed TTLs.** The entry has one part for each breakpoint of the previous request, and each part lives for the TTL
 of its breakpoint (`Breakpoint.TTL`, accountant#40). The prefix up to a 1h breakpoint is alive for 1h, the prefix up
 to a 5m breakpoint for 5m. After 10 minutes a 1h head is alive and a 5m tail has expired. The phase is `hot` when any
@@ -1234,13 +1282,15 @@ type Ping struct {
     Usage                          CallUsage
     At                             time.Time // when the ping started
     Window                         time.Time // the start of the idle gap the ping served
+    TTL                            time.Duration // the TTL the ping asked on its breakpoints; 0 = not known
 }
 type PingFacts struct {
     LastPing   time.Time
     PingWindow string
     PingUsage  Usage
+    PingTTL    time.Duration
 }
-func (p PingFacts) Apply(f *EntryFacts) // copies LastPing, PingWindow and PingUsage (nil when zero)
+func (p PingFacts) Apply(f *EntryFacts) // copies LastPing, PingWindow, PingUsage (nil when zero) and PingTTL
 func PingOps(p Ping, b Billing) (RequestOps, PingFacts)
 // PingWindowID is the one rule for the window id that PingOps uses: "ka:" + thread + ":" + start in
 // RFC 3339 UTC, with "" as "main". A host calls it for a ping that PingOps does not see (a refused
@@ -1957,13 +2007,14 @@ Where a question has test cases, a host that compares them with its own code mar
 
 ### Provider profile (`EntryFacts.Provider`, accountant#33)
 
-Three provider facts are inputs and no longer fixed in the code. A zero `Provider` keeps the Anthropic behaviour.
+Four provider facts are inputs and no longer fixed in the code. A zero `Provider` keeps the Anthropic behaviour.
 
 | Field | Used by | Describes |
 |---|---|---|
 | `ReadGranularity` | the extent search, the read-beats-the-clock rule, the row 4 test | OpenAI before GPT-5.6 reports the cached count rounded down to a multiple of 128 (set 128, or leave 0). A provider that reports the exact count sets 1. |
 | `TTLs` | check 10 (`breakpoints`) | A Bedrock model may accept only `"5m"`. A TTL outside the list fails the check. The list can only narrow `"5m"` and `"1h"`: the clock and the tiers price no other lifetime, so any other string fails the check even when listed. An empty non-nil list allows only the empty TTL. |
 | `StorageBilled` | `Result.StorageTokens` | Gemini explicit caching bills the stored tokens by the hour. The result carries the tokens the request wrote (`CacheWrite`). The host multiplies by the hours and its rate. The library knows neither: the host decides when it deletes the cache. |
+| `ReadSetsTTL` | the clock (§5.2, "A read sets the TTL"), with `EntryFacts.PingTTL` | AWS Bedrock: a read sets the TTL of the part it reads, to the TTL of the reading request. A 1h ping on a 5m entry keeps it for 1 hour. The default (false) keeps the write-time TTL. |
 
 How a host describes each provider:
 
@@ -1971,5 +2022,6 @@ How a host describes each provider:
 - **OpenAI, before GPT-5.6:** `Provider{ReadGranularity: 128}`. From GPT-5.6: `Provider{ReadGranularity: 1}`.
 - **Gemini explicit cache:** `Provider{ReadGranularity: 1, StorageBilled: true}`.
 - **Bedrock, a model with a 5m TTL only:** `Provider{TTLs: []string{"5m"}}`.
+- **Bedrock, a model with a 1h TTL:** `Provider{ReadSetsTTL: true}`, and `PingTTL` on each ping.
 
 `ComputeStandalone` takes no `EntryFacts`, so it sets no `StorageTokens`. A host that bills storage for a ping's write reads the figure from the ping's own usage.

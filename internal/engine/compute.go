@@ -1096,21 +1096,34 @@ func (c *calcState) phaseAndBoundary(res *Result) {
 		for _, sg := range segs {
 			longest = max(longest, sg.ttl)
 		}
-		live, alive := liveExtent(segs, gap, nil)
+		// A ping that read the entry set the TTL of what it read, when the provider lets a read do so. The
+		// ping keeps the entry for pingTTL from the ping (a 1h ping on a 5m entry), or ends it earlier (a 5m
+		// ping on a 1h entry).
+		keep := longest
+		if pt := c.pingTTL(); pt > 0 && c.pingRead() != nil {
+			keep = pt
+			pr := mustFlat(prev.Forwarded, *c.pingRead())
+			for i := range segs {
+				if segs[i].at <= pr {
+					segs[i].pingTTL = pt
+				}
+			}
+		}
+		live, alive := liveExtent(segs, gap, entryGap, nil)
 		switch {
 		case alive:
 			c.pingedTail(segs, gap, entryGap, live)
 			// A part the clock calls dead can still be proven alive by a billed read. That read lengthens the extent
 			// (it only lowers a saving, R45). `alive` itself stays clock-only, so a read does not preempt the ping rescue.
 			if c.usage.CacheRead > 0 {
-				if l2, ok := liveExtent(segs, gap, func(at int) bool { return c.readReaches(prev.Forwarded, at) }); ok {
+				if l2, ok := liveExtent(segs, gap, entryGap, func(at int) bool { return c.readReaches(prev.Forwarded, at) }); ok {
 					live = max(live, l2)
 				}
 			}
 			c.phase, c.prevExt = PhaseHot, live
 		case f.Lifetime == LifetimeUnknown:
 			// an unknown lifetime cannot prove an expiry (R45)
-		case !f.LastPing.IsZero() && entryGap <= longest && c.pingRead() != nil:
+		case !f.LastPing.IsZero() && entryGap <= keep && c.pingRead() != nil:
 			// a minimum counts as the lifetime for a rescue: 30 minutes is 30 minutes
 			c.phase, c.prevExt, c.pingHot = PhaseHot, mustFlat(prev.Forwarded, *c.pingRead()), true
 		case f.Lifetime == LifetimeMinimum:
@@ -1121,7 +1134,7 @@ func (c *calcState) phaseAndBoundary(res *Result) {
 			// skew, queue time, a long streamed response that refreshed the entry late, a sibling that kept it
 			// warm). The read is the evidence and it beats the clock at any gap; it only lowers a saving (R45).
 			if c.usage.CacheRead > 0 {
-				if live, ok := liveExtent(segs, gap, func(at int) bool { return c.readReaches(prev.Forwarded, at) }); ok {
+				if live, ok := liveExtent(segs, gap, entryGap, func(at int) bool { return c.readReaches(prev.Forwarded, at) }); ok {
 					c.phase, c.prevExt = PhaseHot, live
 				}
 			}
@@ -1201,10 +1214,29 @@ func (c *calcState) pingedTail(segs []entrySeg, gap, entryGap time.Duration, liv
 	}
 	limit := mustFlat(c.s.PrevPrint.Forwarded, *c.pingRead())
 	for _, sg := range segs {
-		if sg.at > live && sg.at <= limit && gap > sg.ttl && entryGap <= sg.ttl && sg.at > c.tailTo {
+		eff := sg.ttl // the TTL the ping gave this part, when it read it and the provider lets a read set the TTL
+		if sg.pingTTL > 0 {
+			eff = sg.pingTTL
+		}
+		if sg.at > live && sg.at <= limit && gap > sg.ttl && entryGap <= eff && sg.at > c.tailTo {
 			c.tailFrom, c.tailTo, c.tailTTL = live, sg.at, sg.ttl
 		}
 	}
+}
+
+// pingTTL is the TTL the last ping asked, when the provider lets a read set the TTL of an entry
+// (Provider.ReadSetsTTL) and the host gave it (EntryFacts.PingTTL), and the ping came after the previous request. 0 otherwise: nothing changes then.
+func (c *calcState) pingTTL() time.Duration {
+	f := c.r.facts
+	if !f.Provider.ReadSetsTTL || f.LastPing.IsZero() || f.PingTTL <= 0 {
+		return 0
+	}
+	// A ping from before the previous request kept nothing: that request wrote the entry after it. A doubtful
+	// fact may only lower a saving (R45), so the ping TTL is ignored.
+	if prev := c.s.PrevPrint; prev == nil || !f.LastPing.After(prev.At) {
+		return 0
+	}
+	return f.PingTTL
 }
 
 // entrySeg is the part of the cached entry that a breakpoint of the previous request wrote: the prefix up
@@ -1212,6 +1244,10 @@ func (c *calcState) pingedTail(segs []entrySeg, gap, entryGap time.Duration, liv
 type entrySeg struct {
 	at  int
 	ttl time.Duration
+	// pingTTL is the TTL of the last ping that read this part, when the provider lets a read set the TTL
+	// (Provider.ReadSetsTTL). 0 = no such ping. The part then lives pingTTL from the ping, not ttl from the
+	// request.
+	pingTTL time.Duration
 }
 
 // segTTL is the lifetime a breakpoint's TTL string gives. Any string other than "5m" and "1h" (an empty
@@ -1243,11 +1279,11 @@ func entrySegs(s ThreadState, entryTTL time.Duration) []entrySeg {
 	var segs []entrySeg
 	for _, b := range prev.Forwarded.breakpoints(prev.ForwardedBreakpoints) {
 		if b.at <= ext {
-			segs = append(segs, entrySeg{b.at, segTTL(b.ttl, entryTTL)})
+			segs = append(segs, entrySeg{at: b.at, ttl: segTTL(b.ttl, entryTTL)})
 		}
 	}
 	if len(segs) == 0 || segs[len(segs)-1].at < ext {
-		segs = append(segs, entrySeg{ext, entryTTL})
+		segs = append(segs, entrySeg{at: ext, ttl: entryTTL})
 	}
 	return segs
 }
@@ -1255,10 +1291,13 @@ func entrySegs(s ThreadState, entryTTL time.Duration) []entrySeg {
 // liveExtent is the longest prefix of the previous entry that is alive after gap: the end of the last
 // segment whose own TTL has not run out. A segment that has run out is alive too when read says the usage
 // proves a read of its prefix (read may be nil). ok is false when no segment is alive.
-func liveExtent(segs []entrySeg, gap time.Duration, read func(at int) bool) (int, bool) {
+//
+// A part that a 5m ping read (pingTTL set) is not alive once entryGap, the time since the ping, is past
+// pingTTL, even when gap is still inside its own ttl: the read set the TTL back (Provider.ReadSetsTTL).
+func liveExtent(segs []entrySeg, gap, entryGap time.Duration, read func(at int) bool) (int, bool) {
 	live, ok := -1, false
 	for _, sg := range segs {
-		if gap <= sg.ttl || (read != nil && read(sg.at)) {
+		if (gap <= sg.ttl && (sg.pingTTL == 0 || entryGap <= sg.pingTTL)) || (read != nil && read(sg.at)) {
 			live, ok = max(live, sg.at), true
 		}
 	}

@@ -508,6 +508,56 @@ def ex8():
           "keepalive-ping-rescue")
 
 
+
+# ---------------------------------------------------------------------------------------------
+# accountant#105: a read sets the TTL of the entry (Provider.ReadSetsTTL, AWS Bedrock). The ping asks 1h on a
+# 5m entry. It is a read and writes nothing, and the entry then lives 1 hour from the ping.
+def read_sets_ttl_case(cid, session, read_sets, ping_ttl, turn_sec, hot, description, dims):
+    KA1 = "ka:main:w105"
+    sysb = [("sys8", 2000)]
+    msgs = [("m0", 3000), ("m1", 1000), ("m2", 1000), ("m3", 1000), ("m4", 1000), ("m5", 1000)]
+    ping_usage = {"input": 10, "cacheRead": 10000, "cacheWrite": 0, "cacheWrite1h": 0, "output": 1}
+    call = {"host": "bedrock", "model": "agent-model", "usage": ping_usage}
+    steps = [step(0, "turn-9", body([], sysb, msgs), body([], sysb, msgs), bps(msgs), bps(msgs), [],
+                  U(write=10000), expect("unknown", U(write=10000), []), session=session)]
+    steps.append(ping_step(240, session, KA1, call))
+    msgs10 = msgs + [("m6", 500)]
+    facts = {"ttl": "5m", "lifetime": "exact", "lastPing": ts(240), "pingRead": P("messages", 5), "pingWindow": KA1,
+             "pingTtl": ping_ttl}
+    if read_sets:
+        facts["provider"] = {"readSetsTTL": True}
+    if hot:
+        usage = U(read=10000, write=500)
+        exp = expect("hot", U(write=10500), [],
+                     effects=[effect("rescue", KA1, saved=TT(cacheWrite5m=10000), caused=TT(cacheRead=10000),
+                                     to=P("messages", 5),
+                                     note="the 1h read kept the 5m entry alive; write becomes read")])
+    else:
+        usage = U(write=10500)
+        exp = expect("cold", U(write=10500), [])
+    steps.append(step(turn_sec, "turn-10", body([], sysb, msgs10), body([], sysb, msgs10), bps(msgs10), bps(msgs10), [],
+                      usage, exp, session=session, facts=facts))
+    write(case(cid, description, f"{ISSUES}#105", dims, steps), cid.replace("/", "-"))
+
+
+def c105():
+    d = {"kind": "rescue", "position": "beforeBStar", "cache": "rescue", "ttl": "5m", "lifetime": "exact", "keepalive": "true"}
+    read_sets_ttl_case(
+        "keepalive/ping-1h-read-rescue/readsettl/5m", "s105a", True, "1h", 1500, True,
+        "Turn 9 caches 10,000 tokens at 5m. A keep-alive ping at minute 4 asks 1h and reads them (a read, no write: "
+        "-$0.00305). The provider sets the entry to 1h (Provider.ReadSetsTTL). Turn 10 arrives at minute 25: 25 minutes "
+        "after turn 9 and 21 after the ping, inside the hour. The rescue is credited: 10,000 x ($3.75 - $0.30) = "
+        "+$0.03450. The 1h ping wrote nothing, so no premium is booked.", d)
+    read_sets_ttl_case(
+        "keepalive/ping-1h-read-rescue-ended/readsettl/5m", "s105b", True, "1h", 4440, False,
+        "As keepalive/ping-1h-read-rescue/readsettl/5m, but turn 10 arrives at minute 74, 70 minutes after the ping. "
+        "The 1h ended. The entry is cold and no rescue is credited.", dict(d, cache="cold", kind="rewrite"))
+    read_sets_ttl_case(
+        "keepalive/ping-1h-read/property-off/5m", "s105c", False, "1h", 1500, False,
+        "The same ping and the same turn 10 as keepalive/ping-1h-read-rescue/readsettl/5m, but the host does not set "
+        "Provider.ReadSetsTTL. PingTTL is ignored: the entry is judged by the breakpoints that wrote it (5m), and "
+        "turn 10 at minute 25 finds it expired. No rescue, as before this property existed.", dict(d, cache="cold", kind="rewrite"))
+
 # ---------------------------------------------------------------------------------------------
 # Shared prefix (R54): example 8, but a sibling thread read the shared head inside the TTL, so it was warm
 # without the ping. The rescue credits only what lies past that head.
@@ -3822,7 +3872,7 @@ if __name__ == "__main__":
     for old in os.listdir(OUT):  # the generator owns this directory: drop cases that no longer exist
         if old.endswith(".json"):
             os.remove(os.path.join(OUT, old))
-    for f in (ex12, ex3, ex4, ex5, ex67, ex8, shared_prefix_cases, ex9, c01, c02, c03_04, c05, c06, c07, c08, c09, c10, c11, c12, c_threads, c_client_compaction, c_client_trim_keeps_head, c_client_rewrite_in_place_ends_replay, c_client_compaction_before_any_change, c_inplace_taken_over_by_another_operator, c_client_tail_edit_keeps_replay, c_client_tail_compaction_ends_replay, c_client_two_compactions, c_clock, c_ttl, c_mix,
+    for f in (ex12, ex3, ex4, ex5, ex67, ex8, c105, shared_prefix_cases, ex9, c01, c02, c03_04, c05, c06, c07, c08, c09, c10, c11, c12, c_threads, c_client_compaction, c_client_trim_keeps_head, c_client_rewrite_in_place_ends_replay, c_client_compaction_before_any_change, c_inplace_taken_over_by_another_operator, c_client_tail_edit_keeps_replay, c_client_tail_compaction_ends_replay, c_client_two_compactions, c_clock, c_ttl, c_mix,
               c14, s909, r909_system_hash, c15, c16, c17, c18, a1, a2, a3, a4_b3, b1_b2, b4, b5, c1_, c2_, c2b, c3_, c5, d2, d3, d4,
               d5, d6, e2, e345, f245, h2, h5, r9, i53, i54, i56, i55_split, i55_no_cache, i55_media_one_side, r14, r21, r20, r20b, c42, c42b, c42c, c42d, c70d, c43, c73, c77, c77_more, c77_capped, i44, c49, i52_all, d60, d60_1h, d60_loaded):
         f()

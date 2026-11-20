@@ -73,6 +73,9 @@ type Facts struct {
 	PingRead   *accountant.Position    `json:"pingRead,omitempty"`
 	PingWindow string                  `json:"pingWindow,omitempty"`
 	SharedWarm *accountant.Position    `json:"sharedWarm,omitempty"`
+	// PingTTL is the TTL the last ping asked ("5m", "1h"); empty = not known.
+	PingTTL  string              `json:"pingTtl,omitempty"`
+	Provider accountant.Provider `json:"provider,omitzero"`
 	// MinCacheable is the model's minimum cacheable length in tokens; 0 = not set.
 	MinCacheable int `json:"minCacheable,omitempty"`
 }
@@ -84,8 +87,14 @@ func (f Facts) EntryFacts() accountant.EntryFacts {
 	if err != nil {
 		panic(fmt.Sprintf("cases: facts ttl %q: %v", f.TTL, err))
 	}
+	var pingTTL time.Duration
+	if f.PingTTL != "" {
+		if pingTTL, err = time.ParseDuration(f.PingTTL); err != nil {
+			panic(fmt.Sprintf("cases: facts pingTtl %q: %v", f.PingTTL, err))
+		}
+	}
 	return accountant.EntryFacts{TTL: ttl, Lifetime: f.Lifetime, LastPing: f.LastPing, PingRead: f.PingRead, PingWindow: f.PingWindow, SharedWarm: f.SharedWarm,
-		MinCacheable: f.MinCacheable}
+		PingTTL: pingTTL, Provider: f.Provider, MinCacheable: f.MinCacheable}
 }
 
 // Expected is what Compute must return for one step, in tokens for each tier.
