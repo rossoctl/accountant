@@ -44,12 +44,34 @@ OTel names use dots. The collector converts them to Prometheus names (`llm_savin
 | `llm.savings.added.tokens` | `kind`, `tier`, `component` | Tokens the provider billed because of an operation. A `spend` books its call usage here. |
 | `llm.savings.saved.usd` | `kind`, `tier`, `component` | The saved tokens, priced. |
 | `llm.savings.added.usd` | `kind`, `tier`, `component` | The added tokens, priced. |
-| `llm.savings.cache_effect.usd` | `effect`, `cause`, `direction` | Cache effects, in money. **A breakdown.** Never add it to saved or added. |
-| `llm.savings.interaction.usd` | `direction` | The net value of `Result.Interaction` minus `Result.InteractionCaused` (design §6.2). A breakdown. |
+| `llm.savings.cache_effect.usd` | `effect`, `cause`, `direction` | Cache effects, in money. Not in saved or added. **Add it** for the net saving (see below). |
+| `llm.savings.interaction.usd` | `direction` | The net value of `Result.Interaction` minus `Result.InteractionCaused` (design §6.2). Not in saved or added. **Add it** for the net saving (see below). |
 | `llm.savings.requests` | `result` | `priced`, `unpriced` or `skipped`. |
 | `llm.savings.unpriced` | `reason` | Operations the library did not price. |
 | `llm.savings.check_failures` | `check` | Failed library checks. |
 | `llm.savings.estimated` | none | Requests with an estimated figure. |
+
+## The net saving
+
+The bill difference of a request is the applied operations plus the cache effects plus the interaction
+(design §6.2, and check 6 in §6.5). Each part has its own counter, and no counter contains another. So the net
+saving, in money, is:
+
+```
+  llm.savings.saved.usd
+− llm.savings.added.usd
++ llm.savings.cache_effect.usd{direction="saved"}
+− llm.savings.cache_effect.usd{direction="added"}
++ llm.savings.interaction.usd{direction="saved"}
+− llm.savings.interaction.usd{direction="added"}
+```
+
+- A cache effect moves tokens between tiers. It nets zero tokens, so it has no token counter. It does not
+  net zero money: a `rescue` moves tokens from the write rate to the read rate.
+- `added.usd` contains every `spend`, and a keep-alive ping is a `spend` (design §4.2, rule 5). If you leave out the
+  `rescue` effects, the ping is a cost with no saving.
+- The `added` side of a `cache_effect` is real cost: a `break`, or the premium of a `markPremium` or a
+  `ttlPremium`. Do not floor it at zero.
 
 ## Rules
 
