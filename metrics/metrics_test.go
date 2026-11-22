@@ -168,7 +168,8 @@ func TestUnpricedChecksAndEstimated(t *testing.T) {
 	}
 }
 
-// A cache effect is a breakdown only. It must never reach saved or added (spec 5.2).
+// A cache effect has its own counter. It must never reach saved or added: a host adds the two for
+// the net saving (spec 5.2, design §6.2).
 func TestCacheEffectGoesToItsOwnCounterOnly(t *testing.T) {
 	s, r := newSink(t)
 	o := obs("m")
@@ -353,7 +354,7 @@ func TestInteractionIsBookedNet(t *testing.T) {
 	if len(pts) != 1 || pts[0].attrs["direction"] != "saved" || pts[0].f < 0.79 || pts[0].f > 0.81 {
 		t.Fatalf("interaction = %+v, want one saved point of 0.8 (1000-200 tokens at 0.001)", pts)
 	}
-	// It is a breakdown: it must not reach saved or added.
+	// It has its own counter: it must not reach saved or added.
 	if got := collect(t, r); len(got["llm.savings.saved.usd"])+len(got["llm.savings.added.usd"]) != 0 {
 		t.Fatalf("interaction reached saved or added: %v", got)
 	}
