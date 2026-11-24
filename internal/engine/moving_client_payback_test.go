@@ -96,4 +96,24 @@ func TestPaybackBooksTheInputAndTheWriteMove(t *testing.T) {
 	if e.Saved != (TierTokens{Input: 1000, CacheWrite5m: 1000}) || e.Caused != (TierTokens{CacheRead: 2000}) {
 		t.Fatalf("payback = %+v, want 1000 input and 1000 5m write -> 2000 read", e)
 	}
+	noChecks(t, r1)
+}
+
+// Review of #109, round 2. The host forwards msg(2) 500 tokens longer than the client sent it. The read stops
+// 100 tokens short of msg(3), within the tolerance, so readEnd is msg(3). The provider read a prefix of the
+// forwarded body: past B* it read msg(2)'s 1500 and 900 of msg(3). So the payback is msg(2)'s shared 1000 and
+// 900 of msg(3), not the whole of msg(3). Counting only the shared tokens against the read booked 100 too many.
+func TestPaybackCapCountsTheForwardedTokens(t *testing.T) {
+	ts := NewTrackers()
+	client := []blk{b("m0", 1000), b("m1", 1000), b("m2", 1000), b("m3", 1000)}
+	fwd := []blk{b("m0", 1000), b("m1", 1000), b("m2", 1500), b("m3", 1000)}
+	req{at: t0, client: mk(nil, nil, client), clientBPs: bps5(msg(1)), fwd: mk(nil, nil, fwd), fwdBPs: bps5(msg(1), msg(3)),
+		facts: exact5m, usage: Usage{CacheWrite: 4500}}.run(ts)
+	c1, f1 := with(client, b("m4", 100)), with(fwd, b("m4", 100))
+	r1 := req{at: t0.Add(40 * time.Second), client: mk(nil, nil, c1), clientBPs: bps5(msg(1), msg(2)), fwd: mk(nil, nil, f1),
+		fwdBPs: bps5(msg(1), msg(2), msg(4)), facts: exact5m, usage: Usage{CacheRead: 4400, CacheWrite: 200}}.run(ts)
+	e := effect(t, r1, EffectMarkPayback)
+	if e.Saved != (TierTokens{Input: 900, CacheWrite5m: 1000}) || e.Caused != (TierTokens{CacheRead: 1900}) {
+		t.Fatalf("payback = %+v, want 1000 5m write and 900 input -> 1900 read", e)
+	}
 }

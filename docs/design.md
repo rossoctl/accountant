@@ -654,7 +654,9 @@ Rules that follow from the table:
 
   The read past B* caps the sum: `Usage.CacheRead` minus the tokens up to B*, which the client body reads too.
   The cap cuts at the end, in position order: the read extent is taken within a tolerance, so the last
-  positions may be ones the provider wrote, not read.
+  positions may be ones the provider wrote, not read. The provider reads a prefix of the forwarded body, so
+  at each position the read left is the read past B* minus every forwarded token before it, including
+  content only the forwarded body holds.
   B* itself must not count the host's entry. The previous extent goes into B* through `clientExtent`: when a
   host mark wrote the part past the previous client's last breakpoint, the extent ends at that breakpoint.
   Otherwise a client breakpoint after the host's mark could look back to the host's entry, B* would land on

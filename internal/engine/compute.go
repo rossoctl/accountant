@@ -1900,23 +1900,34 @@ func (c *calcState) markPayback(res *Result) {
 		}
 	}
 	// The read past B* caps the moves: up to B* the client body reads too. The read may end before readEnd,
-	// which extentWith takes within a tolerance, so the cap cuts at the end: the provider read a prefix, and
-	// the tokens past it were written, not read. The bytes are added in position order and converted once
-	// per position as a running total, so rounding costs one token in all, not one a position.
-	left := c.usage.CacheRead
+	// which extentWith takes within a tolerance, so the cap cuts at the end: the provider read a prefix of the
+	// FORWARDED body, and the tokens past it were written, not read. So the read left at a position is the read
+	// past B* minus every forwarded token before it, shared or not: a block the host added and the part of a
+	// message the host made longer are read too. The shared bytes are added in position order and converted
+	// as a running total, so rounding costs one token in all, not one a position.
+	read := c.usage.CacheRead
 	if c.bstarFwd >= 0 {
-		left -= c.ratio.upTo(c.fwd, c.bstarFwd)
+		read -= c.ratio.upTo(c.fwd, c.bstarFwd)
 	}
 	var cum parts
-	var n, n5, n1, done int
+	var n, n5, n1, done, prev int
 	first, last := -1, -1
-	for i := c.bstarFwd + 1; i <= min(c.readEnd, len(c.fwd.Pos)-1) && done < left; i++ {
+	for i := c.bstarFwd + 1; i <= min(c.readEnd, len(c.fwd.Pos)-1); i++ {
+		left := read - c.ratio.between(c.fwd, c.bstarFwd, i-1)
+		if left <= 0 {
+			break
+		}
 		j := mustFlat(c.client, c.fwdToClient(c.fwd.position(i)))
 		if j < 0 || mustFlat(c.fwd, c.clientToFwd(c.client.position(j))) != i {
 			continue
 		}
 		cum.add(minParts(c.fwd.between(i-1, i), c.client.between(j-1, j)))
-		d := min(c.ratio.tokensOf(cum), left) - done
+		t := c.ratio.tokensOf(cum)
+		d := min(t-prev, left)
+		prev = t
+		if d <= 0 {
+			continue
+		}
 		done += d
 		switch ttl, _, ok := c.writeBP(c.client, c.clientBPs, j); {
 		case !ok:
