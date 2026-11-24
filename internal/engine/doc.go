@@ -51,8 +51,10 @@
 //     where x is first snapped down to this request's last client breakpoint at or before it, unless
 //     a breakpoint of this request is at or after x (the provider reads only from a breakpoint). The
 //     candidates are the previous extent and the client breakpoints of this and the previous
-//     request. The row-4 prediction snaps the same way, with the forwarded breakpoints. With no client
-//     breakpoint in this request every position is a breakpoint, so B* = x. With no forwarded breakpoint
+//     request. prevCachedExtent stops at the previous client's last breakpoint when a mark the host added
+//     wrote the part past it: the client body has no entry there (clientExtent, #52). The row-4
+//     prediction snaps the same way, with the forwarded breakpoints. With no client breakpoint in
+//     this request every position is a breakpoint, so B* = x. With no forwarded breakpoint
 //     in this request, extent tries every position (no candidate list; see decision 3). The 128-token
 //     rounding of older OpenAI models is absorbed by the extent tolerance. The minimum cacheable
 //     length (EntryFacts.MinCacheable) turns a write into input when no breakpoint at or after the content reaches it.

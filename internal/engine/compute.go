@@ -1182,8 +1182,10 @@ func (c *calcState) phaseAndBoundary(res *Result) {
 		// The comparison is in tokens, not positions: a position is an index into one body, and the previous and
 		// the current forwarded bodies may differ before the extent (a block a plugin added), so equal
 		// indices would not mean equal prefixes.
-		if c.prevExt >= 0 && !c.skipsPricing() && c.readCoversExtent(prev) && c.clientFD <= c.prevExtCli && c.prevExtCli > c.bstar && !c.splitChangedSystem() {
-			c.bstar = c.prevExtCli
+		// The full read proves that no content changed. It does not give the client body an entry past its own
+		// last breakpoint, so B* is the client's extent (clientExtent), not the host's (accountant#52).
+		if c.prevExt >= 0 && !c.skipsPricing() && c.readCoversExtent(prev) && c.clientFD <= c.prevExtCli && ext > c.bstar && !c.splitChangedSystem() {
+			c.bstar = ext
 		}
 	case PhaseUnknown:
 		c.unknown = true
@@ -1209,6 +1211,10 @@ func (c *calcState) phaseAndBoundary(res *Result) {
 // last breakpoint: the client body has no entry there, so its extent ends at that breakpoint (accountant#52).
 // Without the cap a client that moves its own breakpoint to the newest message can look back to the host's
 // entry, B* lands on the host's mark, and the next request books no markPayback for the premium it paid.
+//
+// prevExtCli is flat in the previous client body, and prevClientBPs and prevFwdBPs are flat in this one. The two
+// bodies agree before clientFD, where the comparisons here are made. B* used prevExtCli as a position of this
+// body before the cap, so the cap adds no new mix of the two.
 func (c *calcState) clientExtent() int {
 	ext := c.prevExtCli
 	if ext < 0 || len(c.prevClientBPs) == 0 {
@@ -1893,41 +1899,39 @@ func (c *calcState) markPayback(res *Result) {
 			return
 		}
 	}
-	var sum, w5m, w1h parts
+	// The read past B* caps the moves: up to B* the client body reads too. The read may end before readEnd,
+	// which extentWith takes within a tolerance, so the cap cuts at the end: the provider read a prefix, and
+	// the tokens past it were written, not read. The bytes are added in position order and converted once
+	// per position as a running total, so rounding costs one token in all, not one a position.
+	left := c.usage.CacheRead
+	if c.bstarFwd >= 0 {
+		left -= c.ratio.upTo(c.fwd, c.bstarFwd)
+	}
+	var cum parts
+	var n, n5, n1, done int
 	first, last := -1, -1
-	for i := c.bstarFwd + 1; i <= min(c.readEnd, len(c.fwd.Pos)-1); i++ {
+	for i := c.bstarFwd + 1; i <= min(c.readEnd, len(c.fwd.Pos)-1) && done < left; i++ {
 		j := mustFlat(c.client, c.fwdToClient(c.fwd.position(i)))
 		if j < 0 || mustFlat(c.fwd, c.clientToFwd(c.client.position(j))) != i {
 			continue
 		}
-		p := minParts(c.fwd.between(i-1, i), c.client.between(j-1, j))
+		cum.add(minParts(c.fwd.between(i-1, i), c.client.between(j-1, j)))
+		d := min(c.ratio.tokensOf(cum), left) - done
+		done += d
 		switch ttl, _, ok := c.writeBP(c.client, c.clientBPs, j); {
 		case !ok:
-			sum.add(p) // the client body would have billed it as input
+			n += d // the client body would have billed it as input
 		case ttl == "1h":
-			w1h.add(p) // the client body would have written it: after B* it has no entry to read
+			n1 += d // the client body would have written it: after B* it has no entry to read
 		default:
-			w5m.add(p)
+			n5 += d
 		}
 		if first < 0 {
 			first = i
 		}
 		last = i
 	}
-	// The read past B* caps the three: up to B* the client body reads too. A write moved to a read is the
-	// larger saving, so the cap cuts it first: a doubtful figure may only lower a saving.
-	left := c.usage.CacheRead
-	if c.bstarFwd >= 0 {
-		left -= c.ratio.upTo(c.fwd, c.bstarFwd)
-	}
-	take := func(p parts) int {
-		n := min(c.ratio.tokensOf(p), max(left, 0))
-		left -= n
-		return n
-	}
-	n := take(sum)
-	n5, n1 := take(w5m), take(w1h)
-	if n+n5+n1 <= 0 {
+	if done <= 0 {
 		return
 	}
 	e := CacheEffect{Kind: EffectMarkPayback, Estimated: true}
