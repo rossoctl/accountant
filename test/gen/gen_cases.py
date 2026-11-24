@@ -3338,6 +3338,43 @@ def i52_all():
                 "the same. No payback: only the read the client body also had.",
                 DIMS("setting-breakpoint", "messages", "mark-payback-missed"), [s0, s1])
 
+    # Row 5: the client moves its own mark to the newest message (Claude Code does this on every turn). The client
+    # body has no entry at the host's mark, so B* is the client's old mark, and the client body would WRITE the
+    # host's tail on turn 1. The payback moves those tokens from a 5m write to a read.
+    s0, m0, cb = i52_r0("5m")
+    cb1 = BP(("messages", 3))
+    s1 = sim(40, "r1", ([], [], m1), ([], [], m1), [], "hot", prev=(11000, 11000), cbp=cb1, fbp=cb1,
+             usage=U(read=11000, write=500), base=U(read=5000, write=6500),
+             effects=[effect("markPayback", "", saved=TT(cacheWrite5m=6000), caused=TT(cacheRead=6000),
+                             frm=P("messages", 0), to=P("messages", 2),
+                             note="the client body would write these tokens again; the provider reads them")])
+    write_issue("markpayback/client-moves-mark/hot/5m", 52,
+                "Turn 0 is the same as markpayback/next-turn/hot/5m: the host mark costs -$0.00450. On turn 1 the client "
+                "moves its mark to the newest message, messages[3], and the host adds none. The provider reads 11,000 and "
+                "writes 500. The client body has no entry at the host's mark: it would read 5,000 and write 6,500. So the "
+                "host mark pays back 6,000 x ($3.75 - $0.30) = +$0.02070.",
+                DIMS("setting-breakpoint", "messages", "mark-payback"), [s0, s1])
+
+    # Row 6: row 5 for a host that hashes cache_control. Moving the client mark off messages[0] changes its hash,
+    # so the client's first difference is messages[0]. The provider still reads all 11,000, and the full-read rule
+    # sets B* to the client's extent, messages[0], not to the host's mark. The payback is the same as in row 5.
+    s0, m0, cb = i52_r0("5m")
+    m1h = [("m0-unmarked", 5000)] + m0[1:] + [("m3", 500)]
+    s1 = sim(40, "r1", ([], [], m1h), ([], [], m1h), [], "hot", prev=(11000, 11000), cbp=cb1, fbp=cb1,
+             usage=U(read=11000, write=500), base=U(read=5000, write=6500), boundary=P("messages", 0),
+             effects=[effect("markPayback", "", saved=TT(cacheWrite5m=6000), caused=TT(cacheRead=6000),
+                             frm=P("messages", 0), to=P("messages", 2),
+                             note="the client body would write these tokens again; the provider reads them"),
+                      effect("break", "", frm=P("messages", 2), to=P("messages", 0),
+                             note="a message the client did not change has a new hash; the provider read past B*, "
+                                  "so the break moves no token")])
+    write_issue("markpayback/client-moves-mark-hash-changes/hot/5m", 52,
+                "The same as markpayback/client-moves-mark/hot/5m, for a host that hashes cache_control: moving the client "
+                "mark off messages[0] changes its hash. The provider reads all 11,000, so the hash change moved no "
+                "content. B* is the end of the client's own extent, messages[0], not the host's mark. The host mark "
+                "pays back 6,000 x ($3.75 - $0.30) = +$0.02070.",
+                DIMS("setting-breakpoint", "messages", "mark-payback"), [s0, s1])
+
 
 def c49():
     m0 = [("m0", 5000)]

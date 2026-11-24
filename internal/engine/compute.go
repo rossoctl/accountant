@@ -1161,12 +1161,13 @@ func (c *calcState) phaseAndBoundary(res *Result) {
 		if c.prevExt >= 0 {
 			c.prevExtCli = mustFlat(prev.Client, prevFwdToClient(prev, prev.Forwarded.position(c.prevExt)))
 		}
-		x := readable(min(c.prevExtCli, c.clientFD-1), c.clientBPs)
+		ext := c.clientExtent()
+		x := readable(min(ext, c.clientFD-1), c.clientBPs)
 		c.bstar = -1
 		if len(c.clientBPs) == 0 {
 			c.bstar = x // no client breakpoint: every position is one
 		} else {
-			for _, cand := range append(append([]bp{{at: c.prevExtCli}}, c.clientBPs...), c.prevClientBPs...) {
+			for _, cand := range append(append([]bp{{at: ext}}, c.clientBPs...), c.prevClientBPs...) {
 				if cand.at <= x && cand.at > c.bstar {
 					c.bstar = cand.at
 				}
@@ -1181,8 +1182,10 @@ func (c *calcState) phaseAndBoundary(res *Result) {
 		// The comparison is in tokens, not positions: a position is an index into one body, and the previous and
 		// the current forwarded bodies may differ before the extent (a block a plugin added), so equal
 		// indices would not mean equal prefixes.
-		if c.prevExt >= 0 && !c.skipsPricing() && c.readCoversExtent(prev) && c.clientFD <= c.prevExtCli && c.prevExtCli > c.bstar && !c.splitChangedSystem() {
-			c.bstar = c.prevExtCli
+		// The full read proves that no content changed. It does not give the client body an entry past its own
+		// last breakpoint, so B* is the client's extent (clientExtent), not the host's (accountant#52).
+		if c.prevExt >= 0 && !c.skipsPricing() && c.readCoversExtent(prev) && c.clientFD <= c.prevExtCli && ext > c.bstar && !c.splitChangedSystem() {
+			c.bstar = ext
 		}
 	case PhaseUnknown:
 		c.unknown = true
@@ -1201,6 +1204,35 @@ func (c *calcState) phaseAndBoundary(res *Result) {
 		res.Boundary = &p
 		c.bstarFwd = mustFlat(c.fwd, c.clientToFwd(p))
 	}
+}
+
+// clientExtent is the previous extent as the client body would have cached it, flat in the client body; -1 =
+// none. It is prevExtCli, except where a breakpoint the host added wrote the part past the previous client's
+// last breakpoint: the client body has no entry there, so its extent ends at that breakpoint (accountant#52).
+// Without the cap a client that moves its own breakpoint to the newest message can look back to the host's
+// entry, B* lands on the host's mark, and the next request books no markPayback for the premium it paid.
+//
+// prevExtCli is flat in the previous client body, and prevClientBPs and prevFwdBPs are flat in this one. The two
+// bodies agree before clientFD, where the comparisons here are made. B* used prevExtCli as a position of this
+// body before the cap, so the cap adds no new mix of the two.
+func (c *calcState) clientExtent() int {
+	ext := c.prevExtCli
+	if ext < 0 || len(c.prevClientBPs) == 0 {
+		return ext // with no client breakpoint the provider caches the whole prompt (§5.1)
+	}
+	last := -1
+	for _, b := range c.prevClientBPs {
+		last = max(last, b.at)
+	}
+	if ext <= last {
+		return ext
+	}
+	for _, b := range c.prevFwdBPs {
+		if j := mustFlat(c.client, c.fwdToClient(c.fwd.position(b.at))); j > last && j <= ext {
+			return last // the host's mark wrote the extent past the client's last breakpoint
+		}
+	}
+	return ext
 }
 
 // pingedTail finds the part of a mixed-TTL entry that the clock calls expired and that a ping kept alive:
@@ -1850,11 +1882,13 @@ func (c *calcState) premiums() (ttl, mark *CacheEffect) {
 
 // markPayback adds the return on a breakpoint the host added on an earlier request (§4.4). The previous
 // request wrote the tail up to that breakpoint (a markPremium, a cost). This request reads it, and the
-// client body, whose last breakpoint is earlier, would have billed it as input. Each forwarded position
-// after B* that the provider read, that both bodies hold, and that the client body would not have cached,
-// moves from input to read. No operation prices these tokens, and the split and every rescue book their
-// own tokens (a ping rescue, a mixed-TTL tail rescue, a head's ttlRescue), so a request that already holds
-// a split or a rescue does not get a payback: a token is in one effect only.
+// client body would have billed it as input, or, when the client moved its own breakpoint past the host's,
+// written it again: B* stops at the client's own entry (clientExtent), so it has none there to read. Each
+// forwarded position after B* that the provider read and that both bodies hold moves from the client body's
+// tier, input or a write at that client breakpoint's TTL, to read. No operation prices these tokens, and
+// the split and every rescue book their own tokens (a ping rescue, a mixed-TTL tail rescue, a head's
+// ttlRescue), so a request that already holds a split or a rescue does not get a payback: a token is in one
+// effect only.
 func (c *calcState) markPayback(res *Result) {
 	if c.phase != PhaseHot || c.unknown || c.pingHot || c.readEnd < 0 || len(c.clientBPs) == 0 || len(c.prevFwdBPs) == 0 ||
 		c.noCacheTokens() || c.splitItem() != "" || c.bstarFwd >= c.readEnd {
@@ -1865,24 +1899,50 @@ func (c *calcState) markPayback(res *Result) {
 			return
 		}
 	}
-	var sum parts
+	// The read past B* caps the moves: up to B* the client body reads too. The read may end before readEnd,
+	// which extentWith takes within a tolerance, so the cap cuts at the end: the provider read a prefix of the
+	// FORWARDED body, and the tokens past it were written, not read. So the read left at a position is the read
+	// past B* minus every forwarded token before it, shared or not: a block the host added and the part of a
+	// message the host made longer are read too. The shared bytes are added in position order and converted
+	// as a running total, so rounding costs one token in all, not one a position.
+	read := c.usage.CacheRead
+	if c.bstarFwd >= 0 {
+		read -= c.ratio.upTo(c.fwd, c.bstarFwd)
+	}
+	var cum parts
+	var n, n5, n1, done, prev int
 	first, last := -1, -1
 	for i := c.bstarFwd + 1; i <= min(c.readEnd, len(c.fwd.Pos)-1); i++ {
+		left := read - c.ratio.between(c.fwd, c.bstarFwd, i-1)
+		if left <= 0 {
+			break
+		}
 		j := mustFlat(c.client, c.fwdToClient(c.fwd.position(i)))
 		if j < 0 || mustFlat(c.fwd, c.clientToFwd(c.client.position(j))) != i {
 			continue
 		}
-		if _, _, ok := c.writeBP(c.client, c.clientBPs, j); ok {
-			continue // the client body would have cached it: read or written, not input
+		cum.add(minParts(c.fwd.between(i-1, i), c.client.between(j-1, j)))
+		t := c.ratio.tokensOf(cum)
+		d := min(t-prev, left)
+		prev = t
+		if d <= 0 {
+			continue
 		}
-		sum.add(minParts(c.fwd.between(i-1, i), c.client.between(j-1, j)))
+		done += d
+		switch ttl, _, ok := c.writeBP(c.client, c.clientBPs, j); {
+		case !ok:
+			n += d // the client body would have billed it as input
+		case ttl == "1h":
+			n1 += d // the client body would have written it: after B* it has no entry to read
+		default:
+			n5 += d
+		}
 		if first < 0 {
 			first = i
 		}
 		last = i
 	}
-	n := min(c.ratio.tokensOf(sum), c.usage.CacheRead)
-	if n <= 0 {
+	if done <= 0 {
 		return
 	}
 	e := CacheEffect{Kind: EffectMarkPayback, Estimated: true}
@@ -1897,7 +1957,8 @@ func (c *calcState) markPayback(res *Result) {
 	}
 	to := c.fwd.position(last)
 	e.To = &to
-	e.Saved.Input, e.Caused.CacheRead = n, n
+	e.Saved.Input, e.Saved.CacheWrite5m, e.Saved.CacheWrite1h = n, n5, n1
+	e.Caused.CacheRead = n + n5 + n1
 	c.addEffect(res, e)
 }
 

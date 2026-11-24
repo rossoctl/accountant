@@ -627,6 +627,8 @@ Not covered by a case: a removed client breakpoint (the inverse). It is out of s
 | `markpayback/next-turn/hot/5m` | Turn 1, 40 s later, keeps the client mark and adds none. The provider reads 11,000. `markPayback` 6,000 x ($3.00 - $0.30)/M = +$0.01620 (#52). |
 | `markpayback/next-turn/hot/1h` | The same at 1h. Premium -$0.01800, payback +$0.01620: net -$0.00180 over two turns, positive from turn 3 (#52). |
 | `markpayback/next-turn-after-expiry/cold/5m` | Turn 1 is 6 minutes later. The entry expired: no payback, and the premium stays (#52). |
+| `markpayback/client-moves-mark/hot/5m` | Turn 1 moves the client mark to the newest message. The client body has no entry at the host's mark: it reads 5,000 and writes 6,500. `markPayback` moves 6,000 5m write -> read, 6,000 x ($3.75 - $0.30)/M = +$0.02070 (#52). |
+| `markpayback/client-moves-mark-hash-changes/hot/5m` | The same for a host that hashes `cache_control`: moving the client mark changes the hash of `messages[0]`. The provider reads all 11,000, so the full-read rule sets B* to the client's extent, `messages[0]`. The same +$0.02070 (#52). |
 | `markpayback/host-entry-not-found/hot/5m` | The provider cannot find the host's entry (lookback). It reads only the client mark's 5,000: no payback (#52). |
 | `keepalive/ping-rescue-request-reads-less/5m` | The ping read 6,000, the request reads 2,000 after a client edit and writes 20,000. Rescue 2,000 x ($3.75 - $0.30)/M = +$0.00690 (#53). |
 | `keepalive/ping-rescue-request-reads-more/5m` | The ping read 4,000, the request reads 6,000 and writes 20,000. Rescue 4,000 x $3.45/M = +$0.01380. Needs an explicit `PingRead` (#53). |

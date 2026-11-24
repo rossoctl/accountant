@@ -482,7 +482,8 @@ no tokens, and the `Saved` and `Caused` tiers are zero. Seven kinds cover it:
   **every request that writes** the head at 1h (`ttlPremium`), and a saving on each request that reads
   the 1h entry after a gap longer than 5m (`ttlRescue`). `TTL` says which entry the effect is about.
 - **`markPayback`: a breakpoint the host added pays back.** The next request reads the tail the host's breakpoint
-  wrote. The client body would have billed it as input. The effect moves those tokens from input to read.
+  wrote. The client body would have billed it as input, or written it again when the client moved its own
+  breakpoint past it. The effect moves those tokens from input, or from that write, to read.
 - **`markPremium`: a breakpoint the host added is paid for.** The forwarded body has a breakpoint after the
   client's last one. The provider writes the tokens between the two at the write tier (1.25x for 5m, 2.0x for
   1h). The client body bills the same tokens as plain input (1.0x). The effect moves `n` tokens from
@@ -642,9 +643,24 @@ Rules that follow from the table:
 - **Relation to the next request (`markPayback`, accountant#52).** The entry this request wrote up to L_f is
   read by the next request. The client body has no entry there: its last breakpoint is earlier, so it bills those
   tokens as input. No operation prices them, and no earlier text said which effect owned them, so the bill was
-  below the baseline by the whole benefit. The next request now gets a `markPayback` effect. It moves `n` tokens
-  from `Saved.Input` to `Caused.CacheRead`: the forwarded positions after B* that the provider read, that both
-  bodies hold, and that no client breakpoint would have cached. `n` is capped by `Usage.CacheRead`. Its
+  below the baseline by the whole benefit. The next request now gets a `markPayback` effect. It covers the
+  forwarded positions after B* that the provider read and that both bodies hold. For each, the client body's
+  tier decides the move:
+  - No client breakpoint would cache it: `n` tokens move from `Saved.Input` to `Caused.CacheRead`.
+  - A client breakpoint would write it: the client moved its own breakpoint past the host's mark (Claude Code
+    does this on every turn). The client body has no entry there to read, so it would write those tokens
+    again. They move from `Saved.CacheWrite5m` or `Saved.CacheWrite1h` (the TTL of that client breakpoint) to
+    `Caused.CacheRead`.
+
+  The read past B* caps the sum: `Usage.CacheRead` minus the tokens up to B*, which the client body reads too.
+  The cap cuts at the end, in position order: the read extent is taken within a tolerance, so the last
+  positions may be ones the provider wrote, not read. The provider reads a prefix of the forwarded body, so
+  at each position the read left is the read past B* minus every forwarded token before it, including
+  content only the forwarded body holds.
+  B* itself must not count the host's entry. The previous extent goes into B* through `clientExtent`: when a
+  host mark wrote the part past the previous client's last breakpoint, the extent ends at that breakpoint.
+  Otherwise a client breakpoint after the host's mark could look back to the host's entry, B* would land on
+  the mark, and no position would be after B*. Its
   `ChangeID` is the `ChangeID` of the operation of this request that covers the previous request's host
   breakpoint, or empty. It is an approximation: the operation that covered the breakpoint when the entry was
   written may not be reported now, and attribution is all it affects, not the token count (as for `markPremium`).
@@ -837,6 +853,8 @@ B* = 0 when the cache expired, or when the body has breakpoints and none is at o
 read everything the previous request cached, so nothing in it was broken. A difference the hashes show inside that
 extent is then not a difference in content. The host hashed something that moved, for example a cache mark on a
 message the client did not change. In that case B* is the end of `prevCachedExtent`, not the start of the body.
+The full read proves only that no content changed, so this is the capped extent below: it does not give the client
+body the host's entry.
 Without this rule every saving replayed on the request is priced at the write rate, although the provider read
 those tokens (accountant#21). A client edit inside the extent makes the provider read less, so the rule does not
 apply to it.
@@ -860,6 +878,13 @@ All three terms are in client space (§4.3). `prevCachedExtent` is the previous 
 extent, mapped from its forwarded body back into its client body through its splices. That is the
 extent the client body would have left cached with no context operator: a change that shortened the
 previous body does not shorten it.
+
+**A host mark does not extend it.** When a breakpoint the host added wrote the part of the previous extent past
+the previous client's last breakpoint, `prevCachedExtent` ends at that client breakpoint (`clientExtent`). The
+client body has no entry past it. Without the cap, a client that moves its own breakpoint to the newest message
+looks back to the host's entry, B* lands on the host's mark, and the next request books no `markPayback`
+(accountant#52, §4.4). The cap also changes the tier of an operation between the two marks on the next request:
+the client body would write those tokens, not read them.
 
 **Why B\* snaps to a breakpoint.** The provider reads the cache only up to a breakpoint (§6.2). If
 the client edits `messages[5]` and its last breakpoint before that is the end of `system`, the
