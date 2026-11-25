@@ -1427,7 +1427,7 @@ func (c *calcState) cacheEffects(res *Result) {
 	case c.fwdFD <= c.prevExt && fwdFDCli < c.clientFD: // row 1
 		if !c.modelChangeBreak(res) {
 			id := ""
-			if k := c.itemAt(c.fwdFD); k >= 0 && !(c.items[k].active && c.endedAddedAt(c.fwdFD)) {
+			if k := c.breakItemAt(c.fwdFD); k >= 0 && !(c.items[k].active && c.endedAddedAt(c.fwdFD)) {
 				// An active change on the item that moved into the slot of added content that ended forwards
 				// the same bytes as before: the ended change left the break, and it has no ChangeID (design
 				// Q12, accountant#96). A change reported now changed the position too.
@@ -1567,6 +1567,16 @@ func (c *calcState) changeAt(at int) string {
 
 // itemAt is the index of the applied operation whose forwarded span covers the flat position, or -1.
 func (c *calcState) itemAt(at int) int {
+	if ks := c.itemsAt(at); len(ks) > 0 {
+		return ks[0]
+	}
+	return -1
+}
+
+// itemsAt is the indexes of the applied operations whose forwarded span covers the flat position, in
+// pipeline order.
+func (c *calcState) itemsAt(at int) []int {
+	var out []int
 	for k, it := range c.items {
 		if it.ended || it.bad != "" || it.op.DryRun || it.op.Kind != KindRewrite {
 			continue
@@ -1578,11 +1588,41 @@ func (c *calcState) itemAt(at int) int {
 				continue
 			}
 			if f, t := mustFlat(c.fwd, from), mustFlat(c.fwd, to); f <= at && at <= t {
-				return k
+				out = append(out, k)
+				break
 			}
 		}
 	}
+	return out
+}
+
+// breakItemAt is the index of the operation that a break at the first changed position is charged to. When
+// several operations cover the position, the one whose change is new in this request pays: an earlier
+// operation that forwards the same bytes as the previous request (a fold that the host applies again) cannot
+// move the first difference, so it never causes the miss (context-guru#1351). The earlier operation pays
+// only when no new change covers the position. It is -1 when nothing covers it.
+func (c *calcState) breakItemAt(at int) int {
+	ks := c.itemsAt(at)
+	for _, k := range ks {
+		if !c.repeatsPrevious(c.items[k]) {
+			return k
+		}
+	}
+	if len(ks) > 0 {
+		return ks[0]
+	}
 	return -1
+}
+
+// repeatsPrevious says whether the operation is one that an earlier request already applied: EndRequest
+// stored a change that entered Active on this request with the next request count (FirstApplied), and a
+// report that replaces an active change keeps the earlier count.
+func (c *calcState) repeatsPrevious(it *item) bool {
+	if it.active {
+		return true
+	}
+	first, ok := c.s.FirstApplied[it.op.ChangeID]
+	return ok && first <= c.s.Requests
 }
 
 // endedAddedAt says whether content that an active change added in tools or system ended in this request
