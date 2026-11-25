@@ -1579,6 +1579,16 @@ type TierTokens struct {
 
 // The hook for a host's metrics (Observer, Observation, Multi) is not part of this library. It lives in
 // the metrics module: see [metrics.md](metrics/metrics.md).
+//
+// The sink prices a token with Pricer.Price. If the host's pricer also has PriceAt (SizedPricer), the sink
+// prices saved tokens at the prompt size without the operations (billed size + saved - caused, of the
+// counted operations) and caused tokens at the billed size (Observation.Usage). No Result field is added.
+// It also books the re-rate of the tokens that stay: stay x (rate at base size - rate at billed size) for
+// each tier. The saving is then the whole bill difference. The re-rate splits across the operations by net
+// saved tokens, so the components add up to the request total. With no operation that saved, it goes to
+// interaction.usd. A counted cache effect's Caused tokens do not stay: the effect booking prices them.
+// The interaction is priced whole at the size without the operations.
+// The output tokens (Observation.Output, never part of the prompt size) are re-rated the same way.
 
 type CacheEffectKind string // break | rescue | split | ttlPremium | ttlRescue | markPremium | markPayback
 

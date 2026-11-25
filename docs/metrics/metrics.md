@@ -34,6 +34,69 @@ The module has no rate table. The host gives it one method:
 
 Tiers are `input`, `cache_read`, `cache_write_5m`, `cache_write_1h` and `output`.
 
+### The `SizedPricer` (optional)
+
+Some providers bill a large request at a higher rate for **all** its tokens. Examples: GPT-5.4 and later above
+272,000 input tokens, and Claude Haiku 5.5 above 100,000. A flat rate prices such a saving wrong, because the
+request with the operation and the request without it can fall on opposite sides of the line.
+
+A host adds one method to its `Pricer`:
+
+`PriceAt(model string, at time.Time, tier Tier, promptTokens int64) (usdPerToken float64, estimated bool)`
+
+`Pricer` does not change. The sink checks once, in `New`, if the host's pricer also has `PriceAt`.
+
+- The prompt size is fresh input plus cache read plus cache write, as the provider counts it.
+- **Saved** tokens use the size the request would have had without the operations.
+- **Caused** (added) tokens use the billed size.
+- The billed size is `Observation.Usage.Input + CacheRead + CacheWrite`. `CacheWrite` already holds the 1h part.
+- The size without the operations is the billed size, plus the saved tokens of all counted operations, minus
+  their caused tokens. A dry-run operation is not counted. A cache effect and the interaction move tokens
+  between tiers and net zero tokens, so they do not change the size.
+- **The re-rate.** The saving of a request is the bill of the request without the operations minus the bill of
+  the request as sent, each priced at its own prompt size. Pricing the moved tokens is not enough: when the two
+  sizes are on different sides of a line, the tokens that **stay** in both requests change rate too. Example,
+  with a line at 272,000 and a 2x rate above it: a trim takes 290,000 tokens to 250,000. The moved side books
+  40,000 x 2x. The 250,000 tokens that stay drop from 2x to 1x. The saving is 290,000 x 2x minus 250,000 x 1x. (These figures assume the request has no cache effect. A
+  counted cache effect moves tokens between tiers: see `stay` below.)
+  - Per tier, the re-rate is `stay x (rate at base size - rate at billed size)`. `stay` is the billed tokens of
+    that tier (from `Observation.Usage`) minus the tokens the counted operations caused in it, minus the `Caused`
+    tokens of every cache effect that is not `InBaseline`. An effect moves tokens between tiers, and its own
+    booking already prices that whole difference, so those tokens do not stay. An `InBaseline` effect is in the
+    client body too, so its tokens stay.
+  - It books **to the operations**, so the per-component counters add up to the request total. Each operation
+    takes a share in proportion to its net saved tokens (saved minus caused, only where above 0).
+  - A positive amount books to `saved.usd` and a negative one to `added.usd`, with the operation's `kind`, the
+    tier and the `component`. A negative amount happens when the sent request is above the line and the request
+    without the operations is not, for example when an operation adds tokens. The component's net
+    (`saved.usd` minus `added.usd`) can then be below 0.
+  - If no operation has a net saving above 0, nobody owns the re-rate. It books to `interaction.usd` as one
+    point for all tiers, with the sign of the total as `direction` (saved or added), as the interaction booking does. The request total still holds it.
+  - Why proportional: the line is crossed by the operations together, so one operation alone does not own the
+    change. Net saved tokens is a fair, stable weight, and it needs no extra data.
+  - **Output tokens.** The host gives them in `Observation.Output`. The output is the same with and without
+    the operations, so all of it stays. Its re-rate is `output x (rate at base size - rate at billed size)` in
+    the `output` tier, split like the other tiers. Example: GPT bills output at 1.5x above the line, so 2,000
+    output tokens on the 290,000 to 250,000 trim add `2,000 x (1.5x - 1x)` to the saving. Output never counts
+    toward the prompt size. A host that leaves `Output` at 0 gets no output re-rate.
+  - No tokens move, so no token counter changes.
+  - Only a host with `PriceAt` gets the re-rate. With a threshold pricer, a request that crosses no line has a re-rate of 0. A `PriceAt` that varies
+    with the size in other ways gives a re-rate on every request.
+- A cache effect and the interaction follow the same two sides. A cache effect priced as `saved` uses the size
+  without the operations. One priced as `added` uses the billed size. The interaction is priced whole at the size
+  without the operations: `Interaction` is what the client body bills, and `InteractionCaused` is the read that
+  the operations already book as saved at that size. Both sides of the correction use one size.
+- A `spend` call is priced at the prompt size of its own `Call.Usage`.
+- The sink never passes 0 or a negative size. If `Usage` is empty, or the size without the operations is not
+  above 0, the sink calls `Price` for that side.
+- A pricer without `PriceAt` gets the same figures as before. (The sink now skips a tier with 0 tokens, so it can make fewer `Price` calls.)
+- An operation the engine does not price (`media_tokens`, `unknown_kind`) has zero `Saved` and `Caused`. The
+  derived size does not include its tokens. Near a line, the size can then fall on the lower tier.
+- The size without the operations carries the engine's byte-to-token rounding, about one token for each span.
+- **`estimated`.** The sink adds no new `estimated` mark for the derived size. The size is arithmetic
+  on billed usage and on the tokens of the operations. It is exact only as far as those tokens are. When an operation's tokens are an estimate, the operation
+  is `Estimated` and the request is already marked. The `estimated` that `PriceAt` returns is used as for `Price`.
+
 ## Counters
 
 OTel names use dots. The collector converts them to Prometheus names (`llm_savings_saved_tokens_total`).
@@ -45,7 +108,7 @@ OTel names use dots. The collector converts them to Prometheus names (`llm_savin
 | `llm.savings.saved.usd` | `kind`, `tier`, `component` | The saved tokens, priced. |
 | `llm.savings.added.usd` | `kind`, `tier`, `component` | The added tokens, priced. |
 | `llm.savings.cache_effect.usd` | `effect`, `cause`, `direction` | Cache effects, in money. Not in saved or added. **Add it** for the net saving (see below). |
-| `llm.savings.interaction.usd` | `direction` | The net value of `Result.Interaction` minus `Result.InteractionCaused` (design §6.2). Not in saved or added. **Add it** for the net saving (see below). |
+| `llm.savings.interaction.usd` | `direction` | The net value of `Result.Interaction` minus `Result.InteractionCaused` (design §6.2), and the re-rate when no operation owns it. Not in saved or added. **Add it** for the net saving (see below). |
 | `llm.savings.requests` | `result` | `priced`, `unpriced` or `skipped`. |
 | `llm.savings.unpriced` | `reason` | Operations the library did not price. |
 | `llm.savings.check_failures` | `check` | Failed library checks. |
@@ -76,7 +139,7 @@ saving, in money, is:
 ## Rules
 
 1. **Dry runs.** An operation with `DryRun` set adds nothing.
-2. **Model.** Saved and caused tokens are priced with the request's model. A `spend` call is priced with its
+2. **Model.** Saved and caused tokens are priced with the request's model (and, with a `SizedPricer`, at the size of their side). A `spend` call is priced with its
    own `Call.Model`, because it can differ from the agent's model. If `Call.Model` is empty, the request's
    model is used.
 3. **Refused calls.** If the library listed a spend in `Result.Unpriced`, the sink books none of its call usage.
