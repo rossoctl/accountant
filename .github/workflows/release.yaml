@@ -43,6 +43,20 @@ jobs:
         run: |
           git merge-base --is-ancestor "$GITHUB_SHA" origin/main \
             || { echo "::error::$GITHUB_REF_NAME is not on main"; exit 1; }
+      - name: The metrics tag is on the same commit
+        run: |
+          git fetch --force --tags origin
+          tag="metrics/$GITHUB_REF_NAME"
+          want=$(git rev-parse "$GITHUB_REF_NAME^{commit}")
+          if ! git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            echo "::error::Tag $tag is missing. Run: git tag -s $tag -m $tag $want && git push origin $tag. Then re-run this workflow (Actions, the failed run, Re-run)."
+            exit 1
+          fi
+          have=$(git rev-parse -q --verify "refs/tags/$tag^{commit}" || true)
+          [ -n "$have" ] \
+            || { echo "::error::Tag $tag exists but does not point to a commit. The Go module proxy cannot serve such a tag, so replace it: git push origin :refs/tags/$tag && git tag -d $tag && git tag -s $tag -m $tag $want && git push origin $tag. Then re-run this workflow (Actions, the failed run, Re-run)."; exit 1; }
+          [ "$have" = "$want" ] \
+            || { echo "::error::Tag $tag is on $have, not on $want. Do not move a published tag. Publish the next PATCH version."; exit 1; }
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -61,7 +75,8 @@ jobs:
       - name: Warm the Go module proxy (Go's own version rules reject a bad tag before the release exists)
         run: |
           GOFLAGS=-mod=mod GOPROXY=https://proxy.golang.org \
-            go list -m "github.com/rossoctl/accountant@$GITHUB_REF_NAME"
+            go list -m "github.com/rossoctl/accountant@$GITHUB_REF_NAME" \
+                       "github.com/rossoctl/accountant/metrics@$GITHUB_REF_NAME"
       - name: Create the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
