@@ -1586,7 +1586,8 @@ type TierTokens struct {
 // It also books the re-rate of the tokens that stay: stay x (rate at base size - rate at billed size) for
 // each tier. The saving is then the whole bill difference. The re-rate splits across the operations by net
 // saved tokens, so the components add up to the request total. With no operation that saved, it goes to
-// interaction.usd.
+// interaction.usd. A counted cache effect's Caused tokens do not stay: the effect booking prices them.
+// The interaction is priced whole at the size without the operations.
 // The output tokens (Observation.Output, never part of the prompt size) are re-rated the same way.
 
 type CacheEffectKind string // break | rescue | split | ttlPremium | ttlRescue | markPremium | markPayback

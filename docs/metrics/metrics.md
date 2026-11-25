@@ -57,17 +57,21 @@ A host adds one method to its `Pricer`:
   the request as sent, each priced at its own prompt size. Pricing the moved tokens is not enough: when the two
   sizes are on different sides of a line, the tokens that **stay** in both requests change rate too. Example,
   with a line at 272,000 and a 2x rate above it: a trim takes 290,000 tokens to 250,000. The moved side books
-  40,000 x 2x. The 250,000 tokens that stay drop from 2x to 1x. The saving is 290,000 x 2x minus 250,000 x 1x.
+  40,000 x 2x. The 250,000 tokens that stay drop from 2x to 1x. The saving is 290,000 x 2x minus 250,000 x 1x. (These figures assume the request has no cache effect. A
+  counted cache effect moves tokens between tiers: see `stay` below.)
   - Per tier, the re-rate is `stay x (rate at base size - rate at billed size)`. `stay` is the billed tokens of
-    that tier (from `Observation.Usage`) minus the tokens the counted operations caused in it.
+    that tier (from `Observation.Usage`) minus the tokens the counted operations caused in it, minus the `Caused`
+    tokens of every cache effect that is not `InBaseline`. An effect moves tokens between tiers, and its own
+    booking already prices that whole difference, so those tokens do not stay. An `InBaseline` effect is in the
+    client body too, so its tokens stay.
   - It books **to the operations**, so the per-component counters add up to the request total. Each operation
     takes a share in proportion to its net saved tokens (saved minus caused, only where above 0).
   - A positive amount books to `saved.usd` and a negative one to `added.usd`, with the operation's `kind`, the
     tier and the `component`. A negative amount happens when the sent request is above the line and the request
     without the operations is not, for example when an operation adds tokens. The component's net
     (`saved.usd` minus `added.usd`) can then be below 0.
-  - If no operation has a net saving above 0, nobody owns the re-rate. It books to `interaction.usd`, with
-    `direction` saved or added. The request total still holds it.
+  - If no operation has a net saving above 0, nobody owns the re-rate. It books to `interaction.usd` as one
+    point for all tiers, with the sign of the total as `direction` (saved or added), as the interaction booking does. The request total still holds it.
   - Why proportional: the line is crossed by the operations together, so one operation alone does not own the
     change. Net saved tokens is a fair, stable weight, and it needs no extra data.
   - **Output tokens.** The host gives them in `Observation.Output`. The output is the same with and without
@@ -76,10 +80,12 @@ A host adds one method to its `Pricer`:
     output tokens on the 290,000 to 250,000 trim add `2,000 x (1.5x - 1x)` to the saving. Output never counts
     toward the prompt size. A host that leaves `Output` at 0 gets no output re-rate.
   - No tokens move, so no token counter changes.
-  - Only a host with `PriceAt` gets the re-rate. A request that crosses no line has a re-rate of 0.
+  - Only a host with `PriceAt` gets the re-rate. With a threshold pricer, a request that crosses no line has a re-rate of 0. A `PriceAt` that varies
+    with the size in other ways gives a re-rate on every request.
 - A cache effect and the interaction follow the same two sides. A cache effect priced as `saved` uses the size
-  without the operations. One priced as `added` uses the billed size. The interaction splits by tier: a positive
-  net tier is saved, a negative one is added.
+  without the operations. One priced as `added` uses the billed size. The interaction is priced whole at the size
+  without the operations: `Interaction` is what the client body bills, and `InteractionCaused` is the read that
+  the operations already book as saved at that size. Both sides of the correction use one size.
 - A `spend` call is priced at the prompt size of its own `Call.Usage`.
 - The sink never passes 0 or a negative size. If `Usage` is empty, or the size without the operations is not
   above 0, the sink calls `Price` for that side.
@@ -102,7 +108,7 @@ OTel names use dots. The collector converts them to Prometheus names (`llm_savin
 | `llm.savings.saved.usd` | `kind`, `tier`, `component` | The saved tokens, priced. |
 | `llm.savings.added.usd` | `kind`, `tier`, `component` | The added tokens, priced. |
 | `llm.savings.cache_effect.usd` | `effect`, `cause`, `direction` | Cache effects, in money. Not in saved or added. **Add it** for the net saving (see below). |
-| `llm.savings.interaction.usd` | `direction` | The net value of `Result.Interaction` minus `Result.InteractionCaused` (design §6.2). Not in saved or added. **Add it** for the net saving (see below). |
+| `llm.savings.interaction.usd` | `direction` | The net value of `Result.Interaction` minus `Result.InteractionCaused` (design §6.2), and the re-rate when no operation owns it. Not in saved or added. **Add it** for the net saving (see below). |
 | `llm.savings.requests` | `result` | `priced`, `unpriced` or `skipped`. |
 | `llm.savings.unpriced` | `reason` | Operations the library did not price. |
 | `llm.savings.check_failures` | `check` | Failed library checks. |

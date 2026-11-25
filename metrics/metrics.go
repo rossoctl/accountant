@@ -230,19 +230,10 @@ func (s *Sink) Observe(o Observation) {
 		}
 		usd, est := 0.0, false
 		if !empty {
-			// A positive tier is saved, so it takes the size without the operations. A negative tier
-			// is added, so it takes the billed size.
-			pos, neg := map[Tier]int{}, map[Tier]int{}
-			for t, n := range net {
-				if n > 0 {
-					pos[t] = n
-				} else if n < 0 {
-					neg[t] = n
-				}
-			}
-			usd, est = s.price(pos, model, at, sz.base)
-			u2, e2 := s.price(neg, model, at, sz.billed)
-			usd, est = usd+u2, est || e2
+			// Both sides are client-side figures: Interaction is what the client body bills cold, and
+			// InteractionCaused is the read the operations book as Saved at the size without the
+			// operations. So the whole net takes that one size.
+			usd, est = s.price(net, model, at, sz.base)
 			anyEstimated = anyEstimated || est
 		}
 		if usd != 0 {
@@ -319,7 +310,7 @@ func (s *Sink) price(tt map[Tier]int, model string, at time.Time, size int64) (u
 // the operations minus the bill as sent. The moved tokens (saved at the base size, caused at the billed
 // size) are not the whole difference: the tokens that stay in both requests cost
 // stay x (rate at base - rate at billed). For each tier, stay is the billed tokens minus the tokens the
-// counted operations caused. The output tier counts too (Observation.Output): the output is the same
+// counted operations and the counted cache effects caused. The output tier counts too (Observation.Output): the output is the same
 // with and without the operations, so all of it stays.
 //
 // Each operation takes a share of the re-rate in proportion to its net saved tokens (saved minus
@@ -334,6 +325,17 @@ func (s *Sink) reRate(ctx context.Context, o Observation, sz reqSizes, model str
 	for _, op := range o.Result.Ops {
 		if !op.DryRun {
 			for t, n := range tiers(op.Caused) {
+				billed[t] -= n
+			}
+		}
+	}
+	// A counted cache effect moves tokens between tiers. Its Caused tokens are billed, but the request
+	// without the operations holds them in another tier, and the effect booking already prices that
+	// whole difference. So they do not stay. An InBaseline effect is in the client body too: its
+	// tokens stay.
+	for _, e := range o.Result.CacheEffects {
+		if !e.InBaseline {
+			for t, n := range tiers(e.Caused) {
 				billed[t] -= n
 			}
 		}
@@ -365,15 +367,22 @@ func (s *Sink) reRate(ctx context.Context, o Observation, sz reqSizes, model str
 			total += net
 		}
 	}
-	for t, d := range amount {
-		if total == 0 {
-			dir := "saved"
-			if d < 0 {
-				dir, d = "added", -d
-			}
-			s.interactionUSD.Add(ctx, d, metric.WithAttributes(attribute.String("direction", dir)))
-			continue
+	if total == 0 {
+		// Nobody owns it: one point, with the sign of the total, as the interaction booking does.
+		sumD := 0.0
+		for _, d := range amount {
+			sumD += d
 		}
+		dir := "saved"
+		if sumD < 0 {
+			dir, sumD = "added", -sumD
+		}
+		if sumD != 0 {
+			s.interactionUSD.Add(ctx, sumD, metric.WithAttributes(attribute.String("direction", dir)))
+		}
+		return est
+	}
+	for t, d := range amount {
 		for _, sh := range shares {
 			part := d * float64(sh.net) / float64(total)
 			c := s.savedUSD

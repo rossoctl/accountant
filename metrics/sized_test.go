@@ -149,9 +149,9 @@ func TestEffectsAndInteractionFollowTheSides(t *testing.T) {
 	if !near(eSaved, 100*2e-6) || !near(eAdded, 100*1e-6) {
 		t.Errorf("effect saved %v added %v, want 0.0002 and 0.0001", eSaved, eAdded)
 	}
-	// net: +1000 write5m (saved side, 2x), -400 read (added side, 1x)
-	if v := sumF(g["llm.savings.interaction.usd"]); !near(v, 1000*2e-6-400*1e-6) {
-		t.Errorf("interaction usd = %v, want %v", v, 1000*2e-6-400*1e-6)
+	// net: +1000 write5m and -400 read. Both are client-side figures, so both take the base size (2x).
+	if v := sumF(g["llm.savings.interaction.usd"]); !near(v, 600*2e-6) {
+		t.Errorf("interaction usd = %v, want %v", v, 600*2e-6)
 	}
 }
 
@@ -342,5 +342,66 @@ func TestOutputDoesNotCountTowardPromptSize(t *testing.T) {
 	saved, _ := usd(t, outTiered{}, o)
 	if !near(saved, 20_000*1e-6) {
 		t.Errorf("saved usd = %v, want 0.02 (1x, no re-rate)", saved)
+	}
+}
+
+// tierPricer has a rate for each tier. A request above the line pays 2x for every tier.
+type tierPricer struct{}
+
+var tierRate = map[Tier]float64{TierInput: 3e-6, TierCacheRead: 3e-7, TierCacheWrite5m: 3.75e-6, TierCacheWrite1h: 6e-6, TierOutput: 15e-6}
+
+func (tierPricer) Price(_ string, _ time.Time, t Tier) (float64, bool) { return tierRate[t], false }
+func (tierPricer) PriceAt(_ string, _ time.Time, t Tier, n int64) (float64, bool) {
+	if n > line {
+		return 2 * tierRate[t], false
+	}
+	return tierRate[t], false
+}
+
+// net adds every counter that belongs to the net saving (metrics spec: saved - added + cache effect + interaction).
+func net(g map[string][]point) float64 {
+	n := sumF(g["llm.savings.saved.usd"]) - sumF(g["llm.savings.added.usd"])
+	for _, p := range g["llm.savings.cache_effect.usd"] {
+		if p.attrs["direction"] == "saved" {
+			n += p.f
+		} else {
+			n -= p.f
+		}
+	}
+	for _, p := range g["llm.savings.interaction.usd"] {
+		if p.attrs["direction"] == "saved" {
+			n += p.f
+		} else {
+			n -= p.f
+		}
+	}
+	return n
+}
+
+// A request with a counted cache effect, a rescue interaction and a crossed line. The net saving must
+// equal the bill difference, with each tier priced at its own rate.
+//
+// Sent (billed 270,000, 1x): input 100,000, read 150,000, write5m 20,000.
+// A trim saves 50,000 input. A rescued span saves 1,000 read. A break (not in the baseline) saved
+// 20,000 read and caused 20,000 write5m. The interaction holds 1,000 write against the 1,000 read.
+// Client body (321,000, 2x): input 150,000, read 170,000, write5m 1,000.
+func TestEffectAndInteractionAddUpToTheBillDifference(t *testing.T) {
+	o := sizedObs(0)
+	o.Usage = accountant.Usage{Input: 100_000, CacheRead: 150_000, CacheWrite: 20_000}
+	op := accountant.PricedOp{Kind: accountant.KindRewrite, Operator: "x.trim",
+		Saved: accountant.TierTokens{Input: 50_000, CacheRead: 1_000}}
+	o.Result.Ops = []accountant.PricedOp{op}
+	o.Result.CacheEffects = []accountant.CacheEffect{{Kind: accountant.EffectBreak,
+		Saved: accountant.TierTokens{CacheRead: 20_000}, Caused: accountant.TierTokens{CacheWrite5m: 20_000}}}
+	o.Result.Interaction = accountant.TierTokens{CacheWrite5m: 1_000}
+	o.Result.InteractionCaused = accountant.TierTokens{CacheRead: 1_000}
+
+	client := 150_000*2*tierRate[TierInput] + 170_000*2*tierRate[TierCacheRead] + 1_000*2*tierRate[TierCacheWrite5m]
+	sent := 100_000*tierRate[TierInput] + 150_000*tierRate[TierCacheRead] + 20_000*tierRate[TierCacheWrite5m]
+
+	s, r := newSinkWith(t, tierPricer{})
+	s.Observe(o)
+	if got, want := net(collect(t, r)), client-sent; !near(got, want) {
+		t.Errorf("net = %v, want the bill difference %v", got, want)
 	}
 }
