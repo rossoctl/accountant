@@ -48,9 +48,13 @@ jobs:
           git fetch --force --tags origin
           tag="metrics/$GITHUB_REF_NAME"
           want=$(git rev-parse "$GITHUB_REF_NAME^{commit}")
+          if ! git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            echo "::error::Tag $tag is missing. Run: git tag -s $tag -m $tag $want && git push origin $tag. Then re-run this workflow (Actions, the failed run, Re-run)."
+            exit 1
+          fi
           have=$(git rev-parse -q --verify "refs/tags/$tag^{commit}" || true)
           [ -n "$have" ] \
-            || { echo "::error::Tag $tag is missing. Run: git tag -s $tag -m $tag $want && git push origin $tag"; exit 1; }
+            || { echo "::error::Tag $tag exists but does not point to a commit."; exit 1; }
           [ "$have" = "$want" ] \
             || { echo "::error::Tag $tag is on $have, not on $want. Do not move a published tag. Publish the next PATCH version."; exit 1; }
       - uses: actions/setup-go@v5

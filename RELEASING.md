@@ -40,9 +40,12 @@ Say in the PR title which kind a change is, so the release notes show it.
    git tag -s metrics/vX.Y.Z -m "metrics/vX.Y.Z"
    ```
 4. Push both tags in one command: `git push origin vX.Y.Z metrics/vX.Y.Z`.
+   Do not push `metrics/vX.Y.Z` alone. Only a `v*` tag starts the workflow, so a lone metrics tag is not checked.
 5. Wait for the Release workflow. It does these things:
    - It fails if the tag is not semver or the commit is not on `main`.
-   - It fails if `metrics/vX.Y.Z` is missing or points to another commit. The message names the commands to run.
+   - It fails if `metrics/vX.Y.Z` is missing, or exists on another commit.
+     The missing-tag message names the commands to run. The mismatch message says not to move a published tag.
+     After you fix a missing tag, re-run the workflow: Actions, the failed run, Re-run. A push of the metrics tag does not start a run.
    - It runs the same checks as `ci.yaml`, for the root module and for the nested `metrics` module.
    - It asks the Go module proxy for both tags before it creates the release. A tag that Go rejects as a version fails here, and no release is made.
    - It creates the GitHub Release with generated notes. A tag with a `-suffix` is a pre-release.
