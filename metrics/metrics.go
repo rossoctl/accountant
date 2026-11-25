@@ -298,6 +298,9 @@ func (s *Sink) rate(model string, at time.Time, t Tier, size int64) (float64, bo
 
 func (s *Sink) price(tt map[Tier]int, model string, at time.Time, size int64) (usd float64, estimated bool) {
 	for t, n := range tt {
+		if n == 0 {
+			continue // no tokens: no price call, and no estimated mark from an empty tier
+		}
 		rate, est := s.rate(model, at, t, size)
 		usd += rate * float64(n)
 		estimated = estimated || est

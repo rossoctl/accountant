@@ -148,3 +148,42 @@ func TestEffectsAndInteractionFollowTheSides(t *testing.T) {
 		t.Errorf("interaction usd = %v, want %v", v, 1000*2e-6-400*1e-6)
 	}
 }
+
+// splitPricer gives a different rate to Price and to PriceAt, so a test can see which one ran.
+type splitPricer struct{ estTier Tier }
+
+func (splitPricer) Price(string, time.Time, Tier) (float64, bool) { return 3e-6, false }
+func (p splitPricer) PriceAt(_ string, _ time.Time, t Tier, _ int64) (float64, bool) {
+	return 1e-6, t == p.estTier
+}
+
+// When the derived size is not above 0, the saved side uses plain Price. The caused side keeps the billed size.
+func TestBaseSizeNotCredibleFallsBackToPrice(t *testing.T) {
+	// billed 1,000; saved 100; caused 5,000: base = -3,900
+	saved, added := usd(t, splitPricer{}, sizedObs(1_000, rewrite(100, 5_000)))
+	if !near(saved, 100*3e-6) {
+		t.Errorf("saved usd = %v, want 0.0003 (plain Price)", saved)
+	}
+	if !near(added, 5_000*1e-6) {
+		t.Errorf("added usd = %v, want 0.005 (PriceAt at the billed size)", added)
+	}
+}
+
+// A tier with 0 tokens is not priced, so its estimated return marks nothing.
+func TestEmptyTierDoesNotMarkEstimated(t *testing.T) {
+	o := sizedObs(250_000)
+	o.Result.CacheEffects = []accountant.CacheEffect{{Kind: accountant.EffectRescue,
+		Saved: accountant.TierTokens{Input: 100}}}
+	s, r := newSinkWith(t, splitPricer{estTier: TierCacheWrite1h})
+	s.Observe(o)
+	if n := sumI(collect(t, r)["llm.savings.estimated"]); n != 0 {
+		t.Errorf("estimated requests = %d, want 0", n)
+	}
+	// The same pricer marks the request when the estimated tier holds tokens.
+	o.Result.CacheEffects[0].Saved = accountant.TierTokens{CacheWrite1h: 100}
+	s2, r2 := newSinkWith(t, splitPricer{estTier: TierCacheWrite1h})
+	s2.Observe(o)
+	if n := sumI(collect(t, r2)["llm.savings.estimated"]); n != 1 {
+		t.Errorf("estimated requests = %d, want 1", n)
+	}
+}

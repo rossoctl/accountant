@@ -59,9 +59,12 @@ A host adds one method to its `Pricer`:
 - A `spend` call is priced at the prompt size of its own `Call.Usage`.
 - The sink never passes 0 or a negative size. If `Usage` is empty, or the size without the operations is not
   above 0, the sink calls `Price` for that side.
-- A pricer without `PriceAt` gets the same `Price` calls and the same figures as before.
-- **`estimated`.** The sink adds no new `estimated` mark for the derived size. The size is exact arithmetic
-  on billed usage and on the tokens of the operations. When an operation's tokens are an estimate, the operation
+- A pricer without `PriceAt` gets the same figures as before. (The sink now skips a tier with 0 tokens, so it can make fewer `Price` calls.)
+- An operation the engine does not price (`media_tokens`, `unknown_kind`) has zero `Saved` and `Caused`. The
+  derived size does not include its tokens. Near a line, the size can then fall on the lower tier.
+- The size without the operations carries the engine's byte-to-token rounding, about one token for each span.
+- **`estimated`.** The sink adds no new `estimated` mark for the derived size. The size is arithmetic
+  on billed usage and on the tokens of the operations. It is exact only as far as those tokens are. When an operation's tokens are an estimate, the operation
   is `Estimated` and the request is already marked. The `estimated` that `PriceAt` returns is used as for `Price`.
 
 ## Counters
