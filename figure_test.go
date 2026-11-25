@@ -425,3 +425,59 @@ func TestSavedAsReadCarriesTheEstimatedMark(t *testing.T) {
 		t.Fatal("marked estimated with exact rates")
 	}
 }
+
+// The library lists a call on a non-spend op itself. With no OpID the entry cannot be matched to the op,
+// so Figure adds nothing: exactly one entry, the library's.
+func TestCallOnANonSpendWithNoIDIsListedOnce(t *testing.T) {
+	o := accountant.Operation{Kind: accountant.KindRewrite, Operator: "x",
+		Call: &accountant.ModelCall{Usage: accountant.CallUsage{Usage: accountant.Usage{Input: 5}}}}
+	res := accountant.ComputeStandalone(accountant.RequestOps{Ops: []accountant.Operation{o}})
+	if len(res.Unpriced) != 1 || res.Unpriced[0].Reason != accountant.ReasonNotSpend {
+		t.Fatalf("setup: the library listed %v", res.Unpriced)
+	}
+	f := fig(gpt56{}, accountant.Usage{Input: 1_000}, 0, res)
+	if len(f.Unpriced) != 1 || f.Unpriced[0] != ":"+accountant.ReasonNotSpend {
+		t.Fatalf("got %v, want exactly the library's entry", f.Unpriced)
+	}
+}
+
+// With another library reason, Figure adds no reason of its own beside it.
+func TestCallOnANonSpendKeepsTheLibrarysOtherReason(t *testing.T) {
+	o := accountant.PricedOp{Kind: accountant.KindRewrite, Operator: "x",
+		Call: &accountant.ModelCall{Usage: accountant.CallUsage{Usage: accountant.Usage{Input: 5}}}}
+	res := accountant.Result{Ops: []accountant.PricedOp{o},
+		Unpriced: []accountant.Unpriced{{Reason: accountant.ReasonNegativeSize}}}
+	f := fig(gpt56{}, accountant.Usage{Input: 1_000}, 0, res)
+	if len(f.Unpriced) != 1 || f.Unpriced[0] != ":"+accountant.ReasonNegativeSize {
+		t.Fatalf("got %v", f.Unpriced)
+	}
+}
+
+type counting struct {
+	gpt56
+	calls *int
+}
+
+func (c counting) PriceAt(m string, at time.Time, t accountant.Tier, n int64) (float64, bool) {
+	*c.calls++
+	return c.gpt56.PriceAt(m, at, t, n)
+}
+
+// An InBaseline effect that is not a break is in neither bill: nobody books it, so nobody prices it.
+// An InBaseline break is priced, for UnattributedBreakUSD.
+func TestInBaselineEffectsArePricedOnlyWhereBooked(t *testing.T) {
+	n := 0
+	p := counting{calls: &n}
+	rescue := accountant.CacheEffect{Kind: accountant.EffectRescue, InBaseline: true,
+		Saved: accountant.TierTokens{CacheWrite5m: 1_000}, Caused: accountant.TierTokens{CacheRead: 1_000}, Estimated: true}
+	f := fig(p, accountant.Usage{}, 0, accountant.Result{CacheEffects: []accountant.CacheEffect{rescue}}) // no usage: no re-rate calls
+	if n != 0 || f.Estimated || f.Effects[0].Counted || f.Effects[0].SavedUSD != 0 {
+		t.Fatalf("pricer calls %d, got %+v", n, f)
+	}
+	brk := accountant.CacheEffect{Kind: accountant.EffectBreak, InBaseline: true,
+		Saved: accountant.TierTokens{CacheRead: 1_000}, Caused: accountant.TierTokens{CacheWrite5m: 1_000}}
+	f = fig(p, accountant.Usage{}, 0, accountant.Result{CacheEffects: []accountant.CacheEffect{brk}})
+	if n == 0 || f.UnattributedBreakUSD <= 0 {
+		t.Fatalf("calls %d unattributed %v", n, f.UnattributedBreakUSD)
+	}
+}

@@ -110,7 +110,7 @@ OTel names use dots. The collector converts them to Prometheus names (`llm_savin
 | `llm.savings.cache_effect.usd` | `effect`, `cause`, `direction` | Cache effects, in money. Not in saved or added. **Add it** for the net saving (see below). |
 | `llm.savings.interaction.usd` | `direction` | The net value of `Result.Interaction` minus `Result.InteractionCaused` (design §6.2), and the re-rate when no operation owns it. Not in saved or added. **Add it** for the net saving (see below). |
 | `llm.savings.requests` | `result` | `priced`, `unpriced` or `skipped`. |
-| `llm.savings.unpriced` | `reason` | Operations the library did not price. |
+| `llm.savings.unpriced` | `reason` | Operations the library did not price: `Result.Unpriced`, as the library lists it. It does not move with the billing mode. The extra entries of `Figure.Unpriced` (an effect of an unknown kind, a call on an op that is not a spend) are not counted here: they are host-side findings, and only a money request has them. |
 | `llm.savings.check_failures` | `check` | Failed library checks. |
 | `llm.savings.estimated` | none | Requests with an estimated figure. |
 

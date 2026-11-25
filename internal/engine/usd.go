@@ -174,9 +174,12 @@ func Figure(in FigureInput, p SizedPricer) USDFigure {
 
 	// An op the library refused to price must not book that call's usage.
 	refused := map[string]bool{}
+	listedNoID := false // the library listed an entry with no OpID: it may be for any op that has no id
 	for _, u := range res.Unpriced {
 		if u.OpID != "" {
 			refused[u.OpID] = true
+		} else {
+			listedNoID = true
 		}
 	}
 	// An unpriced op is also in Ops, with zero tokens. Skipping it keeps a "saved $0" off the figure for
@@ -191,8 +194,10 @@ func Figure(in FigureInput, p SizedPricer) USDFigure {
 		}
 		f.Estimated = f.Estimated || op.Estimated
 		if op.Call != nil {
-			if op.Kind != KindSpend && !refused[op.OpID] {
-				// A call on an op that is not a spend has no price rule: say so, never skip it silently.
+			if op.Kind != KindSpend && !refused[op.OpID] && !(op.OpID == "" && listedNoID) {
+				// A call on an op that is not a spend has no price rule: say so, never skip it silently. The
+				// library lists most of these itself. An op with no id cannot be matched to an entry, so any
+				// entry with no OpID counts as its entry: no duplicate, and no reason of ours beside the library's.
 				f.Unpriced = append(f.Unpriced, op.OpID+":"+ReasonNotSpend)
 			}
 			if op.Kind == KindSpend && !refused[op.OpID] {
@@ -236,7 +241,9 @@ func Figure(in FigureInput, p SizedPricer) USDFigure {
 		// An effect of an unknown kind has no price rule: it is not priced.
 		var saved, caused float64
 		var e1, e2 bool
-		if knownEffect(ce.Kind) {
+		// Price only what a figure books. An InBaseline break feeds UnattributedBreakUSD. Any other InBaseline
+		// effect is in neither bill and nobody books it.
+		if knownEffect(ce.Kind) && (!ce.InBaseline || ce.Kind == EffectBreak) {
 			saved, e1 = fp.usd(ce.Saved, base)
 			caused, e2 = fp.usd(ce.Caused, billed)
 		}
