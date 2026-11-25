@@ -68,6 +68,8 @@ type USDLine struct {
 // USDEffect is one cache effect, priced. SavedUSD is its Saved tokens at the size without the
 // operations. CausedUSD is its Caused tokens at the billed size. Both are never negative. The value of
 // the effect is SavedUSD minus CausedUSD: a break, a markPremium and a ttlPremium come out negative.
+// An effect that no figure books is not priced, so both are 0: an InBaseline effect that is not a
+// break, and an effect of an unknown kind.
 type USDEffect struct {
 	Effect    CacheEffect
 	SavedUSD  float64
