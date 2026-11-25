@@ -733,9 +733,17 @@ client's own bytes, so the mark move ended (design Q12).
 |---|---|
 | `inplace/deleted-by-a-later-change/cold-hot/5m` | Request 1 deletes nb (600 tokens) and moves the mark onto bash (+10). Request 2 deletes bash (800) and nb, and moves the mark onto read (+10). The bash mark move ends and has no operation. No check fails. Request 3 repeats the prune on a warm cache. |
 
-The unit tests are in `internal/engine/deleted_inplace_test.go`. Two of them are negative controls. If the
-pruner repeats the same prune, the mark move stays. If a later operator deletes the mark move's output (its size
-before is the mark move's size after), that is a chain, and the mark move stays.
+The case models only the bytes of the mark (+10 tokens). Its breakpoints are not on a tool, because the end rule
+does not read breakpoints.
+
+The unit tests are in `internal/engine/deleted_inplace_test.go`. One test stores the deletion as active (its
+request never reached `Compute`), and the mark move still ends. Three tests are negative controls:
+
+- The pruner repeats the same prune. The mark move stays.
+- A later operator deletes the mark move's output (its size before is the mark move's size after). That is a
+  chain, and the mark move stays.
+- A trimmer runs after a deletion and trims the next tool. It reports the deleted tool's index, because removals
+  are not mapped. It did not read the client's bytes there, so it stays.
 
 ## 9i. Cases from accountant#70 (case D: media with no bytes)
 

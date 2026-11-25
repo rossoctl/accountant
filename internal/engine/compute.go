@@ -851,9 +851,12 @@ func (c *calcState) takenOver(k int, it *item) bool {
 // Keeping it would count its bytes in the sum check on every later request. takenOver cannot see this:
 // removals are not mapped, so the change's forwarded index holds the next item or nothing.
 //
-// The rule ends a change only on proof. A deletion whose SizeBefore is not the client's bytes measured an
-// earlier operator's output: a chain, and the change stays. A deletion with spans or a splice, or a DryRun,
-// is not read. The change itself must be on a whole item, as in takenOver.
+// The rule ends a change only on proof. Both the change and the deletion must have read the client's own
+// bytes at that client position. A deletion that did not measured an earlier operator's output: a chain, and
+// the change stays. A change that did not may sit after an earlier deletion and edit the next item at the
+// same index (removals are not mapped), so it stays too. A deletion with spans or a splice, or a DryRun, is
+// not read. The change itself must be on a whole item, as in takenOver. Positions are compared in client
+// space, so the rule needs no guard for a splice in the state, unlike takenOver.
 func (c *calcState) deleted(k int, it *item) bool {
 	if it.op.Kind != KindRewrite || it.op.DryRun || it.op.MessageSplice != nil || len(it.op.Spans) > 0 {
 		return false
@@ -863,6 +866,9 @@ func (c *calcState) deleted(k int, it *item) bool {
 		return false
 	}
 	cp := c.clientSide(k, sp.from)
+	if !c.sawClientBytes(span{cp, cp, sp.before, sp.after}) {
+		return false // it edited another item, or another operator's output: no proof that the deletion took its item
+	}
 	for j, o := range c.items {
 		if j == k || o.ended || o.bad != "" || o.op.Kind != KindRewrite || o.op.DryRun ||
 			o.op.MessageSplice != nil || len(o.op.Spans) > 0 {

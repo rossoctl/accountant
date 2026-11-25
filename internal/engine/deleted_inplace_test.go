@@ -87,3 +87,55 @@ func TestAnInPlaceChangeStaysWhenADeletionReadItsOutput(t *testing.T) {
 		t.Fatalf("Active = %v, want %s", activeIDs(ts), markBash.ChangeID)
 	}
 }
+
+// Negative control (PR #113 review): a pruner deletes bash, and a trimmer that runs after it trims nb. The
+// trimmer reports tools[1] of its own input, the index of the deleted bash, because removals are not mapped.
+// The trimmer did not read bash's bytes, so the deletion is no proof against it, and it stays.
+func TestAnInPlaceChangeAfterADeletionAtItsIndexStays(t *testing.T) {
+	ts := NewTrackers()
+	system := []blk{b("s0", 2000)}
+	ms := []blk{b("m0", 5000), b("m1", 5000)}
+	client := mk([]blk{b("read", 1000), b("bash", 800), b("nb", 600)}, system, ms)
+	rmBash := rewrite("rm-bash", "tool-prune", "tool-prune:bash", tool(1), 800, 0)
+	trim := rewrite("trim-nb", "toolschema", "toolschema:nb", tool(1), 600, 500)
+	fwd := mk([]blk{b("read", 1000), b("nb-", 500)}, system, ms)
+	for i, ops := range [][]Operation{{rmBash, trim}, {rmBash}, {rmBash}} {
+		noChecks(t, req{at: t0.Add(time.Duration(i) * 10 * time.Second), client: client, clientBPs: bps5(sys(0), msg(1)),
+			facts: exact5m, ops: ops, fwd: fwd, usage: Usage{CacheWrite: 3500}}.run(ts))
+	}
+	found := false
+	for _, id := range activeIDs(ts) {
+		found = found || id == trim.ChangeID
+	}
+	if !found {
+		t.Fatalf("Active = %v, want %s", activeIDs(ts), trim.ChangeID)
+	}
+}
+
+// An active deletion is proof too. Request 2 never reaches Compute, so the deletion and the new mark move are
+// stored as active beside the old mark move. Request 3 reports nothing, and the old mark move ends.
+func TestAnInPlaceChangeEndsWhenAnActiveChangeDeletesItsItem(t *testing.T) {
+	ts := NewTrackers()
+	system := []blk{b("s0", 2000)}
+	ms := []blk{b("m0", 5000), b("m1", 5000)}
+	client := mk([]blk{b("read", 1000), b("bash", 800), b("nb", 600)}, system, ms)
+	rmNB := rewrite("rm-nb", "tool-prune", "tool-prune:nb", tool(2), 600, 0)
+	rmBash := rewrite("rm-bash", "tool-prune", "tool-prune:bash", tool(1), 800, 0)
+	markBash := rewrite("mark-bash", "tool-prune", "tool-prune:marker:bash", tool(1), 800, 837)
+	markRead := rewrite("mark-read", "tool-prune", "tool-prune:marker:read", tool(0), 1000, 1037)
+	q := func(i int, ops []Operation, fwdTools []blk) req {
+		return req{at: t0.Add(time.Duration(i) * 10 * time.Second), client: client, clientBPs: bps5(tool(2), msg(1)),
+			facts: exact5m, ops: ops, fwd: mk(fwdTools, system, ms), usage: Usage{CacheWrite: 3500}}
+	}
+	noChecks(t, q(0, []Operation{rmNB, markBash}, []blk{b("read", 1000), b("bash+", 837)}).run(ts))
+	q(1, []Operation{rmBash, rmNB, markRead}, []blk{b("read+", 1037)}).begin(ts) // no Compute
+	if got := activeIDs(ts); len(got) != 4 {
+		t.Fatalf("after request 2: Active = %v, want the 4 changes", got)
+	}
+	noChecks(t, q(2, nil, []blk{b("read+", 1037)}).run(ts))
+	for _, id := range activeIDs(ts) {
+		if id == markBash.ChangeID {
+			t.Fatalf("Active = %v, want no %s", activeIDs(ts), markBash.ChangeID)
+		}
+	}
+}

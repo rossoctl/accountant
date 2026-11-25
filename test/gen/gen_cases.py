@@ -1250,6 +1250,8 @@ def c_inplace_taken_over_by_another_operator():
 # last survivor (an in-place change, reported once). Later the pruner deletes the survivor too and moves the mark
 # onto the tool before it. The forwarded body has no item for the first mark move, so neither the restore check nor
 # the take-over rule can compare anything. The deletion read the client's own bytes, so the first mark move ended.
+# The breakpoints stay at system[0] and the last message: the case models only the mark's bytes (+10 tokens), because
+# the end rule does not read breakpoints. The unit tests in deleted_inplace_test.go put the client mark on a tool.
 def c_inplace_deleted_by_a_later_change():
     CT = [("read", 1000), ("bash", 800), ("nb", 600)]
     F1T, F2T = [("read", 1000), ("bash+", 810)], [("read+", 1010)]
@@ -1287,7 +1289,8 @@ def c_inplace_deleted_by_a_later_change():
                "did not delete the mark move's output. The library must end the bash mark move (accountant#108). "
                "Request 2 prices the two deletions (1,400 tokens written) and the new mark move (10 tokens), and no "
                "check fails. Request 3 repeats the prune on a warm cache. Before the fix the bash mark move stayed "
-               "active, and the sum and conservation checks failed on request 2 and every later request.",
+               "active, and the sum and conservation checks failed on request 2 and every later request. The case models "
+               "only the bytes of the mark, not a breakpoint on a tool, because the end rule does not read breakpoints.",
                ISSUES + "#108", DIMS("rewrite", "tools", "miss-hit"), steps),
           "inplace-deleted-by-a-later-change")
 
