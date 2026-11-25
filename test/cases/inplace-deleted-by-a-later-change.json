@@ -1,0 +1,1034 @@
+{
+ "id": "inplace/deleted-by-a-later-change/cold-hot/5m",
+ "description": "A pruner deletes nb, the last tool, which holds the client's cache mark. On request 1 it moves the mark onto bash, the last survivor: an in-place change of +10 tokens, reported once. On request 2 the pruner deletes bash too and moves the mark onto read. The bash mark move is not reported again, and the forwarded body has no item for it. The deletion of bash read the client's own 800 tokens, so it did not delete the mark move's output. The library must end the bash mark move (accountant#108). Request 2 prices the two deletions (1,400 tokens written) and the new mark move (10 tokens), and no check fails. Request 3 repeats the prune on a warm cache. Before the fix the bash mark move stayed active, and the sum and conservation checks failed on request 2 and every later request.",
+ "source": "issue_cases.md#108",
+ "dims": {
+  "kind": "rewrite",
+  "position": "tools",
+  "cache": "miss-hit",
+  "ttl": "5m",
+  "lifetime": "exact"
+ },
+ "rates": "fixture-v1",
+ "steps": [
+  {
+   "begin": {
+    "meta": {
+     "requestId": "r0",
+     "session": "s1",
+     "model": "agent-model",
+     "at": "2026-03-02T09:00:00Z",
+     "billing": {
+      "mode": "api"
+     }
+    },
+    "client": {
+     "start": [
+      0,
+      3,
+      4
+     ],
+     "pos": [
+      {
+       "hash": 9886883268017695359,
+       "bytes": 4000
+      },
+      {
+       "hash": 17197859482737035123,
+       "bytes": 3200
+      },
+      {
+       "hash": 16912535199610411757,
+       "bytes": 2400
+      },
+      {
+       "hash": 13344669326720121223,
+       "bytes": 8000
+      },
+      {
+       "hash": 4787936999777308126,
+       "bytes": 16000
+      },
+      {
+       "hash": 16256168635662576344,
+       "bytes": 12000
+      },
+      {
+       "hash": 553703451946282565,
+       "bytes": 12000
+      },
+      {
+       "hash": 5580068583523309187,
+       "bytes": 12000
+      },
+      {
+       "hash": 374823895492759310,
+       "bytes": 12000
+      },
+      {
+       "hash": 10286594590611542764,
+       "bytes": 12000
+      },
+      {
+       "hash": 17287370120138819789,
+       "bytes": 12000
+      },
+      {
+       "hash": 6246898925217842799,
+       "bytes": 12000
+      },
+      {
+       "hash": 16669549605934589454,
+       "bytes": 12000
+      }
+     ]
+    },
+    "clientBreakpoints": [
+     {
+      "pos": {
+       "section": "system",
+       "index": 0
+      },
+      "ttl": "5m"
+     },
+     {
+      "pos": {
+       "section": "messages",
+       "index": 8
+      },
+      "ttl": "5m"
+     }
+    ]
+   },
+   "add": [],
+   "end": {
+    "thread": {
+     "id": "main"
+    },
+    "forwarded": {
+     "start": [
+      0,
+      3,
+      4
+     ],
+     "pos": [
+      {
+       "hash": 9886883268017695359,
+       "bytes": 4000
+      },
+      {
+       "hash": 17197859482737035123,
+       "bytes": 3200
+      },
+      {
+       "hash": 16912535199610411757,
+       "bytes": 2400
+      },
+      {
+       "hash": 13344669326720121223,
+       "bytes": 8000
+      },
+      {
+       "hash": 4787936999777308126,
+       "bytes": 16000
+      },
+      {
+       "hash": 16256168635662576344,
+       "bytes": 12000
+      },
+      {
+       "hash": 553703451946282565,
+       "bytes": 12000
+      },
+      {
+       "hash": 5580068583523309187,
+       "bytes": 12000
+      },
+      {
+       "hash": 374823895492759310,
+       "bytes": 12000
+      },
+      {
+       "hash": 10286594590611542764,
+       "bytes": 12000
+      },
+      {
+       "hash": 17287370120138819789,
+       "bytes": 12000
+      },
+      {
+       "hash": 6246898925217842799,
+       "bytes": 12000
+      },
+      {
+       "hash": 16669549605934589454,
+       "bytes": 12000
+      }
+     ]
+    },
+    "breakpoints": [
+     {
+      "pos": {
+       "section": "system",
+       "index": 0
+      },
+      "ttl": "5m"
+     },
+     {
+      "pos": {
+       "section": "messages",
+       "index": 8
+      },
+      "ttl": "5m"
+     }
+    ],
+    "facts": {
+     "ttl": "5m",
+     "lifetime": "exact"
+    }
+   },
+   "usage": {
+    "input": 0,
+    "cacheRead": 0,
+    "cacheWrite": 32400,
+    "cacheWrite1h": 0
+   },
+   "expected": {
+    "phase": "unknown",
+    "baselineUsage": {
+     "input": 0,
+     "cacheRead": 0,
+     "cacheWrite": 32400,
+     "cacheWrite1h": 0
+    },
+    "ops": [],
+    "unpriced": [
+     {
+      "reason": "penalty_unknown"
+     }
+    ]
+   }
+  },
+  {
+   "begin": {
+    "meta": {
+     "requestId": "r1",
+     "session": "s1",
+     "model": "agent-model",
+     "at": "2026-03-02T09:21:10Z",
+     "billing": {
+      "mode": "api"
+     }
+    },
+    "client": {
+     "start": [
+      0,
+      3,
+      4
+     ],
+     "pos": [
+      {
+       "hash": 9886883268017695359,
+       "bytes": 4000
+      },
+      {
+       "hash": 17197859482737035123,
+       "bytes": 3200
+      },
+      {
+       "hash": 16912535199610411757,
+       "bytes": 2400
+      },
+      {
+       "hash": 13344669326720121223,
+       "bytes": 8000
+      },
+      {
+       "hash": 4787936999777308126,
+       "bytes": 16000
+      },
+      {
+       "hash": 16256168635662576344,
+       "bytes": 12000
+      },
+      {
+       "hash": 553703451946282565,
+       "bytes": 12000
+      },
+      {
+       "hash": 5580068583523309187,
+       "bytes": 12000
+      },
+      {
+       "hash": 374823895492759310,
+       "bytes": 12000
+      },
+      {
+       "hash": 10286594590611542764,
+       "bytes": 12000
+      },
+      {
+       "hash": 17287370120138819789,
+       "bytes": 12000
+      },
+      {
+       "hash": 6246898925217842799,
+       "bytes": 12000
+      },
+      {
+       "hash": 16669549605934589454,
+       "bytes": 12000
+      },
+      {
+       "hash": 9530606012965947904,
+       "bytes": 2000
+      }
+     ]
+    },
+    "clientBreakpoints": [
+     {
+      "pos": {
+       "section": "system",
+       "index": 0
+      },
+      "ttl": "5m"
+     },
+     {
+      "pos": {
+       "section": "messages",
+       "index": 9
+      },
+      "ttl": "5m"
+     }
+    ]
+   },
+   "add": [
+    {
+     "id": "o1",
+     "kind": "rewrite",
+     "operator": "tool-prune",
+     "at": {
+      "section": "tools",
+      "index": 2
+     },
+     "sizeBefore": {
+      "bytes": 2400
+     },
+     "sizeAfter": {
+      "bytes": 0
+     },
+     "changeId": "tool-prune:NotebookEdit:3f2a"
+    },
+    {
+     "id": "o3",
+     "kind": "rewrite",
+     "operator": "tool-prune",
+     "at": {
+      "section": "tools",
+      "index": 1
+     },
+     "sizeBefore": {
+      "bytes": 3200
+     },
+     "sizeAfter": {
+      "bytes": 3240
+     },
+     "changeId": "tool-prune:marker:Bash:9c41"
+    }
+   ],
+   "end": {
+    "thread": {
+     "id": "main"
+    },
+    "forwarded": {
+     "start": [
+      0,
+      2,
+      3
+     ],
+     "pos": [
+      {
+       "hash": 9886883268017695359,
+       "bytes": 4000
+      },
+      {
+       "hash": 3243298060536007162,
+       "bytes": 3240
+      },
+      {
+       "hash": 2740423840109943678,
+       "bytes": 8000
+      },
+      {
+       "hash": 16402463301543380833,
+       "bytes": 16000
+      },
+      {
+       "hash": 5357250620029963677,
+       "bytes": 12000
+      },
+      {
+       "hash": 17054746926443325490,
+       "bytes": 12000
+      },
+      {
+       "hash": 393618269449824782,
+       "bytes": 12000
+      },
+      {
+       "hash": 15061665353495183125,
+       "bytes": 12000
+      },
+      {
+       "hash": 2683894802903691877,
+       "bytes": 12000
+      },
+      {
+       "hash": 10384486865163296990,
+       "bytes": 12000
+      },
+      {
+       "hash": 9352148148735061710,
+       "bytes": 12000
+      },
+      {
+       "hash": 601350715881959401,
+       "bytes": 12000
+      },
+      {
+       "hash": 15129916980978325181,
+       "bytes": 2000
+      }
+     ]
+    },
+    "breakpoints": [
+     {
+      "pos": {
+       "section": "system",
+       "index": 0
+      },
+      "ttl": "5m"
+     },
+     {
+      "pos": {
+       "section": "messages",
+       "index": 9
+      },
+      "ttl": "5m"
+     }
+    ],
+    "facts": {
+     "ttl": "5m",
+     "lifetime": "exact"
+    }
+   },
+   "usage": {
+    "input": 0,
+    "cacheRead": 0,
+    "cacheWrite": 32310,
+    "cacheWrite1h": 0
+   },
+   "expected": {
+    "phase": "cold",
+    "baselineUsage": {
+     "input": 0,
+     "cacheRead": 0,
+     "cacheWrite": 32900,
+     "cacheWrite1h": 0
+    },
+    "ops": [
+     {
+      "changeId": "tool-prune:NotebookEdit:3f2a",
+      "saved": {
+       "cacheWrite5m": 600
+      },
+      "caused": {},
+      "estimated": true,
+      "note": "the entry expired; the tool would have been written"
+     },
+     {
+      "changeId": "tool-prune:marker:Bash:9c41",
+      "saved": {},
+      "caused": {
+       "cacheWrite5m": 10
+      },
+      "estimated": true,
+      "note": "the mark moves onto bash, and its bytes are written"
+     }
+    ],
+    "effects": [
+     {
+      "kind": "break",
+      "changeId": "",
+      "saved": {},
+      "caused": {},
+      "inBaseline": true,
+      "note": "the entry expired; B* is 0, so the read extent to B* is empty"
+     }
+    ]
+   }
+  },
+  {
+   "begin": {
+    "meta": {
+     "requestId": "r2",
+     "session": "s1",
+     "model": "agent-model",
+     "at": "2026-03-02T09:42:20Z",
+     "billing": {
+      "mode": "api"
+     }
+    },
+    "client": {
+     "start": [
+      0,
+      3,
+      4
+     ],
+     "pos": [
+      {
+       "hash": 9886883268017695359,
+       "bytes": 4000
+      },
+      {
+       "hash": 17197859482737035123,
+       "bytes": 3200
+      },
+      {
+       "hash": 16912535199610411757,
+       "bytes": 2400
+      },
+      {
+       "hash": 13344669326720121223,
+       "bytes": 8000
+      },
+      {
+       "hash": 4787936999777308126,
+       "bytes": 16000
+      },
+      {
+       "hash": 16256168635662576344,
+       "bytes": 12000
+      },
+      {
+       "hash": 553703451946282565,
+       "bytes": 12000
+      },
+      {
+       "hash": 5580068583523309187,
+       "bytes": 12000
+      },
+      {
+       "hash": 374823895492759310,
+       "bytes": 12000
+      },
+      {
+       "hash": 10286594590611542764,
+       "bytes": 12000
+      },
+      {
+       "hash": 17287370120138819789,
+       "bytes": 12000
+      },
+      {
+       "hash": 6246898925217842799,
+       "bytes": 12000
+      },
+      {
+       "hash": 16669549605934589454,
+       "bytes": 12000
+      },
+      {
+       "hash": 9530606012965947904,
+       "bytes": 2000
+      },
+      {
+       "hash": 10851152460801514834,
+       "bytes": 2000
+      }
+     ]
+    },
+    "clientBreakpoints": [
+     {
+      "pos": {
+       "section": "system",
+       "index": 0
+      },
+      "ttl": "5m"
+     },
+     {
+      "pos": {
+       "section": "messages",
+       "index": 10
+      },
+      "ttl": "5m"
+     }
+    ]
+   },
+   "add": [
+    {
+     "id": "o2",
+     "kind": "rewrite",
+     "operator": "tool-prune",
+     "at": {
+      "section": "tools",
+      "index": 1
+     },
+     "sizeBefore": {
+      "bytes": 3200
+     },
+     "sizeAfter": {
+      "bytes": 0
+     },
+     "changeId": "tool-prune:Bash:9c41"
+    },
+    {
+     "id": "o1",
+     "kind": "rewrite",
+     "operator": "tool-prune",
+     "at": {
+      "section": "tools",
+      "index": 2
+     },
+     "sizeBefore": {
+      "bytes": 2400
+     },
+     "sizeAfter": {
+      "bytes": 0
+     },
+     "changeId": "tool-prune:NotebookEdit:3f2a"
+    },
+    {
+     "id": "o3",
+     "kind": "rewrite",
+     "operator": "tool-prune",
+     "at": {
+      "section": "tools",
+      "index": 0
+     },
+     "sizeBefore": {
+      "bytes": 4000
+     },
+     "sizeAfter": {
+      "bytes": 4040
+     },
+     "changeId": "tool-prune:marker:Read:1e07"
+    }
+   ],
+   "end": {
+    "thread": {
+     "id": "main"
+    },
+    "forwarded": {
+     "start": [
+      0,
+      1,
+      2
+     ],
+     "pos": [
+      {
+       "hash": 1781256060629030750,
+       "bytes": 4040
+      },
+      {
+       "hash": 12536560556291106554,
+       "bytes": 8000
+      },
+      {
+       "hash": 15260316094459890541,
+       "bytes": 16000
+      },
+      {
+       "hash": 2581570656417125337,
+       "bytes": 12000
+      },
+      {
+       "hash": 6343675048930261534,
+       "bytes": 12000
+      },
+      {
+       "hash": 9368235404057367914,
+       "bytes": 12000
+      },
+      {
+       "hash": 13485386697658302073,
+       "bytes": 12000
+      },
+      {
+       "hash": 6375503773547482673,
+       "bytes": 12000
+      },
+      {
+       "hash": 4071034164719946674,
+       "bytes": 12000
+      },
+      {
+       "hash": 588346302901441514,
+       "bytes": 12000
+      },
+      {
+       "hash": 7861003869915259877,
+       "bytes": 12000
+      },
+      {
+       "hash": 17671731244913764425,
+       "bytes": 2000
+      },
+      {
+       "hash": 8721304006775887887,
+       "bytes": 2000
+      }
+     ]
+    },
+    "breakpoints": [
+     {
+      "pos": {
+       "section": "system",
+       "index": 0
+      },
+      "ttl": "5m"
+     },
+     {
+      "pos": {
+       "section": "messages",
+       "index": 10
+      },
+      "ttl": "5m"
+     }
+    ],
+    "facts": {
+     "ttl": "5m",
+     "lifetime": "exact"
+    }
+   },
+   "usage": {
+    "input": 0,
+    "cacheRead": 0,
+    "cacheWrite": 32010,
+    "cacheWrite1h": 0
+   },
+   "expected": {
+    "phase": "cold",
+    "baselineUsage": {
+     "input": 0,
+     "cacheRead": 0,
+     "cacheWrite": 33400,
+     "cacheWrite1h": 0
+    },
+    "ops": [
+     {
+      "changeId": "tool-prune:Bash:9c41",
+      "saved": {
+       "cacheWrite5m": 800
+      },
+      "caused": {},
+      "estimated": true,
+      "note": "the entry expired; the tool would have been written"
+     },
+     {
+      "changeId": "tool-prune:NotebookEdit:3f2a",
+      "saved": {
+       "cacheWrite5m": 600
+      },
+      "caused": {},
+      "estimated": true,
+      "note": "the entry expired; the tool would have been written"
+     },
+     {
+      "changeId": "tool-prune:marker:Read:1e07",
+      "saved": {},
+      "caused": {
+       "cacheWrite5m": 10
+      },
+      "estimated": true,
+      "note": "the mark moves onto read, and its bytes are written"
+     }
+    ],
+    "effects": [
+     {
+      "kind": "break",
+      "changeId": "",
+      "saved": {},
+      "caused": {},
+      "inBaseline": true,
+      "note": "the entry expired; B* is 0, so the read extent to B* is empty"
+     }
+    ]
+   }
+  },
+  {
+   "begin": {
+    "meta": {
+     "requestId": "r3",
+     "session": "s1",
+     "model": "agent-model",
+     "at": "2026-03-02T09:43:20Z",
+     "billing": {
+      "mode": "api"
+     }
+    },
+    "client": {
+     "start": [
+      0,
+      3,
+      4
+     ],
+     "pos": [
+      {
+       "hash": 9886883268017695359,
+       "bytes": 4000
+      },
+      {
+       "hash": 17197859482737035123,
+       "bytes": 3200
+      },
+      {
+       "hash": 16912535199610411757,
+       "bytes": 2400
+      },
+      {
+       "hash": 13344669326720121223,
+       "bytes": 8000
+      },
+      {
+       "hash": 4787936999777308126,
+       "bytes": 16000
+      },
+      {
+       "hash": 16256168635662576344,
+       "bytes": 12000
+      },
+      {
+       "hash": 553703451946282565,
+       "bytes": 12000
+      },
+      {
+       "hash": 5580068583523309187,
+       "bytes": 12000
+      },
+      {
+       "hash": 374823895492759310,
+       "bytes": 12000
+      },
+      {
+       "hash": 10286594590611542764,
+       "bytes": 12000
+      },
+      {
+       "hash": 17287370120138819789,
+       "bytes": 12000
+      },
+      {
+       "hash": 6246898925217842799,
+       "bytes": 12000
+      },
+      {
+       "hash": 16669549605934589454,
+       "bytes": 12000
+      },
+      {
+       "hash": 9530606012965947904,
+       "bytes": 2000
+      },
+      {
+       "hash": 10851152460801514834,
+       "bytes": 2000
+      },
+      {
+       "hash": 16221261173968069005,
+       "bytes": 2000
+      }
+     ]
+    },
+    "clientBreakpoints": [
+     {
+      "pos": {
+       "section": "system",
+       "index": 0
+      },
+      "ttl": "5m"
+     },
+     {
+      "pos": {
+       "section": "messages",
+       "index": 11
+      },
+      "ttl": "5m"
+     }
+    ]
+   },
+   "add": [
+    {
+     "id": "o2",
+     "kind": "rewrite",
+     "operator": "tool-prune",
+     "at": {
+      "section": "tools",
+      "index": 1
+     },
+     "sizeBefore": {
+      "bytes": 3200
+     },
+     "sizeAfter": {
+      "bytes": 0
+     },
+     "changeId": "tool-prune:Bash:9c41"
+    },
+    {
+     "id": "o1",
+     "kind": "rewrite",
+     "operator": "tool-prune",
+     "at": {
+      "section": "tools",
+      "index": 2
+     },
+     "sizeBefore": {
+      "bytes": 2400
+     },
+     "sizeAfter": {
+      "bytes": 0
+     },
+     "changeId": "tool-prune:NotebookEdit:3f2a"
+    }
+   ],
+   "end": {
+    "thread": {
+     "id": "main"
+    },
+    "forwarded": {
+     "start": [
+      0,
+      1,
+      2
+     ],
+     "pos": [
+      {
+       "hash": 1781256060629030750,
+       "bytes": 4040
+      },
+      {
+       "hash": 12536560556291106554,
+       "bytes": 8000
+      },
+      {
+       "hash": 15260316094459890541,
+       "bytes": 16000
+      },
+      {
+       "hash": 2581570656417125337,
+       "bytes": 12000
+      },
+      {
+       "hash": 6343675048930261534,
+       "bytes": 12000
+      },
+      {
+       "hash": 9368235404057367914,
+       "bytes": 12000
+      },
+      {
+       "hash": 13485386697658302073,
+       "bytes": 12000
+      },
+      {
+       "hash": 6375503773547482673,
+       "bytes": 12000
+      },
+      {
+       "hash": 4071034164719946674,
+       "bytes": 12000
+      },
+      {
+       "hash": 588346302901441514,
+       "bytes": 12000
+      },
+      {
+       "hash": 7861003869915259877,
+       "bytes": 12000
+      },
+      {
+       "hash": 17671731244913764425,
+       "bytes": 2000
+      },
+      {
+       "hash": 8721304006775887887,
+       "bytes": 2000
+      },
+      {
+       "hash": 12376289115063143268,
+       "bytes": 2000
+      }
+     ]
+    },
+    "breakpoints": [
+     {
+      "pos": {
+       "section": "system",
+       "index": 0
+      },
+      "ttl": "5m"
+     },
+     {
+      "pos": {
+       "section": "messages",
+       "index": 11
+      },
+      "ttl": "5m"
+     }
+    ],
+    "facts": {
+     "ttl": "5m",
+     "lifetime": "exact"
+    }
+   },
+   "usage": {
+    "input": 0,
+    "cacheRead": 32010,
+    "cacheWrite": 500,
+    "cacheWrite1h": 0
+   },
+   "expected": {
+    "phase": "hot",
+    "baselineUsage": {
+     "input": 0,
+     "cacheRead": 33400,
+     "cacheWrite": 500,
+     "cacheWrite1h": 0
+    },
+    "ops": [
+     {
+      "changeId": "tool-prune:Bash:9c41",
+      "saved": {
+       "cacheRead": 800
+      },
+      "caused": {},
+      "estimated": true,
+      "note": "applied again; the client's prefix would be cached"
+     },
+     {
+      "changeId": "tool-prune:NotebookEdit:3f2a",
+      "saved": {
+       "cacheRead": 600
+      },
+      "caused": {},
+      "estimated": true,
+      "note": "applied again; the client's prefix would be cached"
+     },
+     {
+      "changeId": "tool-prune:marker:Read:1e07",
+      "saved": {},
+      "caused": {
+       "cacheRead": 10
+      },
+      "estimated": true,
+      "note": "applied again; the mark's bytes are read"
+     }
+    ],
+    "boundary": {
+     "section": "messages",
+     "index": 10
+    }
+   }
+  }
+ ]
+}

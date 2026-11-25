@@ -1246,6 +1246,52 @@ def c_inplace_taken_over_by_another_operator():
           "inplace-taken-over-by-another-operator")
 
 
+# accountant#108: a pruner deletes the last tool, which holds the client's cache mark, and moves the mark onto the
+# last survivor (an in-place change, reported once). Later the pruner deletes the survivor too and moves the mark
+# onto the tool before it. The forwarded body has no item for the first mark move, so neither the restore check nor
+# the take-over rule can compare anything. The deletion read the client's own bytes, so the first mark move ended.
+def c_inplace_deleted_by_a_later_change():
+    CT = [("read", 1000), ("bash", 800), ("nb", 600)]
+    F1T, F2T = [("read", 1000), ("bash+", 810)], [("read+", 1010)]
+    C1, C2, C3 = M_BASE + [("m9", 500)], M_BASE + [("m9", 500), ("m10", 500)], M_BASE + [("m9", 500), ("m10", 500), ("m11", 500)]
+    NB, BASH = "tool-prune:NotebookEdit:3f2a", "tool-prune:Bash:9c41"
+    MB, MR = "tool-prune:marker:Bash:9c41", "tool-prune:marker:Read:1e07"
+    rm_nb = rewrite("o1", "tool-prune", "tools", 2, 600, 0, NB)
+    rm_bash = rewrite("o2", "tool-prune", "tools", 1, 800, 0, BASH)
+    steps = [
+        sim(0, "r0", (CT, SYS1, M_BASE), (CT, SYS1, M_BASE), [], "unknown"),
+        # r1: the entry expired. The pruner deletes nb and moves the mark onto bash (+10 tokens).
+        sim(1270, "r1", (CT, SYS1, C1), (F1T, SYS1, C1), [
+            eop(NB, saved=TT(cacheWrite5m=600), note="the entry expired; the tool would have been written"),
+            eop(MB, caused=TT(cacheWrite5m=10), note="the mark moves onto bash, and its bytes are written")], "cold",
+            add=[rm_nb, rewrite("o3", "tool-prune", "tools", 1, 800, 810, MB)]),
+        # r2: the entry expired again. The pruner now deletes bash too and moves the mark onto read. The bash mark
+        # move is not reported. Its item is gone, so it ended, and it has no operation here.
+        sim(2540, "r2", (CT, SYS1, C2), (F2T, SYS1, C2), [
+            eop(BASH, saved=TT(cacheWrite5m=800), note="the entry expired; the tool would have been written"),
+            eop(NB, saved=TT(cacheWrite5m=600), note="the entry expired; the tool would have been written"),
+            eop(MR, caused=TT(cacheWrite5m=10), note="the mark moves onto read, and its bytes are written")], "cold",
+            add=[rm_bash, rm_nb, rewrite("o3", "tool-prune", "tools", 0, 1000, 1010, MR)]),
+        # r3: the same prune again, on a warm cache. Every change is read, and no check fails.
+        sim(2600, "r3", (CT, SYS1, C3), (F2T, SYS1, C3), [
+            eop(BASH, saved=TT(cacheRead=800), note="applied again; the client's prefix would be cached"),
+            eop(NB, saved=TT(cacheRead=600), note="applied again; the client's prefix would be cached"),
+            eop(MR, caused=TT(cacheRead=10), note="applied again; the mark's bytes are read")], "hot",
+            add=[rm_bash, rm_nb], prev=(tokens(CT, SYS1, C2), tokens(F2T, SYS1, C2)), boundary=P("messages", 10)),
+    ]
+    write(case("inplace/deleted-by-a-later-change/cold-hot/5m",
+               "A pruner deletes nb, the last tool, which holds the client's cache mark. On request 1 it moves the "
+               "mark onto bash, the last survivor: an in-place change of +10 tokens, reported once. On request 2 the "
+               "pruner deletes bash too and moves the mark onto read. The bash mark move is not reported again, and "
+               "the forwarded body has no item for it. The deletion of bash read the client's own 800 tokens, so it "
+               "did not delete the mark move's output. The library must end the bash mark move (accountant#108). "
+               "Request 2 prices the two deletions (1,400 tokens written) and the new mark move (10 tokens), and no "
+               "check fails. Request 3 repeats the prune on a warm cache. Before the fix the bash mark move stayed "
+               "active, and the sum and conservation checks failed on request 2 and every later request.",
+               ISSUES + "#108", DIMS("rewrite", "tools", "miss-hit"), steps),
+          "inplace-deleted-by-a-later-change")
+
+
 # The host reports a compaction on a thread that has no change at all. The record exists and lists nothing.
 def c_client_compaction_before_any_change():
     C1 = M_BASE + [("m9", 500)]
@@ -3909,7 +3955,7 @@ if __name__ == "__main__":
     for old in os.listdir(OUT):  # the generator owns this directory: drop cases that no longer exist
         if old.endswith(".json"):
             os.remove(os.path.join(OUT, old))
-    for f in (ex12, ex3, ex4, ex5, ex67, ex8, c105, shared_prefix_cases, ex9, c01, c02, c03_04, c05, c06, c07, c08, c09, c10, c11, c12, c_threads, c_client_compaction, c_client_trim_keeps_head, c_client_rewrite_in_place_ends_replay, c_client_compaction_before_any_change, c_inplace_taken_over_by_another_operator, c_client_tail_edit_keeps_replay, c_client_tail_compaction_ends_replay, c_client_two_compactions, c_clock, c_ttl, c_mix,
+    for f in (ex12, ex3, ex4, ex5, ex67, ex8, c105, shared_prefix_cases, ex9, c01, c02, c03_04, c05, c06, c07, c08, c09, c10, c11, c12, c_threads, c_client_compaction, c_client_trim_keeps_head, c_client_rewrite_in_place_ends_replay, c_client_compaction_before_any_change, c_inplace_taken_over_by_another_operator, c_inplace_deleted_by_a_later_change, c_client_tail_edit_keeps_replay, c_client_tail_compaction_ends_replay, c_client_two_compactions, c_clock, c_ttl, c_mix,
               c14, s909, r909_system_hash, c15, c16, c17, c18, a1, a2, a3, a4_b3, b1_b2, b4, b5, c1_, c2_, c2b, c3_, c5, d2, d3, d4,
               d5, d6, e2, e345, f245, h2, h5, r9, i53, i54, i56, i55_split, i55_no_cache, i55_media_one_side, r14, r21, r20, r20b, c42, c42b, c42c, c42d, c70d, c43, c73, c77, c77_more, c77_capped, i44, c49, i52_all, d60, d60_1h, d60_loaded):
         f()
