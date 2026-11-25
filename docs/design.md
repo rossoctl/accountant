@@ -1587,6 +1587,7 @@ type TierTokens struct {
 // each tier. The saving is then the whole bill difference. The re-rate splits across the operations by net
 // saved tokens, so the components add up to the request total. With no operation that saved, it goes to
 // interaction.usd.
+// The output tokens (Observation.Output, never part of the prompt size) are re-rated the same way.
 
 type CacheEffectKind string // break | rescue | split | ttlPremium | ttlRescue | markPremium | markPayback
 

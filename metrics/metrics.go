@@ -319,7 +319,8 @@ func (s *Sink) price(tt map[Tier]int, model string, at time.Time, size int64) (u
 // the operations minus the bill as sent. The moved tokens (saved at the base size, caused at the billed
 // size) are not the whole difference: the tokens that stay in both requests cost
 // stay x (rate at base - rate at billed). For each tier, stay is the billed tokens minus the tokens the
-// counted operations caused.
+// counted operations caused. The output tier counts too (Observation.Output): the output is the same
+// with and without the operations, so all of it stays.
 //
 // Each operation takes a share of the re-rate in proportion to its net saved tokens (saved minus
 // caused, only above 0), so the components add up to the request total. A positive amount books to
@@ -329,7 +330,7 @@ func (s *Sink) price(tt map[Tier]int, model string, at time.Time, size int64) (u
 func (s *Sink) reRate(ctx context.Context, o Observation, sz reqSizes, model string, at time.Time) (est bool) {
 	u := o.Usage
 	billed := map[Tier]int{TierInput: u.Input, TierCacheRead: u.CacheRead,
-		TierCacheWrite5m: max(u.CacheWrite-u.CacheWrite1h, 0), TierCacheWrite1h: u.CacheWrite1h}
+		TierCacheWrite5m: max(u.CacheWrite-u.CacheWrite1h, 0), TierCacheWrite1h: u.CacheWrite1h, TierOutput: o.Output}
 	for _, op := range o.Result.Ops {
 		if !op.DryRun {
 			for t, n := range tiers(op.Caused) {

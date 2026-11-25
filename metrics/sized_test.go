@@ -275,3 +275,72 @@ func TestNoLineNoReRate(t *testing.T) {
 		}
 	}
 }
+
+// outTiered prices input at 1 USD per million tokens and output at 4, and both at 2x and 1.5x
+// above the line.
+type outTiered struct{}
+
+func (outTiered) Price(string, time.Time, Tier) (float64, bool) { return 1e-6, false }
+
+func (outTiered) PriceAt(_ string, _ time.Time, t Tier, n int64) (float64, bool) {
+	r, big := 1e-6, 2.0
+	if t == TierOutput {
+		r, big = 4e-6, 1.5
+	}
+	if n > line {
+		r *= big
+	}
+	return r, false
+}
+
+// 290K to 250K with 2,000 output tokens: the output stays and goes from 1.5x to 1x.
+func TestOutputIsReRated(t *testing.T) {
+	o := sizedObs(250_000, rewrite(50_000, 10_000))
+	o.Output = 2_000
+	s, r := newSinkWith(t, outTiered{})
+	s.Observe(o)
+	g := collect(t, r)
+	saved, added := sumF(g["llm.savings.saved.usd"]), sumF(g["llm.savings.added.usd"])
+	outRerate := 2_000 * (6e-6 - 4e-6) // 0.004
+	if !near(saved, 50_000*2e-6+240_000*1e-6+outRerate) {
+		t.Errorf("saved usd = %v, want %v", saved, 50_000*2e-6+240_000*1e-6+outRerate)
+	}
+	if !near(added, 10_000*1e-6) {
+		t.Errorf("added usd = %v, want 0.01", added)
+	}
+	// The bill difference: 290K input at 2x and 2K output at 6e-6, minus 250K at 1x and 2K at 4e-6.
+	if want := 290_000*2e-6 + 2_000*6e-6 - 250_000*1e-6 - 2_000*4e-6; !near(saved-added, want) {
+		t.Errorf("net = %v, want the bill difference %v", saved-added, want)
+	}
+	// Output tokens do not count toward the prompt size: base stays 290,000, not 292,000.
+	var out float64
+	for _, p := range g["llm.savings.saved.usd"] {
+		if p.attrs["tier"] == "output" {
+			out += p.f
+		}
+	}
+	if !near(out, outRerate) {
+		t.Errorf("output re-rate = %v, want %v", out, outRerate)
+	}
+}
+
+// A host that leaves output at 0 gets no output re-rate.
+func TestZeroOutputHasNoOutputReRate(t *testing.T) {
+	s, r := newSinkWith(t, outTiered{})
+	s.Observe(sizedObs(250_000, rewrite(50_000, 10_000)))
+	for _, p := range collect(t, r)["llm.savings.saved.usd"] {
+		if p.attrs["tier"] == "output" {
+			t.Errorf("output series = %v, want none", p.f)
+		}
+	}
+}
+
+// Output tokens do not move the prompt size: output at the line does not tip a request over it.
+func TestOutputDoesNotCountTowardPromptSize(t *testing.T) {
+	o := sizedObs(252_000, rewrite(20_000, 0)) // base 272,000: not above the line
+	o.Output = 50_000
+	saved, _ := usd(t, outTiered{}, o)
+	if !near(saved, 20_000*1e-6) {
+		t.Errorf("saved usd = %v, want 0.02 (1x, no re-rate)", saved)
+	}
+}

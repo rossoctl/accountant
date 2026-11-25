@@ -70,8 +70,12 @@ A host adds one method to its `Pricer`:
     `direction` saved or added. The request total still holds it.
   - Why proportional: the line is crossed by the operations together, so one operation alone does not own the
     change. Net saved tokens is a fair, stable weight, and it needs no extra data.
-  - No tokens move, so no token counter changes. The output tier is not re-rated: `Observation.Usage` has no
-    output tokens.
+  - **Output tokens.** The host gives them in `Observation.Output`. The output is the same with and without
+    the operations, so all of it stays. Its re-rate is `output x (rate at base size - rate at billed size)` in
+    the `output` tier, split like the other tiers. Example: GPT bills output at 1.5x above the line, so 2,000
+    output tokens on the 290,000 to 250,000 trim add `2,000 x (1.5x - 1x)` to the saving. Output never counts
+    toward the prompt size. A host that leaves `Output` at 0 gets no output re-rate.
+  - No tokens move, so no token counter changes.
   - Only a host with `PriceAt` gets the re-rate. A request that crosses no line has a re-rate of 0.
 - A cache effect and the interaction follow the same two sides. A cache effect priced as `saved` uses the size
   without the operations. One priced as `added` uses the billed size. The interaction splits by tier: a positive

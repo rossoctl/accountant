@@ -5,8 +5,12 @@ import "github.com/rossoctl/accountant"
 // Observation is what a host hands to an [Observer] after it has computed one request: the request's
 // facts, the usage the provider billed, and the result.
 type Observation struct {
-	Meta   accountant.RequestMeta
-	Usage  accountant.Usage
+	Meta  accountant.RequestMeta
+	Usage accountant.Usage
+	// Output is the output tokens the provider billed for the request. 0 means the host does not give
+	// it. A host with a SizedPricer sets it to get the re-rate of the output tier. Output never counts
+	// toward the prompt size.
+	Output int
 	Result accountant.Result
 }
 
