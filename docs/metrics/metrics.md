@@ -34,6 +34,36 @@ The module has no rate table. The host gives it one method:
 
 Tiers are `input`, `cache_read`, `cache_write_5m`, `cache_write_1h` and `output`.
 
+### The `SizedPricer` (optional)
+
+Some providers bill a large request at a higher rate for **all** its tokens. Examples: GPT-5.4 and later above
+272,000 input tokens, and Claude Haiku 5.5 above 100,000. A flat rate prices such a saving wrong, because the
+request with the operation and the request without it can fall on opposite sides of the line.
+
+A host adds one method to its `Pricer`:
+
+`PriceAt(model string, at time.Time, tier Tier, promptTokens int64) (usdPerToken float64, estimated bool)`
+
+`Pricer` does not change. The sink checks once, in `New`, if the host's pricer also has `PriceAt`.
+
+- The prompt size is fresh input plus cache read plus cache write, as the provider counts it.
+- **Saved** tokens use the size the request would have had without the operations.
+- **Caused** (added) tokens use the billed size.
+- The billed size is `Observation.Usage.Input + CacheRead + CacheWrite`. `CacheWrite` already holds the 1h part.
+- The size without the operations is the billed size, plus the saved tokens of all counted operations, minus
+  their caused tokens. A dry-run operation is not counted. A cache effect and the interaction move tokens
+  between tiers and net zero tokens, so they do not change the size.
+- A cache effect and the interaction follow the same two sides. A cache effect priced as `saved` uses the size
+  without the operations. One priced as `added` uses the billed size. The interaction splits by tier: a positive
+  net tier is saved, a negative one is added.
+- A `spend` call is priced at the prompt size of its own `Call.Usage`.
+- The sink never passes 0 or a negative size. If `Usage` is empty, or the size without the operations is not
+  above 0, the sink calls `Price` for that side.
+- A pricer without `PriceAt` gets the same `Price` calls and the same figures as before.
+- **`estimated`.** The sink adds no new `estimated` mark for the derived size. The size is exact arithmetic
+  on billed usage and on the tokens of the operations. When an operation's tokens are an estimate, the operation
+  is `Estimated` and the request is already marked. The `estimated` that `PriceAt` returns is used as for `Price`.
+
 ## Counters
 
 OTel names use dots. The collector converts them to Prometheus names (`llm_savings_saved_tokens_total`).
@@ -76,7 +106,7 @@ saving, in money, is:
 ## Rules
 
 1. **Dry runs.** An operation with `DryRun` set adds nothing.
-2. **Model.** Saved and caused tokens are priced with the request's model. A `spend` call is priced with its
+2. **Model.** Saved and caused tokens are priced with the request's model (and, with a `SizedPricer`, at the size of their side). A `spend` call is priced with its
    own `Call.Model`, because it can differ from the agent's model. If `Call.Model` is empty, the request's
    model is used.
 3. **Refused calls.** If the library listed a spend in `Result.Unpriced`, the sink books none of its call usage.

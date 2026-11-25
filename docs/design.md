@@ -1579,6 +1579,10 @@ type TierTokens struct {
 
 // The hook for a host's metrics (Observer, Observation, Multi) is not part of this library. It lives in
 // the metrics module: see [metrics.md](metrics/metrics.md).
+//
+// The sink prices a token with Pricer.Price. If the host's pricer also has PriceAt (SizedPricer), the sink
+// prices saved tokens at the prompt size without the operations (billed size + saved - caused, of the
+// counted operations) and caused tokens at the billed size (Observation.Usage). No Result field is added.
 
 type CacheEffectKind string // break | rescue | split | ttlPremium | ttlRescue | markPremium | markPayback
 
