@@ -35,6 +35,7 @@ and §6 the `R` numbers are written bare, to keep the comments short; they are t
   - [6.3 Output](#63-output)
   - [6.4 Unknown boundary](#64-unknown-boundary)
   - [6.5 Checks](#65-checks)
+  - [6.6 The dollar figure](#66-the-dollar-figure)
 - [7. Billing plans](#7-billing-plans)
   - [7.1 Billing plans](#71-billing-plans)
 - [8. Errors](#8-errors)
@@ -46,7 +47,7 @@ and §6 the `R` numbers are written bare, to keep the comments short; they are t
 |---|---|---|
 | <a id="d1"></a>D1 | Does the library need to know that a change is applied for the first time? | **No.** The tier comes from the position and the cache state (§6.2). A report finds the first application as the first event with that `ChangeID`. A context operator reports a change once, and `Compute` applies it again on later requests (D14, §4.6). |
 | <a id="d2"></a>D2 | Where is the savings logic? | **In one standalone library,** shared by context-guru and Cortex, and open to other AI frameworks. Hosts call it and keep no operator-specific pricing rules. |
-| <a id="d3"></a>D3 | What does the library return? | **Tokens for each tier**, not dollars. Cortex prices them with its own rates (discounts, overrides, long-context tiers), so a saving and the request's spend use the same rates. |
+| <a id="d3"></a>D3 | What does the library return? | **Tokens for each tier, and dollars through the host's rate table.** `Compute` returns tokens and knows no price. `Figure` (§6.6) turns them into dollars with the host's `SizedPricer` (discounts, overrides, long-context tiers), so a saving and the request's spend use the same rates. The rates stay in the host. A host must not price a saving itself. (History: before `Figure`, each host priced the tokens itself.) |
 | <a id="d4"></a>D4 | How is cg's own spend recorded? | **As context operations, in the same report as the savings.** A `spend` context operation carries the provider's billed usage of the call (`Call`). The host prices it with the savings, in one path. There is no second record and no `CostRecorder` (wiring document). `accountant.Compute` does not price the call; it returns `Call.Usage` for the host to price (D3). |
 | <a id="d5"></a>D5 | Shape | **One typed context operation for each change unit**, in-process only. The recorded summary (`event.Saving`/`ChangeSaving`) has the aggregate fallback above a limit, not the context operation list itself ([R20](spec.md#r20); the recorded form is in the wiring document). |
 | <a id="d6"></a>D6 | How is a saving across requests counted? | **Realized on each request, not projected.** Each request is priced from its own cache result. A context operator reports a change once, on its first request. The Tracker remembers the active changes of the thread, and `Compute` applies them again on each later request (D14, §4.6). **The risk:** a remembered change can be wrong, because the Tracker cannot see the content. The sum check (§6.5) can catch it, but a lost state does not heal by itself (§4.6, §11 question 13). |
@@ -56,7 +57,7 @@ and §6 the `R` numbers are written bare, to keep the comments short; they are t
 | <a id="d10"></a>D10 | How is the cache state used? | **As an input to every price.** The tier of a content change depends on the state (§6.2). A change in how the provider bills content that is already there (a cache effect, §4.4) is priced as the difference between two states. |
 | <a id="d11"></a>D11 | What happens to a change that a later change ends? | **`Compute` finds that it has ended and stops applying it.** The context operator reports nothing after the first request (D14), so it cannot say that a change ended. No link names the change that ended it. `Compute` infers the end from the bodies and the splice (§11, question 12). The measurement at each context operator's own input ([R29](spec.md#r29)) gives the right price and stops any double count, while the change is in the state. Each change keeps the total it had until then (§4.5). |
 | <a id="d12"></a>D12 | Where does the thread ID come from? | **From the engine's `internal/thread`, in both hosts**, carried on the request. The host keeps one fingerprint per thread, keyed by `thread.Key`, and compares each request with its own thread's previous request (wiring document, W5.2). |
-| <a id="d13"></a>D13 | How does the model serve a subscription user? | **The library does not change.** It already returns tokens for each tier (D3). The request carries a `Billing` fact. The host converts tokens to dollars for an API user, and to usage-limit units for a subscription user, with an API-equivalent dollar figure beside it, marked as such (§7.1). |
+| <a id="d13"></a>D13 | How does the model serve a subscription user? | **`Compute` does not change.** It already returns tokens for each tier (D3). The request carries a `Billing` fact. The host calls `Figure` for an API user (§6.6), and converts tokens to usage-limit units for a subscription user, with an API-equivalent dollar figure beside it, marked as such (§7.1). |
 | <a id="d14"></a>D14 | Is `Compute` stateful? | **The library is stateful. `Compute` is deterministic.** A context operator reports a change once, on the first request. `Compute` applies it again on later requests until it ends, so a result depends on earlier requests. The state is a `ThreadState`, kept by the Tracker, one for each thread. `Compute` is a method of the request record. The record takes a copy of the `ThreadState` in `EndRequest`, because the thread is known only after the plugins ran (§6.1). As its last step `Compute` replaces the thread's `ThreadState` with the new one, so the host has nothing to commit and cannot forget to. A failure or a panic leaves the old `ThreadState` (see [§4.6, a request that does not reach `Compute`](#46-replays-who-remembers-past-changes)). Two requests of one thread at the same time (a retry, parallel calls of one agent) are safe: the replace is guarded by the `Version` of the `ThreadState` (optimistic locking, [R53](spec.md#r53), §6.1). `Preview` does the same calculation and stores nothing (it can differ from `Compute` only for a fork's first request, if the parent's state moved in between, [R26](spec.md#r26)), for pricing an old request again and for a look that must not move the thread forward. A second `Compute` of the same request prices against the state the first call stored (the result is usually phase `hot`), so a host must not call `Compute` again to retry after a transient error; it calls `Preview`. A test case is a sequence of requests. Rejected alternatives are listed below the table. What the state holds is open (§11, question 11). How a change ends is decided (§11, question 12). |
 | <a id="d15"></a>D15 | How are thinking signatures priced? | **As opaque bytes, apart from the text ratio, at a fixed 1 token for 250 bytes, as a fallback** (accountant#73). A signature is a long sealed string that the client sends back in every later request. It is about 20% of the message bytes on Claude Code traffic. Older Claude models strip it and bill 0 tokens. Opus 4.5+ and Sonnet 4.6+ decrypt it and bill the thinking it holds, as input; the docs give no figure per byte. **The real price is not known.** Two samples of Claude Code traffic suggest 0.04 to 0.08 tokens a byte: R is 0.41 to 0.42 with signatures left out, and 0.394 to 0.396 in conversations with no thinking blocks. The samples are small and different, so the gap can be noise. **What the fallback does:** it removes the large error (R about 20% too low). It does not fix the small one. If the real price is 0.04 to 0.08, the fallback is 10 to 20 times too low, R comes out up to about 5% too high, and a removal of text books up to about 5% too much. A removal of a thinking block then books 10 to 20 times too little. **Why this price:** it is the media price, and it is above 0. **Why not media:** the media price can be cut to the bill and fail `media_tokens` (check 11). A signature must not fail that check or make an operation unpriced. **Scope:** only the Anthropic fields (`thinking.signature`, `redacted_thinking.data`). **Since accountant#77** the fixed price applies only to opaque bytes with no host count (D16). The measurement for D16 also shows that no fixed price can be right: on Opus 5.5 a signature bills 0.075 to 0.35 tokens a byte, more for a longer one, so this price is 19 to 87 times too low there. |
 | <a id="d16"></a>D16 | Where does the price of a thinking block come from? | **From the host: the thinking tokens of the response that made the block** (accountant#77). Anthropic reports `usage.output_tokens_details.thinking_tokens` on each response. The host stores it under the `OpaqueKey` of each new signature (and of each `redacted_thinking` `data` string), and splits it with `SplitOpaqueTokens` when one response made several blocks. When a block comes back, `NewBodyCounted` looks up its key and sets `PosHash.OpaqueCounted` and `PosHash.OpaqueTokens`. The library prices the counted bytes at the count, in the text ratio and in every range, and the uncounted rest at the D15 price. **Measured** with `scripts/measure-thinking-bill.py` (Opus 5.5, 6 blocks of 60 to 1,047 thinking tokens, no cache): a sent-back block adds its `thinking_tokens` plus 0 to 4 tokens to the input bill, the same on every call. Sonnet 4.5 strips thinking: a sent-back block adds 0 (8 of 8 comparisons). **Strip guard:** the counts are used unless the forwarded body proves them wrong. If the counts in the forwarded body, plus the D15 price of its uncounted opaque bytes, are above the room the bill leaves (the bill less the media price and the least the text can cost), the provider did not bill them. The library then drops the counts for the request, uses the D15 price for every opaque byte, and fails check 14 (`opaque_tokens`). It does not unprice anything. The guard does not catch every case. Counts that are small next to the bill still fit, and then R is too low by their size. A forwarded body with no counted block proves nothing, so the counts of the client body are used as they are: a drop of the last counted block saves its count. So a host does not pass counts for a model it knows strips thinking. **Edges:** a lookup that answers a negative count keeps the D15 price for that block. `Size.OpaqueTokens` 0 means no count, so a size cannot say that its blocks bill 0; a host that knows that passes no count. The ping's read extent (§4.4) takes its ratio from the ping's cache tokens over the whole previous body, so large counts after the cached prefix can drop the counts there; the D15 price then sets the extent. **Why the library walks the blocks:** each host gives only a lookup function, so every host finds the same blocks and the same keys. **Data:** a hash and a count for each block, no content ([R2](spec.md#r2)). **Rejected:** a better fixed price. The measured price is not a ratio: it is about 680 bytes of overhead plus 2.3 bytes a token, and it differs by model. |
@@ -1794,6 +1795,63 @@ The other checks have no numbers. `Detail` is built from these fields, and it ad
 - `bad_usage` of one spend operation: the call usage, output and cost.
 
 The events schema sends the fields, never `Detail` (`docs/events/events.md` §6.8.1).
+
+### 6.6 The dollar figure
+
+The library returns tokens. A host turns tokens into money with **one** function, `accountant.Figure`.
+**A host must use it. A host must not price a saving itself.** The `metrics` sink and a dashboard then show the
+same dollars for the same request. A host keeps only the mapping from the figure to its own rows, columns and
+labels.
+
+```go
+func Figure(in FigureInput, p SizedPricer) USDFigure
+```
+
+`SizedPricer` is the host's rate table: `PriceAt(model, at, tier, promptTokens) (usdPerToken, estimated)`.
+`promptTokens` 0 means the size is unknown: the host gives the rate of a small request. `FigureInput` holds
+`Model`, `At`, the billed `Usage` (fresh input, cache read, cache write, 1h write), the billed `Output`, the
+`Result`, and `Unsized`. A host whose rates ignore the prompt size sets `Unsized`: no size is derived and no
+re-rate is booked.
+
+**Sizes.** The size sent is `Input + CacheRead + CacheWrite`. The size without the operations is that size plus
+the tokens the counted operations saved, minus the tokens they caused. A counted operation is not `DryRun` and
+not a `spend`. A cache effect and the interaction move tokens between tiers, so they do not change the size.
+Saved tokens (of an operation or an effect) are priced at the size without the operations. Caused tokens are
+priced at the size sent.
+
+**The re-rate.** When the two sizes sit on different sides of a price line, the tokens that stay in both requests
+change rate too. Per tier: `stay x (rate without - rate sent)`. Stay is the billed tokens of the tier, minus
+what the counted operations caused, minus what the counted cache effects caused (an effect prices its own whole
+difference, so its Caused tokens do not stay). An `InBaseline` break is booked nowhere, so its tokens stay.
+All output stays. The re-rate can be negative. Each operation takes a share in proportion to its net saved
+tokens (saved minus caused, above 0 only). The share goes into `ByComponent` and `ByComponentFirst`. With no
+such operation the amount is `UnownedReRateUSD`.
+
+**The fields of `USDFigure`.**
+
+| Field | Meaning |
+|---|---|
+| `ByComponent` | Net dollars of each operator: saved minus caused, plus the breaks and mark effects it owns, plus its re-rate share. |
+| `ByComponentFirst`, `ByComponentReplay` | The Saved tokens by tier: write and input (a first removal, with the re-rate share) and read (a replay). |
+| `ByComponentSaved`, `ByComponentSavedAsRead` | The Saved tokens at their own tier, and the same tokens priced as reads. A host that must hold back an uncertain figure builds its lower bound from them. |
+| `KeepAliveSavedUSD`, `SplitUSD`, `TTLUSD` | The rescue, split, and head-TTL (premium plus rescue) effects. |
+| `EndedBreakUSD` | The break an ended change left behind. No operation owns it. Negative. |
+| `UnattributedBreakUSD` | Breaks the client body has too (`InBaseline`), and breaks of a change no counted operation made. Shown, never counted. |
+| `UnownedMarkUSD`, `UnownedReRateUSD` | Mark effects and the re-rate that no operation owns. The host chooses the row. |
+| `InteractionUSD` | `Interaction` minus `InteractionCaused`, at the size without the operations. |
+| `CallUSD` | The cost of the `spend` calls, each at its own model and size. A separate bill: not in `DeltaUSD` or `TotalUSD`. |
+| `DeltaUSD` | `ByComponent` + `EndedBreakUSD` + `UnownedMarkUSD` + `UnownedReRateUSD`. |
+| `TotalUSD()` | The bill difference: `DeltaUSD` + keep-alive + split + TTL + interaction. |
+| `Lines`, `Effects` | Every priced amount, by operator and tier, and every priced effect. The `metrics` sink labels its counters from them. |
+| `Unpriced`, `Estimated` | `Unpriced` has one form, `"opID:reason"`, split at the first colon. A reason with no operation has an empty opID: `":effect_<kind>_unknown_kind"` for an effect of an unknown kind. A call on an operation that is not a spend gives `"opID:not_spend"`. `Estimated` is the estimated mark of the counted operations and effects. |
+
+An effect is **counted** when it is in the bill difference. A break the client body has, a break of a change no
+counted operation made, and an effect of an unknown kind are not counted: they are not booked and their Caused
+tokens stay.
+
+**What stays in the host.** Which components have a row, how a request is gated or held back (a held
+lower bound, a fallback reason), and the names of rows. These are host policy. The figure gives a host the
+numbers it needs for them (`ByComponentSaved`, `ByComponentSavedAsRead`) and no more.
 
 ## 7. Billing plans
 

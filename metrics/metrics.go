@@ -22,15 +22,15 @@ import (
 	"go.opentelemetry.io/otel/metric"
 )
 
-// Tier is a price class of tokens (metrics spec R34, context-guru#886).
-type Tier string
+// Tier is a price class of tokens (metrics spec R34, context-guru#886). It is [accountant.Tier].
+type Tier = accountant.Tier
 
 const (
-	TierInput        Tier = "input"
-	TierCacheRead    Tier = "cache_read"
-	TierCacheWrite5m Tier = "cache_write_5m"
-	TierCacheWrite1h Tier = "cache_write_1h"
-	TierOutput       Tier = "output"
+	TierInput        = accountant.TierInput
+	TierCacheRead    = accountant.TierCacheRead
+	TierCacheWrite5m = accountant.TierCacheWrite5m
+	TierCacheWrite1h = accountant.TierCacheWrite1h
+	TierOutput       = accountant.TierOutput
 )
 
 // Pricer gives the host's rate for one token. The host owns the rate table. If the rate is a
@@ -40,17 +40,29 @@ type Pricer interface {
 	Price(model string, at time.Time, tier Tier) (usdPerToken float64, estimated bool)
 }
 
-// SizedPricer is an optional extension of [Pricer]. Some providers bill a large request at a higher
-// rate for ALL its tokens, so the rate depends on the prompt size. promptTokens is the prompt size of
-// the request the token belongs to: fresh input plus cache read plus cache write, as the provider
-// counts it. The sink never passes 0 or a negative size: when it does not know the size, it calls
-// [Pricer.Price] instead.
+// SizedPricer is an optional extension of [Pricer]. It is [accountant.SizedPricer]. Some providers bill a
+// large request at a higher rate for ALL its tokens, so the rate depends on the prompt size. promptTokens
+// is the prompt size of the request the token belongs to: fresh input plus cache read plus cache write,
+// as the provider counts it. The sink never passes 0 or a negative size: when it does not know the size,
+// it calls [Pricer.Price] instead.
 //
 // If the host's Pricer also implements SizedPricer, the sink prices each side at its own size. Saved
 // tokens use the size the request would have had without the operations. Caused tokens use the billed
 // size. A Pricer without PriceAt gets the same calls and figures as before.
-type SizedPricer interface {
-	PriceAt(model string, at time.Time, tier Tier, promptTokens int64) (usdPerToken float64, estimated bool)
+type SizedPricer = accountant.SizedPricer
+
+// pricerAt gives [accountant.Figure] its pricer: PriceAt when the host has it and the size is known,
+// else Price.
+type pricerAt struct {
+	p Pricer
+	s SizedPricer // nil when the host's Pricer has no PriceAt
+}
+
+func (a pricerAt) PriceAt(model string, at time.Time, t Tier, size int64) (float64, bool) {
+	if a.s != nil && size > 0 {
+		return a.s.PriceAt(model, at, t, size)
+	}
+	return a.p.Price(model, at, t)
 }
 
 // maxComponents bounds the label `component` when the host gives no list (metrics spec 5.7, context-guru#886).
@@ -136,11 +148,12 @@ func New(m metric.Meter, p Pricer, opts ...Option) (*Sink, error) {
 // Money follows Billing.Mode (design §7.1). Only api books money. For unknown, subscription or an unset
 // mode, no USD counter moves, because that dollar may be a subscription user's and never enters a money total.
 // Token counters always move. An unknown request counts as estimated.
+//
+// Every dollar comes from [accountant.Figure]. The sink only maps its lines to counters and labels.
 func (s *Sink) Observe(o Observation) {
 	ctx := context.Background()
-	res, model, at := o.Result, o.Meta.Model, o.Meta.At
-	mode := o.Meta.Billing.Mode
-	money := mode == accountant.BillingAPI
+	res := o.Result
+	money := o.Meta.Billing.Mode == accountant.BillingAPI
 	anyEstimated := !money // unknown, subscription's weights or an unset mode are all estimates
 
 	// A spend whose call the library refused to price must not book that call's usage.
@@ -151,98 +164,26 @@ func (s *Sink) Observe(o Observation) {
 		}
 	}
 
-	sz := s.sizes(o)
-
 	priced := 0
 	for _, op := range res.Ops {
 		if op.DryRun {
 			continue
 		}
 		priced++
-		anyEstimated = anyEstimated || op.Estimated
-		attrs := func(t Tier) attribute.Set {
-			return attribute.NewSet(
-				attribute.String("kind", string(op.Kind)),
-				attribute.String("tier", string(t)),
-				attribute.String("component", s.component(op.Operator)),
-			)
-		}
-		e1 := s.book(ctx, s.saved, s.savedUSD, tiers(op.Saved), attrs, model, at, money, sz.base)
-		e2 := s.book(ctx, s.added, s.addedUSD, tiers(op.Caused), attrs, model, at, money, sz.billed)
-		anyEstimated = anyEstimated || e1 || e2
+		attrs := func(t Tier) attribute.Set { return s.opAttrs(op.Kind, t, op.Operator) }
+		s.bookTokens(ctx, s.saved, tiers(op.Saved), attrs)
+		s.bookTokens(ctx, s.added, tiers(op.Caused), attrs)
 		if op.Kind == accountant.KindSpend && op.Call != nil && !refused[op.OpID] {
-			// The call names its own model. It can differ from the agent's model (metrics spec R49).
-			callModel := op.Call.Model
-			if callModel == "" {
-				callModel = model
-			}
-			e3 := s.book(ctx, s.added, s.addedUSD, callTiers(op.Call.Usage), attrs, callModel, at, money, callSize(op.Call.Usage))
-			anyEstimated = anyEstimated || e3
+			s.bookTokens(ctx, s.added, callTiers(op.Call.Usage), attrs)
 		}
 	}
 
-	for _, e := range res.CacheEffects {
-		if e.InBaseline {
-			continue // on the record, not part of the bill difference
-		}
-		anyEstimated = anyEstimated || e.Estimated
-		if !money {
-			continue
-		}
-		for dir, tt := range map[string]accountant.TierTokens{"saved": e.Saved, "added": e.Caused} {
-			size := sz.billed
-			if dir == "saved" {
-				size = sz.base
-			}
-			usd, est := s.price(tiers(tt), model, at, size)
-			anyEstimated = anyEstimated || est
-			if usd == 0 {
-				continue
-			}
-			s.effectUSD.Add(ctx, usd, metric.WithAttributeSet(attribute.NewSet(
-				attribute.String("effect", effectName(e.Kind)),
-				attribute.String("cause", effectCause(e)),
-				attribute.String("direction", dir),
-			)))
-		}
-	}
-
-	// The re-rate: when the sent request and the request without the operations fall on different sides
-	// of a price line, the tokens that stay are billed at another rate too (design §6.2). Only a host
-	// with PriceAt gets it.
-	if money && sz.base > 0 {
-		anyEstimated = s.reRate(ctx, o, sz, model, at) || anyEstimated
-	}
-
-	// The tokens no operation owns on a rescued request. The ops already book InteractionCaused (the
-	// read), so the host adds the difference (design §6.2).
 	if money {
-		net := map[Tier]int{}
-		for t, n := range tiers(res.Interaction) {
-			net[t] += n
-		}
-		for t, n := range tiers(res.InteractionCaused) {
-			net[t] -= n
-		}
-		empty := true
-		for _, n := range net {
-			empty = empty && n == 0
-		}
-		usd, est := 0.0, false
-		if !empty {
-			// Both sides are client-side figures: Interaction is what the client body bills cold, and
-			// InteractionCaused is the read the operations book as Saved at the size without the
-			// operations. So the whole net takes that one size.
-			usd, est = s.price(net, model, at, sz.base)
-			anyEstimated = anyEstimated || est
-		}
-		if usd != 0 {
-			dir := "saved"
-			if usd < 0 {
-				dir, usd = "added", -usd
-			}
-			s.interactionUSD.Add(ctx, usd, metric.WithAttributes(attribute.String("direction", dir)))
-		}
+		fig := accountant.Figure(accountant.FigureInput{
+			Model: o.Meta.Model, At: o.Meta.At, Billed: o.Usage, Output: o.Output, Result: res, Unsized: s.sized == nil,
+		}, pricerAt{p: s.pricer, s: s.sized})
+		anyEstimated = anyEstimated || fig.Estimated
+		s.bookFigure(ctx, fig)
 	}
 
 	for _, u := range res.Unpriced {
@@ -264,180 +205,58 @@ func (s *Sink) Observe(o Observation) {
 	s.requests.Add(ctx, 1, metric.WithAttributes(attribute.String("result", result)))
 }
 
-// book adds one op's tokens and their price, and says whether any rate was a fallback. A tier with
-// no tokens adds nothing.
-func (s *Sink) book(ctx context.Context, tok metric.Int64Counter, usd metric.Float64Counter,
-	tt map[Tier]int, attrs func(Tier) attribute.Set, model string, at time.Time, money bool, size int64) (anyEst bool) {
+func (s *Sink) opAttrs(k accountant.Kind, t Tier, operator string) attribute.Set {
+	return attribute.NewSet(
+		attribute.String("kind", string(k)),
+		attribute.String("tier", string(t)),
+		attribute.String("component", s.component(operator)),
+	)
+}
+
+// bookTokens adds the tokens of one side of an op. A tier with no tokens adds nothing.
+func (s *Sink) bookTokens(ctx context.Context, c metric.Int64Counter, tt map[Tier]int, attrs func(Tier) attribute.Set) {
 	for t, n := range tt {
-		if n <= 0 {
-			continue
+		if n > 0 {
+			c.Add(ctx, int64(n), metric.WithAttributeSet(attrs(t)))
 		}
-		set := metric.WithAttributeSet(attrs(t))
-		tok.Add(ctx, int64(n), set)
-		if !money {
-			continue
-		}
-		rate, est := s.rate(model, at, t, size)
-		cost := rate * float64(n)
-		usd.Add(ctx, cost, set)
-		anyEst = anyEst || est
 	}
-	return anyEst
 }
 
-// rate prices one token. It uses PriceAt when the host's pricer has it and the size is known (size > 0).
-// Else it uses Price.
-func (s *Sink) rate(model string, at time.Time, t Tier, size int64) (float64, bool) {
-	if s.sized != nil && size > 0 {
-		return s.sized.PriceAt(model, at, t, size)
-	}
-	return s.pricer.Price(model, at, t)
-}
-
-func (s *Sink) price(tt map[Tier]int, model string, at time.Time, size int64) (usd float64, estimated bool) {
-	for t, n := range tt {
-		if n == 0 {
-			continue // no tokens: no price call, and no estimated mark from an empty tier
+// bookFigure maps the lines, the effects and the unowned parts of a figure to the dollar counters.
+func (s *Sink) bookFigure(ctx context.Context, fig accountant.USDFigure) {
+	for _, l := range fig.Lines {
+		c := s.savedUSD
+		if l.Direction == accountant.DirAdded {
+			c = s.addedUSD
 		}
-		rate, est := s.rate(model, at, t, size)
-		usd += rate * float64(n)
-		estimated = estimated || est
+		c.Add(ctx, l.USD, metric.WithAttributeSet(s.opAttrs(l.Kind, l.Tier, l.Operator)))
 	}
-	return usd, estimated
-}
-
-// reRate books the change of rate of the tokens that stay. The saving of a request is the bill without
-// the operations minus the bill as sent. The moved tokens (saved at the base size, caused at the billed
-// size) are not the whole difference: the tokens that stay in both requests cost
-// stay x (rate at base - rate at billed). For each tier, stay is the billed tokens minus the tokens the
-// counted operations and the counted cache effects caused. The output tier counts too (Observation.Output): the output is the same
-// with and without the operations, so all of it stays.
-//
-// Each operation takes a share of the re-rate in proportion to its net saved tokens (saved minus
-// caused, only above 0), so the components add up to the request total. A positive amount books to
-// saved.usd and a negative one to added.usd, as the operation's own kind and component. If no
-// operation has a net saving, nobody owns the re-rate: it books to interaction.usd. It returns true if
-// a rate used was an estimate.
-func (s *Sink) reRate(ctx context.Context, o Observation, sz reqSizes, model string, at time.Time) (est bool) {
-	u := o.Usage
-	billed := map[Tier]int{TierInput: u.Input, TierCacheRead: u.CacheRead,
-		TierCacheWrite5m: max(u.CacheWrite-u.CacheWrite1h, 0), TierCacheWrite1h: u.CacheWrite1h, TierOutput: o.Output}
-	for _, op := range o.Result.Ops {
-		if !op.DryRun {
-			for t, n := range tiers(op.Caused) {
-				billed[t] -= n
+	for _, e := range fig.Effects {
+		if !e.Counted {
+			continue // on the record, not part of the bill difference
+		}
+		for dir, usd := range map[string]float64{accountant.DirSaved: e.SavedUSD, accountant.DirAdded: e.CausedUSD} {
+			if usd == 0 {
+				continue
 			}
-		}
-	}
-	// A counted cache effect moves tokens between tiers. Its Caused tokens are billed, but the request
-	// without the operations holds them in another tier, and the effect booking already prices that
-	// whole difference. So they do not stay. An InBaseline effect is in the client body too: its
-	// tokens stay.
-	for _, e := range o.Result.CacheEffects {
-		if !e.InBaseline {
-			for t, n := range tiers(e.Caused) {
-				billed[t] -= n
-			}
-		}
-	}
-	amount := map[Tier]float64{}
-	for t, stay := range billed {
-		if stay <= 0 {
-			continue
-		}
-		rb, e1 := s.rate(model, at, t, sz.base)
-		rs, e2 := s.rate(model, at, t, sz.billed)
-		est = est || e1 || e2
-		if d := float64(stay) * (rb - rs); d != 0 {
-			amount[t] = d
-		}
-	}
-	if len(amount) == 0 {
-		return est
-	}
-	type share struct {
-		op  accountant.PricedOp
-		net int
-	}
-	var shares []share
-	total := 0
-	for _, op := range o.Result.Ops {
-		if net := sum(op.Saved) - sum(op.Caused); !op.DryRun && net > 0 {
-			shares = append(shares, share{op, net})
-			total += net
-		}
-	}
-	if total == 0 {
-		// Nobody owns it: one point, with the sign of the total, as the interaction booking does.
-		sumD := 0.0
-		for _, d := range amount {
-			sumD += d
-		}
-		dir := "saved"
-		if sumD < 0 {
-			dir, sumD = "added", -sumD
-		}
-		if sumD != 0 {
-			s.interactionUSD.Add(ctx, sumD, metric.WithAttributes(attribute.String("direction", dir)))
-		}
-		return est
-	}
-	for t, d := range amount {
-		for _, sh := range shares {
-			part := d * float64(sh.net) / float64(total)
-			c := s.savedUSD
-			if part < 0 {
-				c, part = s.addedUSD, -part
-			}
-			c.Add(ctx, part, metric.WithAttributeSet(attribute.NewSet(
-				attribute.String("kind", string(sh.op.Kind)),
-				attribute.String("tier", string(t)),
-				attribute.String("component", s.component(sh.op.Operator)),
+			s.effectUSD.Add(ctx, usd, metric.WithAttributeSet(attribute.NewSet(
+				attribute.String("effect", effectName(e.Effect.Kind)),
+				attribute.String("cause", effectCause(e.Effect)),
+				attribute.String("direction", dir),
 			)))
 		}
 	}
-	return est
-}
-
-// reqSizes holds the two prompt sizes of one request. 0 means unknown: the sink then uses Price.
-type reqSizes struct {
-	billed int64 // the prompt size the provider billed
-	base   int64 // the prompt size without the counted operations
-}
-
-// sizes derives the prompt sizes. The billed size comes from Observation.Usage. The size without the
-// operations is the billed size plus the tokens the counted operations saved, minus the tokens they
-// caused. Dry-run operations are not counted: they changed nothing. Cache effects and the interaction
-// move tokens between tiers and net zero tokens, so they do not change the size. The sink does not
-// call this for a pricer without PriceAt.
-func (s *Sink) sizes(o Observation) reqSizes {
-	if s.sized == nil {
-		return reqSizes{}
-	}
-	billed := int64(o.Usage.Input) + int64(o.Usage.CacheRead) + int64(o.Usage.CacheWrite)
-	if billed <= 0 {
-		return reqSizes{}
-	}
-	base := billed
-	for _, op := range o.Result.Ops {
-		if op.DryRun {
+	// A re-rate no operation owns, and the net of the tokens no operation owns on a rescued request.
+	for _, v := range []float64{fig.UnownedReRateUSD, fig.InteractionUSD} {
+		if v == 0 {
 			continue
 		}
-		base += int64(sum(op.Saved)) - int64(sum(op.Caused))
+		dir := accountant.DirSaved
+		if v < 0 {
+			dir, v = accountant.DirAdded, -v
+		}
+		s.interactionUSD.Add(ctx, v, metric.WithAttributes(attribute.String("direction", dir)))
 	}
-	if base <= 0 {
-		base = 0 // not credible: the saved side then uses Price
-	}
-	return reqSizes{billed: billed, base: base}
-}
-
-func sum(t accountant.TierTokens) int {
-	return t.Input + t.CacheRead + t.CacheWrite5m + t.CacheWrite1h
-}
-
-// callSize is the prompt size of a spend call, from the call's own usage.
-func callSize(u accountant.CallUsage) int64 {
-	return int64(u.Input) + int64(u.CacheRead) + int64(u.CacheWrite)
 }
 
 // component strips the host prefix ("context-guru.mask" gives "mask") and bounds the value.
@@ -485,13 +304,6 @@ func tiers(t accountant.TierTokens) map[Tier]int {
 		TierInput: t.Input, TierCacheRead: t.CacheRead,
 		TierCacheWrite5m: t.CacheWrite5m, TierCacheWrite1h: t.CacheWrite1h,
 	}
-}
-
-func addTiers(a, b map[Tier]int) map[Tier]int {
-	for t, n := range b {
-		a[t] += n
-	}
-	return a
 }
 
 // callTiers splits the usage of a component's own LLM call into tiers. CacheWrite1h is the part of

@@ -110,7 +110,7 @@ OTel names use dots. The collector converts them to Prometheus names (`llm_savin
 | `llm.savings.cache_effect.usd` | `effect`, `cause`, `direction` | Cache effects, in money. Not in saved or added. **Add it** for the net saving (see below). |
 | `llm.savings.interaction.usd` | `direction` | The net value of `Result.Interaction` minus `Result.InteractionCaused` (design §6.2), and the re-rate when no operation owns it. Not in saved or added. **Add it** for the net saving (see below). |
 | `llm.savings.requests` | `result` | `priced`, `unpriced` or `skipped`. |
-| `llm.savings.unpriced` | `reason` | Operations the library did not price. |
+| `llm.savings.unpriced` | `reason` | Operations the library did not price: `Result.Unpriced`, as the library lists it. It does not move with the billing mode. The extra entries of `Figure.Unpriced` (an effect of an unknown kind, a call on an op that is not a spend) are not counted here: they are host-side findings, and only a money request has them. |
 | `llm.savings.check_failures` | `check` | Failed library checks. |
 | `llm.savings.estimated` | none | Requests with an estimated figure. |
 
@@ -136,6 +136,28 @@ saving, in money, is:
 - The `added` side of a `cache_effect` is real cost: a `break`, or the premium of a `markPremium` or a
   `ttlPremium`. Do not floor it at zero.
 
+## One source of dollars
+
+The sink does not price. Every dollar counter comes from `accountant.Figure` (design §6.6): the sink maps the
+figure's lines to counters and labels, and keeps the `kind`, `tier`, `component`, `effect`, `cause` and
+`direction` labels as they are. A host that shows the same request in a dashboard calls `Figure` too, so the
+dashboard and the `llm_savings_*` counters cannot drift. **A host must not price a saving itself.**
+
+The sink maps like this:
+
+| Counter | From the figure |
+|---|---|
+| `saved.usd`, `added.usd` | `Lines`: the moved tokens of each operation, the call usage of each `spend`, and the re-rate shares. |
+| `cache_effect.usd` | `Effects` with `Counted` set: `SavedUSD` as `saved`, `CausedUSD` as `added`. |
+| `interaction.usd` | `UnownedReRateUSD` and `InteractionUSD`. |
+
+`Tier` and `SizedPricer` are aliases of `accountant.Tier` and `accountant.SizedPricer`. A host that does not
+implement `PriceAt` gets `Unsized`: the sink calls `Price` for every side and books no re-rate.
+
+An effect of an unknown kind, and a break of a change that no counted operation made, are not counted, so the
+sink does not book them in `cache_effect.usd`. (Before, the sink booked them. They are not part of the bill
+difference.)
+
 ## Rules
 
 1. **Dry runs.** An operation with `DryRun` set adds nothing.
@@ -150,7 +172,7 @@ saving, in money, is:
    - `subscription`: no money counter moves, and the request counts as estimated. An API-equivalent dollar
      never enters a money total.
    - Unset mode: treated as `unknown`.
-5. **Cache effects.** An effect that is `InBaseline` is skipped. An effect with `Estimated` set, or priced from a
+5. **Cache effects.** An effect that is not counted (`InBaseline`, an unknown kind, or a break of a change no counted operation made) is skipped. An effect with `Estimated` set, or priced from a
    fallback rate, marks the request estimated. The camel case kinds map to snake case values. `markPremium`
    becomes `mark_premium`, and `markPayback` becomes `mark_payback`.
 6. **Interaction.** The operations already book `InteractionCaused` (the read). The sink books the difference,

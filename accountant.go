@@ -120,6 +120,38 @@ func SplitOpaqueTokens(opaques []string, tokens int) []int {
 	return engine.SplitOpaqueTokens(opaques, tokens)
 }
 
+// Savings in money. A host prices a [Result] with [Figure], and never prices a saving itself.
+type (
+	// Tier is a price class of tokens.
+	Tier = engine.Tier
+	// SizedPricer is the host's rate table: a rate for one token, at the prompt size of its request.
+	SizedPricer = engine.SizedPricer
+	// FigureInput is the billed usage and the [Result] that [Figure] prices.
+	FigureInput = engine.FigureInput
+	// USDFigure is the savings of one request in dollars.
+	USDFigure = engine.USDFigure
+	// USDLine is one priced amount of one operation in one tier.
+	USDLine = engine.USDLine
+	// USDEffect is one priced cache effect.
+	USDEffect = engine.USDEffect
+)
+
+const (
+	TierInput        = engine.TierInput
+	TierCacheRead    = engine.TierCacheRead
+	TierCacheWrite5m = engine.TierCacheWrite5m
+	TierCacheWrite1h = engine.TierCacheWrite1h
+	TierOutput       = engine.TierOutput
+
+	DirSaved = engine.DirSaved
+	DirAdded = engine.DirAdded
+)
+
+// Figure turns a [Result] into dollars: for each operation, the effects, the breaks and the re-rate of
+// the tokens that stay when the request crosses a price line. It is deterministic and does no I/O. See
+// [USDFigure] for the fields, and docs/design.md for the rules.
+func Figure(in FigureInput, p SizedPricer) USDFigure { return engine.Figure(in, p) }
+
 // What a host reports.
 type (
 	RequestMeta = engine.RequestMeta
