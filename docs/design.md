@@ -35,6 +35,7 @@ and §6 the `R` numbers are written bare, to keep the comments short; they are t
   - [6.3 Output](#63-output)
   - [6.4 Unknown boundary](#64-unknown-boundary)
   - [6.5 Checks](#65-checks)
+  - [6.6 The dollar figure](#66-the-dollar-figure)
 - [7. Billing plans](#7-billing-plans)
   - [7.1 Billing plans](#71-billing-plans)
 - [8. Errors](#8-errors)
@@ -1794,6 +1795,63 @@ The other checks have no numbers. `Detail` is built from these fields, and it ad
 - `bad_usage` of one spend operation: the call usage, output and cost.
 
 The events schema sends the fields, never `Detail` (`docs/events/events.md` §6.8.1).
+
+### 6.6 The dollar figure
+
+The library returns tokens. A host turns tokens into money with **one** function, `accountant.Figure`.
+**A host must use it. A host must not price a saving itself.** The `metrics` sink and a dashboard then show the
+same dollars for the same request. A host keeps only the mapping from the figure to its own rows, columns and
+labels.
+
+```go
+func Figure(in FigureInput, p SizedPricer) USDFigure
+```
+
+`SizedPricer` is the host's rate table: `PriceAt(model, at, tier, promptTokens) (usdPerToken, estimated)`.
+`promptTokens` 0 means the size is unknown: the host gives the rate of a small request. `FigureInput` holds
+`Model`, `At`, the billed `Usage` (fresh input, cache read, cache write, 1h write), the billed `Output`, the
+`Result`, and `Unsized`. A host whose rates ignore the prompt size sets `Unsized`: no size is derived and no
+re-rate is booked.
+
+**Sizes.** The size sent is `Input + CacheRead + CacheWrite`. The size without the operations is that size plus
+the tokens the counted operations saved, minus the tokens they caused. A counted operation is not `DryRun` and
+not a `spend`. A cache effect and the interaction move tokens between tiers, so they do not change the size.
+Saved tokens (of an operation or an effect) are priced at the size without the operations. Caused tokens are
+priced at the size sent.
+
+**The re-rate.** When the two sizes sit on different sides of a price line, the tokens that stay in both requests
+change rate too. Per tier: `stay x (rate without - rate sent)`. Stay is the billed tokens of the tier, minus
+what the counted operations caused, minus what the counted cache effects caused (an effect prices its own whole
+difference, so its Caused tokens do not stay). An `InBaseline` break is booked nowhere, so its tokens stay.
+All output stays. The re-rate can be negative. Each operation takes a share in proportion to its net saved
+tokens (saved minus caused, above 0 only). The share goes into `ByComponent` and `ByComponentFirst`. With no
+such operation the amount is `UnownedReRateUSD`.
+
+**The fields of `USDFigure`.**
+
+| Field | Meaning |
+|---|---|
+| `ByComponent` | Net dollars of each operator: saved minus caused, plus the breaks and mark effects it owns, plus its re-rate share. |
+| `ByComponentFirst`, `ByComponentReplay` | The Saved tokens by tier: write and input (a first removal, with the re-rate share) and read (a replay). |
+| `ByComponentSaved`, `ByComponentSavedAsRead` | The Saved tokens at their own tier, and the same tokens priced as reads. A host that must hold back an uncertain figure builds its lower bound from them. |
+| `KeepAliveSavedUSD`, `SplitUSD`, `TTLUSD` | The rescue, split, and head-TTL (premium plus rescue) effects. |
+| `EndedBreakUSD` | The break an ended change left behind. No operation owns it. Negative. |
+| `UnattributedBreakUSD` | Breaks the client body has too (`InBaseline`), and breaks of a change no counted operation made. Shown, never counted. |
+| `UnownedMarkUSD`, `UnownedReRateUSD` | Mark effects and the re-rate that no operation owns. The host chooses the row. |
+| `InteractionUSD` | `Interaction` minus `InteractionCaused`, at the size without the operations. |
+| `CallUSD` | The cost of the `spend` calls, each at its own model and size. A separate bill: not in `DeltaUSD` or `TotalUSD`. |
+| `DeltaUSD` | `ByComponent` + `EndedBreakUSD` + `UnownedMarkUSD` + `UnownedReRateUSD`. |
+| `TotalUSD()` | The bill difference: `DeltaUSD` + keep-alive + split + TTL + interaction. |
+| `Lines`, `Effects` | Every priced amount, by operator and tier, and every priced effect. The `metrics` sink labels its counters from them. |
+| `Unpriced`, `Estimated` | `"opID:reason"` for each op the library did not price, and the estimated mark. |
+
+An effect is **counted** when it is in the bill difference. A break the client body has, a break of a change no
+counted operation made, and an effect of an unknown kind are not counted: they are not booked and their Caused
+tokens stay.
+
+**What stays in the host.** Which components have a row, how a request is gated or held back (a held
+lower bound, a fallback reason), and the names of rows. These are host policy. The figure gives a host the
+numbers it needs for them (`ByComponentSaved`, `ByComponentSavedAsRead`) and no more.
 
 ## 7. Billing plans
 
