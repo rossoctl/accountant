@@ -852,9 +852,10 @@ func (c *calcState) takenOver(k int, it *item) bool {
 // removals are not mapped, so the change's forwarded index holds the next item or nothing.
 //
 // The rule ends a change only on proof. Both the change and the deletion must have read the client's own
-// bytes at that client position. A deletion that did not measured an earlier operator's output: a chain, and
-// the change stays. A change that did not may sit after an earlier deletion and edit the next item at the
-// same index (removals are not mapped), so it stays too. A deletion with spans or a splice, or a DryRun, is
+// bytes at that client position. A deletion that did not read the client's bytes measured an earlier
+// operator's output: a chain, and the change stays. A change that did not read them may sit after an earlier
+// deletion and edit the next item at the same index (removals are not mapped), so it stays too. If that next
+// item has the deleted item's size, the change looks the same as the deleted one and ends. A deletion with spans or a splice, or a DryRun, is
 // not read. The change itself must be on a whole item, as in takenOver. Positions are compared in client
 // space, so the rule needs no guard for a splice in the state, unlike takenOver.
 func (c *calcState) deleted(k int, it *item) bool {

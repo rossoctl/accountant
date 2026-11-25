@@ -1936,10 +1936,12 @@ Where a question has test cases, a host that compares them with its own code mar
       rule cannot see this, because removals are not mapped: the change's forwarded index holds the next item,
       or nothing. Example: a pruner moves the client's cache mark onto the last tool it keeps, and on a later
       request it deletes that tool too. The rule ends a change only on proof: the change and the deletion
-      both read the client's own bytes at that client position. A deletion that did not read an earlier
-      operator's output: a chain, and the change stays. A change that did not may run after an earlier
-      deletion and edit the next item, which has the same index because removals are not mapped: it stays
-      too. So a host must report a deletion at its client index. The rule applies to a change on a whole item
+      both read the client's own bytes at that client position. A deletion that did not read the client's
+      bytes read an earlier operator's output: a chain, and the change stays. A change that did not read the
+      client's bytes may run after an earlier deletion and edit the next item, which has the same index
+      because removals are not mapped: it stays too. The rule fires only when the deletion's index is its
+      client index. If the next item has the same size as the deleted one, such a change looks like the
+      #108 case, the rule ends it, and the sum check fails. The rule applies to a change on a whole item
       (no spans, no splice, not a `DryRun`), and it reads only deletions of that form. It compares positions
       in client space, so, unlike the take-over rule, it also runs while a splice is in the state. It runs in
       the same repeat as the take-over rule;
