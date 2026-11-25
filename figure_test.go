@@ -330,11 +330,98 @@ func TestSavedAsReadFloorParts(t *testing.T) {
 	}
 }
 
-// An effect of an unknown kind is listed as unpriced, never counted.
+// An effect of an unknown kind is listed as unpriced in the "opID:reason" form, never counted, never
+// priced, and it marks nothing as estimated.
 func TestUnknownEffectKindIsUnpriced(t *testing.T) {
-	r := accountant.Result{CacheEffects: []accountant.CacheEffect{{Kind: "weird", Saved: tok(100)}}}
+	r := accountant.Result{CacheEffects: []accountant.CacheEffect{{Kind: "weird", Saved: tok(100), Estimated: true}}}
 	f := fig(gpt56{}, accountant.Usage{Input: 1_000}, 0, r)
-	if len(f.Unpriced) != 1 || f.DeltaUSD != 0 || f.Effects[0].Counted {
+	if len(f.Unpriced) != 1 || f.Unpriced[0] != ":effect_weird_unknown_kind" || f.DeltaUSD != 0 || f.Effects[0].Counted ||
+		f.Effects[0].SavedUSD != 0 || f.Estimated {
 		t.Fatalf("got %+v", f)
+	}
+}
+
+// A break of a change that no counted operation made (here a dry run) is not part of the bill
+// difference: it is not counted, its cost is unattributed, and its Caused tokens stay in the re-rate.
+func TestBreakNoCountedOperationOwnsIsNotCounted(t *testing.T) {
+	counted := op("mask", tok(40_000), accountant.TierTokens{})
+	dry := op("ghost", tok(5_000), accountant.TierTokens{})
+	dry.DryRun = true
+	brk := accountant.CacheEffect{Kind: accountant.EffectBreak, ChangeID: "c-ghost",
+		Saved: accountant.TierTokens{CacheRead: 20_000}, Caused: accountant.TierTokens{CacheWrite5m: 20_000}}
+	u := accountant.Usage{Input: 100_000, CacheRead: 130_000, CacheWrite: 20_000} // sent 250,000; without 290,000
+	with := fig(gpt56{}, u, 0, accountant.Result{Ops: []accountant.PricedOp{counted, dry}, CacheEffects: []accountant.CacheEffect{brk}})
+	without := fig(gpt56{}, u, 0, accountant.Result{Ops: []accountant.PricedOp{counted, dry}})
+	e := with.Effects[0]
+	if e.Counted || e.Owner != "" {
+		t.Fatalf("counted %v owner %q", e.Counted, e.Owner)
+	}
+	// Saved: a 20,000 read at the size without (2x: 1e-6). Caused: a 20,000 write at the size sent (1x: 5e-6).
+	if !near(with.UnattributedBreakUSD, 20_000*5e-6-20_000*1e-6) {
+		t.Fatalf("unattributed %v", with.UnattributedBreakUSD)
+	}
+	if !near(with.DeltaUSD, without.DeltaUSD) || !near(with.TotalUSD(), without.TotalUSD()) {
+		t.Fatalf("delta %v total %v, want %v and %v (the effect must not move them)", with.DeltaUSD, with.TotalUSD(), without.DeltaUSD, without.TotalUSD())
+	}
+	// Its 20,000 Caused write stays: it is re-rated once, from 2x to 1x, with the other tokens that stay.
+	want := 40_000*10e-6 + 100_000*5e-6 + 130_000*0.5e-6 + 20_000*5e-6
+	if !near(with.DeltaUSD, want) {
+		t.Fatalf("delta %v want %v", with.DeltaUSD, want)
+	}
+}
+
+// Each re-rate share carries the kind of its own operation.
+func TestReRateShareKeepsItsOperationsKind(t *testing.T) {
+	a := op("a", tok(30_000), accountant.TierTokens{})
+	b := op("b", tok(10_000), accountant.TierTokens{})
+	b.Kind = accountant.KindSetting
+	f := fig(gpt56{}, accountant.Usage{Input: 250_000}, 0, accountant.Result{Ops: []accountant.PricedOp{a, b}})
+	seen := map[string]accountant.Kind{}
+	for _, l := range f.Lines {
+		if l.ReRate {
+			seen[l.Operator] = l.Kind
+		}
+	}
+	if seen["a"] != accountant.KindRewrite || seen["b"] != accountant.KindSetting {
+		t.Fatalf("kinds %v", seen)
+	}
+}
+
+// An Unpriced entry with an empty OpID is request-level: it must not hide a zero-token operation that
+// has an empty OpID too.
+func TestEmptyOpIDInUnpricedHidesNothing(t *testing.T) {
+	o := op("mask", accountant.TierTokens{}, accountant.TierTokens{})
+	f := fig(gpt56{}, accountant.Usage{Input: 1_000}, 0, accountant.Result{Ops: []accountant.PricedOp{o},
+		Unpriced: []accountant.Unpriced{{Reason: accountant.ReasonNoUsage}}})
+	if _, ok := f.ByComponent["mask"]; !ok {
+		t.Fatalf("the operation was dropped: %v", f.ByComponent)
+	}
+}
+
+// A call on an operation that is not a spend is refused into Unpriced, not skipped.
+func TestCallOnANonSpendIsUnpriced(t *testing.T) {
+	o := accountant.PricedOp{OpID: "r1", Kind: accountant.KindRewrite, Operator: "x",
+		Call: &accountant.ModelCall{Usage: accountant.CallUsage{Usage: accountant.Usage{Input: 5}}}}
+	f := fig(gpt56{}, accountant.Usage{Input: 1_000}, 0, accountant.Result{Ops: []accountant.PricedOp{o}})
+	if len(f.Unpriced) != 1 || f.Unpriced[0] != "r1:"+accountant.ReasonNotSpend || f.CallUSD != 0 {
+		t.Fatalf("got %v %v", f.Unpriced, f.CallUSD)
+	}
+}
+
+type readEstimated struct{ gpt56 }
+
+func (readEstimated) PriceAt(m string, at time.Time, t accountant.Tier, n int64) (float64, bool) {
+	r, _ := gpt56{}.PriceAt(m, at, t, n)
+	return r, t == accountant.TierCacheRead
+}
+
+// The rate of the read tier can be a guess. The floor parts carry that mark.
+func TestSavedAsReadCarriesTheEstimatedMark(t *testing.T) {
+	r := accountant.Result{Ops: []accountant.PricedOp{op("mask", tok(1_000), accountant.TierTokens{})}}
+	if f := fig(readEstimated{}, accountant.Usage{Input: 10_000}, 0, r); !f.Estimated {
+		t.Fatal("the estimated read rate was dropped")
+	}
+	if f := fig(gpt56{}, accountant.Usage{Input: 10_000}, 0, r); f.Estimated {
+		t.Fatal("marked estimated with exact rates")
 	}
 }

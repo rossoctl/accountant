@@ -182,11 +182,13 @@ write price, reporting, granularity). It grows as each provider is read.
 - **One library**, standalone and usable by any AI framework, turns context operations into **tokens for each billing tier**.
   A **tier** is the rate class a provider bills a token at: input, cache write (5m or 1h), or cache
   read.
-- **Each host** converts tokens to dollars with its own rates, and records them. There are two
-  hosts: **Cortex** (`pricing.Resolver`) and the **context-guru proxy** (`internal/modelinfo`).
-  For the same request, both get the same tokens for each tier.
+- **The library turns tokens into dollars** with `Figure`, through the host's rate table (`SizedPricer`).
+  There are two hosts: **Cortex** (`pricing.Resolver`) and the **context-guru proxy** (`internal/modelinfo`).
+  For the same request, both get the same tokens for each tier. **A host must not price a saving itself**
+  (design §6.6).
 - **What is centralized is the logic, not the rates.** The `accountant` library decides which tier every
-  token falls in, in one place. The dollar rate for each tier stays in each host's own rate table,
+  token falls in, and how tokens become dollars (sizes, re-rate, effects), in one place. The dollar rate
+  for each tier stays in each host's own rate table,
   by design: Cortex has discounts, overrides and long-context tiers that the proxy does not. So the
   two hosts report the same tokens and can report different dollars for the same request, when
   their tables differ. Equal dollars are a property of the test cases, which use one fixed table
@@ -352,7 +354,7 @@ numbers are not used: those requirements were dropped.
   the same `ChangeID` does not do this.
 - <a id="r52"></a>**R52.** The library never returns one token total. It returns tokens for each tier. Tiers differ in
   price by up to 20 times (a 1h cache write against a cache read), so a sum across them is not an invariant. A host that wants one figure
-  prices the tiers and sums dollars. This is the rule of the tool-prune accounting (cortex#952).
+  calls `Figure`, which prices each tier with the host's rates and sums dollars (design §6.6). This is the rule of the tool-prune accounting (cortex#952).
 - <a id="r56"></a>**R56.** A host that defers tools with `defer_loading` leaves each definition in the body it forwards. The
   provider keeps a deferred tool out of the prompt and bills a stub for it. The host builds the forwarded `Body` as the
   prompt the provider bills: a deferred tool has the size of its stub. The deferral is then a `rewrite` that shrinks

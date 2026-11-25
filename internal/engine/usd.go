@@ -128,11 +128,12 @@ type USDFigure struct {
 	// out KeepAliveSavedUSD, SplitUSD, TTLUSD, InteractionUSD and UnattributedBreakUSD.
 	DeltaUSD float64
 
-	// Unpriced lists "opID:reason" for each operation the library did not price, and
-	// "effect:kind:unknown_kind" for an effect of an unknown kind. An unpriced operation is not a zero
-	// saving.
+	// Unpriced lists "opID:reason" for each operation the library did not price. Every entry has this
+	// one form, so a host splits it at the first colon. A reason with no operation has an empty opID:
+	// ":effect_<kind>_unknown_kind" for an effect of an unknown kind. A call on an operation that is not
+	// a spend gives "opID:not_spend". An unpriced operation is not a zero saving.
 	Unpriced []string
-	// Estimated is true when a counted operation or effect is an estimate, or a rate the pricer used is.
+	// Estimated is true when a counted operation or counted effect is an estimate, or a rate the pricer used is.
 	Estimated bool
 }
 
@@ -181,10 +182,6 @@ func Figure(in FigureInput, p SizedPricer) USDFigure {
 	// An unpriced op is also in Ops, with zero tokens. Skipping it keeps a "saved $0" off the figure for
 	// something unmeasured. OpIDs are host-supplied and can be empty or duplicated, so an op is skipped
 	// only when its OpID is listed AND it has no tokens: that can never drop a real dollar.
-	unpricedIDs := map[string]bool{}
-	for _, u := range res.Unpriced {
-		unpricedIDs[u.OpID] = true
-	}
 
 	var shares []opShare
 	owner := map[string]string{} // ChangeID -> Operator; an empty ChangeID never owns
@@ -194,6 +191,10 @@ func Figure(in FigureInput, p SizedPricer) USDFigure {
 		}
 		f.Estimated = f.Estimated || op.Estimated
 		if op.Call != nil {
+			if op.Kind != KindSpend && !refused[op.OpID] {
+				// A call on an op that is not a spend has no price rule: say so, never skip it silently.
+				f.Unpriced = append(f.Unpriced, op.OpID+":"+ReasonNotSpend)
+			}
 			if op.Kind == KindSpend && !refused[op.OpID] {
 				model := op.Call.Model
 				if model == "" {
@@ -210,17 +211,17 @@ func Figure(in FigureInput, p SizedPricer) USDFigure {
 				owner[op.ChangeID] = op.Operator
 			}
 		}
-		if unpricedIDs[op.OpID] && op.Saved.IsZero() && op.Caused.IsZero() {
+		if refused[op.OpID] && op.Saved.IsZero() && op.Caused.IsZero() {
 			continue
 		}
 		if n := tierSum(op.Saved) - tierSum(op.Caused); n > 0 {
-			shares = append(shares, opShare{op.Operator, n})
+			shares = append(shares, opShare{op.Operator, op.Kind, n})
 		}
 		saved, sEst := fp.lines(&f, op, op.Saved, DirSaved, base)
 		caused, cEst := fp.lines(&f, op, op.Caused, DirAdded, billed)
-		f.Estimated = f.Estimated || sEst || cEst
 		read, _ := fp.usd(TierTokens{CacheRead: op.Saved.CacheRead}, base)
-		asRead, _ := fp.usdAs(TierCacheRead, tierSum(op.Saved), base)
+		asRead, rEst := fp.usdAs(TierCacheRead, tierSum(op.Saved), base)
+		f.Estimated = f.Estimated || sEst || cEst || rEst
 		net := saved - caused
 		f.ByComponent[op.Operator] += net
 		f.ByComponentReplay[op.Operator] += read
@@ -232,8 +233,13 @@ func Figure(in FigureInput, p SizedPricer) USDFigure {
 
 	var effCaused TierTokens // the Caused tokens of the counted effects
 	for _, ce := range res.CacheEffects {
-		saved, e1 := fp.usd(ce.Saved, base)
-		caused, e2 := fp.usd(ce.Caused, billed)
+		// An effect of an unknown kind has no price rule: it is not priced.
+		var saved, caused float64
+		var e1, e2 bool
+		if knownEffect(ce.Kind) {
+			saved, e1 = fp.usd(ce.Saved, base)
+			caused, e2 = fp.usd(ce.Caused, billed)
+		}
 		ue := USDEffect{Effect: ce, SavedUSD: saved, CausedUSD: caused}
 		value := saved - caused
 		counted := !ce.InBaseline
@@ -276,13 +282,12 @@ func Figure(in FigureInput, p SizedPricer) USDFigure {
 			}
 		default:
 			counted = false
-			f.Unpriced = append(f.Unpriced, "effect:"+string(ce.Kind)+":unknown_kind")
-		}
-		if !ce.InBaseline {
-			f.Estimated = f.Estimated || ce.Estimated || e1 || e2
+			// The same "opID:reason" form as every entry: no op, so the id is empty.
+			f.Unpriced = append(f.Unpriced, ":effect_"+string(ce.Kind)+"_unknown_kind")
 		}
 		ue.Counted = counted
-		if counted {
+		if counted { // an effect that is never counted marks nothing as estimated
+			f.Estimated = f.Estimated || ce.Estimated || e1 || e2
 			effCaused = effCaused.Add(ce.Caused)
 		}
 		f.Effects = append(f.Effects, ue)
@@ -308,10 +313,19 @@ func Figure(in FigureInput, p SizedPricer) USDFigure {
 	return f
 }
 
+func knownEffect(k CacheEffectKind) bool {
+	switch k {
+	case EffectBreak, EffectRescue, EffectSplit, EffectTTLPremium, EffectTTLRescue, EffectMarkPremium, EffectMarkPayback:
+		return true
+	}
+	return false
+}
+
 // opShare is a counted operation with a net saving: it owns a part of the re-rate.
 type opShare struct {
-	op  string
-	net int
+	op   string
+	kind Kind
+	net  int
 }
 
 // addCall books the usage of a spend call as added, per tier, output included.
@@ -406,20 +420,9 @@ func (f *USDFigure) reRate(fp *figurePricer, in FigureInput, shares []opShare, e
 			if part < 0 {
 				dir, mag = DirAdded, -part
 			}
-			f.Lines = append(f.Lines, USDLine{Kind: opKind(in.Result, s.op), Operator: s.op, Tier: t, Direction: dir, USD: mag, ReRate: true})
+			f.Lines = append(f.Lines, USDLine{Kind: s.kind, Operator: s.op, Tier: t, Direction: dir, USD: mag, ReRate: true})
 		}
 	}
-}
-
-// opKind is the Kind of the first counted operation of an operator. A share has the Kind of its
-// operation, so a host that labels by kind keeps the label.
-func opKind(r Result, operator string) Kind {
-	for _, op := range r.Ops {
-		if !op.DryRun && op.Call == nil && op.Operator == operator {
-			return op.Kind
-		}
-	}
-	return ""
 }
 
 // sizes derives the two prompt sizes. 0 means unknown. The size without the operations is the billed

@@ -12,7 +12,7 @@ question for each change:
 The answer depends on the provider's prompt cache. A change inside a cached prefix can break the cache
 and cost more than it saves. accountant keeps that state for each conversation thread and prices every
 change in tokens for the input, cache write (5-minute and 1-hour) and cache read tiers. The host turns
-tokens into money with its own rates.
+tokens into money with `accountant.Figure` and its own rates.
 
 ## Use
 

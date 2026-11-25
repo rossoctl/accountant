@@ -405,3 +405,21 @@ func TestEffectAndInteractionAddUpToTheBillDifference(t *testing.T) {
 		t.Errorf("net = %v, want the bill difference %v", got, want)
 	}
 }
+
+// A break of a change that no counted operation made (here a dry run) is not part of the bill
+// difference, so cache_effect.usd does not move. The same holds for an effect of an unknown kind.
+func TestUncountedEffectsDoNotMoveCacheEffectUSD(t *testing.T) {
+	dry := rewrite(5_000, 0)
+	dry.ChangeID, dry.DryRun = "c-ghost", true
+	o := sizedObs(100_000, dry)
+	o.Result.CacheEffects = []accountant.CacheEffect{
+		{Kind: accountant.EffectBreak, ChangeID: "c-ghost",
+			Saved: accountant.TierTokens{CacheRead: 1_000}, Caused: accountant.TierTokens{CacheWrite5m: 1_000}},
+		{Kind: "weird", Saved: accountant.TierTokens{Input: 1_000}},
+	}
+	s, r := newSinkWith(t, tiered{})
+	s.Observe(o)
+	if got := collect(t, r)["llm.savings.cache_effect.usd"]; len(got) != 0 {
+		t.Fatalf("cache_effect.usd moved: %v", got)
+	}
+}
