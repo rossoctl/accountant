@@ -721,6 +721,30 @@ The unit tests in `internal/engine/stale_inplace_test.go` cover the rest of the 
 also when the second operator reports spans or a wider range. Ending the last change of a chain ends every link.
 The rule does not run when a splice is in the state.
 
+### An in-place change whose item a later change deletes (accountant#108)
+
+A pruner deletes the last tool, which holds the client's cache mark. It moves the mark onto the last tool it
+keeps: an in-place change, reported once. On a later request the pruner deletes that tool too. The forwarded
+body has no item for the mark move, so the restore check and the take-over rule have nothing to compare. If
+the mark move stays, the `sum` check fails by the mark's bytes on every later request. The deletion read the
+client's own bytes, so the mark move ended (design Q12).
+
+| Case ID | What the spec requires |
+|---|---|
+| `inplace/deleted-by-a-later-change/cold-hot/5m` | Request 1 deletes nb (600 tokens) and moves the mark onto bash (+10). Request 2 deletes bash (800) and nb, and moves the mark onto read (+10). The bash mark move ends and has no operation. No check fails. Request 3 repeats the prune on a warm cache. |
+
+The case models only the bytes of the mark (+10 tokens). Its breakpoints are not on a tool, because the end rule
+does not read breakpoints.
+
+The unit tests are in `internal/engine/deleted_inplace_test.go`. One test stores the deletion as active (its
+request never reached `Compute`), and the mark move still ends. Three tests are negative controls:
+
+- The pruner repeats the same prune. The mark move stays.
+- A later operator deletes the mark move's output (its size before is the mark move's size after). That is a
+  chain, and the mark move stays.
+- A trimmer runs after a deletion and trims the next tool. It reports the deleted tool's index, because removals
+  are not mapped. It did not read the client's bytes there, so it stays.
+
 ## 9i. Cases from accountant#70 (case D: media with no bytes)
 
 A body can hold an image by url, an image by file id, or a PDF. Such a block has no payload bytes. The provider
