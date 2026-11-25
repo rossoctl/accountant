@@ -54,7 +54,7 @@ jobs:
           fi
           have=$(git rev-parse -q --verify "refs/tags/$tag^{commit}" || true)
           [ -n "$have" ] \
-            || { echo "::error::Tag $tag exists but does not point to a commit."; exit 1; }
+            || { echo "::error::Tag $tag exists but does not point to a commit. The Go module proxy cannot serve such a tag, so replace it: git push origin :refs/tags/$tag && git tag -d $tag && git tag -s $tag -m $tag $want && git push origin $tag. Then re-run this workflow (Actions, the failed run, Re-run)."; exit 1; }
           [ "$have" = "$want" ] \
             || { echo "::error::Tag $tag is on $have, not on $want. Do not move a published tag. Publish the next PATCH version."; exit 1; }
       - uses: actions/setup-go@v5

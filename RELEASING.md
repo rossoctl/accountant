@@ -43,9 +43,11 @@ Say in the PR title which kind a change is, so the release notes show it.
    Do not push `metrics/vX.Y.Z` alone. Only a `v*` tag starts the workflow, so a lone metrics tag is not checked.
 5. Wait for the Release workflow. It does these things:
    - It fails if the tag is not semver or the commit is not on `main`.
-   - It fails if `metrics/vX.Y.Z` is missing, or exists on another commit.
-     The missing-tag message names the commands to run. The mismatch message says not to move a published tag.
-     After you fix a missing tag, re-run the workflow: Actions, the failed run, Re-run. A push of the metrics tag does not start a run.
+   - It fails if `metrics/vX.Y.Z` is missing, does not point to a commit, or is on another commit.
+     - Missing: the message names the commands that create and push the tag.
+     - Not a commit: the Go module proxy cannot serve such a tag. The message names the commands that delete it and create it again on the release commit.
+     - On another commit: the message says not to move a published tag. Publish the next PATCH version.
+     After you fix a missing tag or a tag that is not a commit, re-run the workflow: Actions, the failed run, Re-run. A push of the metrics tag does not start a run.
    - It runs the same checks as `ci.yaml`, for the root module and for the nested `metrics` module.
    - It asks the Go module proxy for both tags before it creates the release. A tag that Go rejects as a version fails here, and no release is made.
    - It creates the GitHub Release with generated notes. A tag with a `-suffix` is a pre-release.
