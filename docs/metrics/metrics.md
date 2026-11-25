@@ -53,6 +53,26 @@ A host adds one method to its `Pricer`:
 - The size without the operations is the billed size, plus the saved tokens of all counted operations, minus
   their caused tokens. A dry-run operation is not counted. A cache effect and the interaction move tokens
   between tiers and net zero tokens, so they do not change the size.
+- **The re-rate.** The saving of a request is the bill of the request without the operations minus the bill of
+  the request as sent, each priced at its own prompt size. Pricing the moved tokens is not enough: when the two
+  sizes are on different sides of a line, the tokens that **stay** in both requests change rate too. Example,
+  with a line at 272,000 and a 2x rate above it: a trim takes 290,000 tokens to 250,000. The moved side books
+  40,000 x 2x. The 250,000 tokens that stay drop from 2x to 1x. The saving is 290,000 x 2x minus 250,000 x 1x.
+  - Per tier, the re-rate is `stay x (rate at base size - rate at billed size)`. `stay` is the billed tokens of
+    that tier (from `Observation.Usage`) minus the tokens the counted operations caused in it.
+  - It books **to the operations**, so the per-component counters add up to the request total. Each operation
+    takes a share in proportion to its net saved tokens (saved minus caused, only where above 0).
+  - A positive amount books to `saved.usd` and a negative one to `added.usd`, with the operation's `kind`, the
+    tier and the `component`. A negative amount happens when the sent request is above the line and the request
+    without the operations is not, for example when an operation adds tokens. The component's net
+    (`saved.usd` minus `added.usd`) can then be below 0.
+  - If no operation has a net saving above 0, nobody owns the re-rate. It books to `interaction.usd`, with
+    `direction` saved or added. The request total still holds it.
+  - Why proportional: the line is crossed by the operations together, so one operation alone does not own the
+    change. Net saved tokens is a fair, stable weight, and it needs no extra data.
+  - No tokens move, so no token counter changes. The output tier is not re-rated: `Observation.Usage` has no
+    output tokens.
+  - Only a host with `PriceAt` gets the re-rate. A request that crosses no line has a re-rate of 0.
 - A cache effect and the interaction follow the same two sides. A cache effect priced as `saved` uses the size
   without the operations. One priced as `added` uses the billed size. The interaction splits by tier: a positive
   net tier is saved, a negative one is added.

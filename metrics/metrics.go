@@ -207,6 +207,13 @@ func (s *Sink) Observe(o Observation) {
 		}
 	}
 
+	// The re-rate: when the sent request and the request without the operations fall on different sides
+	// of a price line, the tokens that stay are billed at another rate too (design §6.2). Only a host
+	// with PriceAt gets it.
+	if money && sz.base > 0 {
+		anyEstimated = s.reRate(ctx, o, sz, model, at) || anyEstimated
+	}
+
 	// The tokens no operation owns on a rescued request. The ops already book InteractionCaused (the
 	// read), so the host adds the difference (design §6.2).
 	if money {
@@ -306,6 +313,80 @@ func (s *Sink) price(tt map[Tier]int, model string, at time.Time, size int64) (u
 		estimated = estimated || est
 	}
 	return usd, estimated
+}
+
+// reRate books the change of rate of the tokens that stay. The saving of a request is the bill without
+// the operations minus the bill as sent. The moved tokens (saved at the base size, caused at the billed
+// size) are not the whole difference: the tokens that stay in both requests cost
+// stay x (rate at base - rate at billed). For each tier, stay is the billed tokens minus the tokens the
+// counted operations caused.
+//
+// Each operation takes a share of the re-rate in proportion to its net saved tokens (saved minus
+// caused, only above 0), so the components add up to the request total. A positive amount books to
+// saved.usd and a negative one to added.usd, as the operation's own kind and component. If no
+// operation has a net saving, nobody owns the re-rate: it books to interaction.usd. It returns true if
+// a rate used was an estimate.
+func (s *Sink) reRate(ctx context.Context, o Observation, sz reqSizes, model string, at time.Time) (est bool) {
+	u := o.Usage
+	billed := map[Tier]int{TierInput: u.Input, TierCacheRead: u.CacheRead,
+		TierCacheWrite5m: max(u.CacheWrite-u.CacheWrite1h, 0), TierCacheWrite1h: u.CacheWrite1h}
+	for _, op := range o.Result.Ops {
+		if !op.DryRun {
+			for t, n := range tiers(op.Caused) {
+				billed[t] -= n
+			}
+		}
+	}
+	amount := map[Tier]float64{}
+	for t, stay := range billed {
+		if stay <= 0 {
+			continue
+		}
+		rb, e1 := s.rate(model, at, t, sz.base)
+		rs, e2 := s.rate(model, at, t, sz.billed)
+		est = est || e1 || e2
+		if d := float64(stay) * (rb - rs); d != 0 {
+			amount[t] = d
+		}
+	}
+	if len(amount) == 0 {
+		return est
+	}
+	type share struct {
+		op  accountant.PricedOp
+		net int
+	}
+	var shares []share
+	total := 0
+	for _, op := range o.Result.Ops {
+		if net := sum(op.Saved) - sum(op.Caused); !op.DryRun && net > 0 {
+			shares = append(shares, share{op, net})
+			total += net
+		}
+	}
+	for t, d := range amount {
+		if total == 0 {
+			dir := "saved"
+			if d < 0 {
+				dir, d = "added", -d
+			}
+			s.interactionUSD.Add(ctx, d, metric.WithAttributes(attribute.String("direction", dir)))
+			continue
+		}
+		for _, sh := range shares {
+			part := d * float64(sh.net) / float64(total)
+			c := s.savedUSD
+			if part < 0 {
+				c, part = s.addedUSD, -part
+			}
+			c.Add(ctx, part, metric.WithAttributeSet(attribute.NewSet(
+				attribute.String("kind", string(sh.op.Kind)),
+				attribute.String("tier", string(t)),
+				attribute.String("component", s.component(sh.op.Operator)),
+			)))
+		}
+	}
+	return est
 }
 
 // reqSizes holds the two prompt sizes of one request. 0 means unknown: the sink then uses Price.

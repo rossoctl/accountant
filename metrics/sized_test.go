@@ -50,14 +50,19 @@ func rewrite(saved, caused int) accountant.PricedOp {
 }
 
 // The saved side is above the line and the billed side is below it. Billed 250,000. The trim saved
-// 50,000 and caused 10,000, so the request without it had 290,000 tokens.
+// 50,000 and caused 10,000, so the request without it had 290,000 tokens. The 240,000 tokens that stay
+// also drop from 2x to 1x: that is the re-rate.
 func TestSavedPricedWithoutTheOperationCausedAtBilled(t *testing.T) {
 	saved, added := usd(t, tiered{}, sizedObs(250_000, rewrite(50_000, 10_000)))
-	if !near(saved, 50_000*2e-6) { // 290,000 is above the line: 2x
-		t.Errorf("saved usd = %v, want 0.1", saved)
+	if !near(saved, 50_000*2e-6+240_000*1e-6) { // moved tokens at 2x, plus the re-rate of the 240,000 that stay
+		t.Errorf("saved usd = %v, want 0.34", saved)
 	}
 	if !near(added, 10_000*1e-6) { // 250,000 is below the line: 1x
 		t.Errorf("added usd = %v, want 0.01", added)
+	}
+	// The net is the whole bill difference: 290,000 at 2x minus 250,000 at 1x.
+	if want := 290_000*2e-6 - 250_000*1e-6; !near(saved-added, want) {
+		t.Errorf("net = %v, want the bill difference %v", saved-added, want)
 	}
 }
 
@@ -68,8 +73,9 @@ func TestTheLineIsExclusive(t *testing.T) {
 		t.Errorf("at the line: saved usd = %v, want 0.02 (1x)", at)
 	}
 	over, _ := usd(t, tiered{}, sizedObs(252_000, rewrite(20_001, 0))) // 272,001: above
-	if !near(over, 20_001*2e-6) {
-		t.Errorf("one token above: saved usd = %v, want %v (2x)", over, 20_001*2e-6)
+	want := 20_001*2e-6 + 252_000*1e-6                                 // moved tokens at 2x, plus the re-rate of the 252,000 that stay
+	if !near(over, want) {
+		t.Errorf("one token above: saved usd = %v, want %v", over, want)
 	}
 }
 
@@ -185,5 +191,87 @@ func TestEmptyTierDoesNotMarkEstimated(t *testing.T) {
 	s2.Observe(o)
 	if n := sumI(collect(t, r2)["llm.savings.estimated"]); n != 1 {
 		t.Errorf("estimated requests = %d, want 1", n)
+	}
+}
+
+func byComponent(ps []point) map[string]float64 {
+	m := map[string]float64{}
+	for _, p := range ps {
+		m[p.attrs["component"]] += p.f
+	}
+	return m
+}
+
+func named(name string, saved, caused int) accountant.PricedOp {
+	op := rewrite(saved, caused)
+	op.Operator = "x." + name
+	return op
+}
+
+// The re-rate splits across the operations by net saved tokens. The parts add up to the request total.
+func TestReRateSplitsByNetSavedTokens(t *testing.T) {
+	// billed 250,000; A saves 30,000, B saves 10,000: base 290,000. Re-rate: 250,000 x 1e-6 = 0.25.
+	s, r := newSinkWith(t, tiered{})
+	s.Observe(sizedObs(250_000, named("a", 30_000, 0), named("b", 10_000, 0)))
+	g := collect(t, r)
+	got := byComponent(g["llm.savings.saved.usd"])
+	if !near(got["a"], 30_000*2e-6+0.25*0.75) || !near(got["b"], 10_000*2e-6+0.25*0.25) {
+		t.Errorf("per component = %v, want a=%v b=%v", got, 30_000*2e-6+0.1875, 10_000*2e-6+0.0625)
+	}
+	if total, want := sumF(g["llm.savings.saved.usd"]), 290_000*2e-6-250_000*1e-6; !near(total, want) {
+		t.Errorf("total = %v, want the bill difference %v", total, want)
+	}
+}
+
+// The sent request is above the line and the request without the operations is not. The re-rate is
+// negative: it books to added.usd, and the component's net goes below 0.
+func TestNegativeReRate(t *testing.T) {
+	// billed 285,000. A saves 5,000. B caused 40,000. Base = 250,000. Stay = 245,000.
+	s, r := newSinkWith(t, tiered{})
+	s.Observe(sizedObs(285_000, named("a", 5_000, 0), named("b", 0, 40_000)))
+	g := collect(t, r)
+	saved, added := byComponent(g["llm.savings.saved.usd"]), byComponent(g["llm.savings.added.usd"])
+	if !near(saved["a"]-added["a"], 5_000*1e-6-245_000*1e-6) {
+		t.Errorf("a net = %v, want %v", saved["a"]-added["a"], 5_000*1e-6-245_000*1e-6)
+	}
+	if net, want := sumF(g["llm.savings.saved.usd"])-sumF(g["llm.savings.added.usd"]), 250_000*1e-6-285_000*2e-6; !near(net, want) {
+		t.Errorf("net = %v, want the bill difference %v", net, want)
+	}
+	if net := saved["a"] - added["a"]; net >= 0 {
+		t.Errorf("a net = %v, want below 0", net)
+	}
+}
+
+// No operation has a net saving: nobody owns the re-rate. It books to interaction.usd.
+func TestReRateWithNoSavingOpIsUnattributed(t *testing.T) {
+	s, r := newSinkWith(t, tiered{})
+	s.Observe(sizedObs(285_000, named("b", 0, 40_000))) // base 245,000, stay 245,000
+	g := collect(t, r)
+	var dir string
+	for _, p := range g["llm.savings.interaction.usd"] {
+		dir = p.attrs["direction"]
+		if !near(p.f, 245_000*1e-6) {
+			t.Errorf("interaction usd = %v, want 0.245", p.f)
+		}
+	}
+	if dir != "added" {
+		t.Errorf("direction = %q, want added", dir)
+	}
+	if added := sumF(g["llm.savings.added.usd"]); !near(added, 40_000*2e-6) {
+		t.Errorf("added usd = %v, want 0.08", added)
+	}
+}
+
+// A request that crosses no line gets no re-rate.
+func TestNoLineNoReRate(t *testing.T) {
+	for _, billed := range []int{100_000, 400_000} { // both sides below, then both above
+		saved, added := usd(t, tiered{}, sizedObs(billed, rewrite(20_000, 5_000)))
+		rate := 1e-6
+		if billed > line {
+			rate = 2e-6
+		}
+		if !near(saved, 20_000*rate) || !near(added, 5_000*rate) {
+			t.Errorf("billed %d: saved %v added %v, want %v and %v", billed, saved, added, 20_000*rate, 5_000*rate)
+		}
 	}
 }

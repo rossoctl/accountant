@@ -1583,6 +1583,10 @@ type TierTokens struct {
 // The sink prices a token with Pricer.Price. If the host's pricer also has PriceAt (SizedPricer), the sink
 // prices saved tokens at the prompt size without the operations (billed size + saved - caused, of the
 // counted operations) and caused tokens at the billed size (Observation.Usage). No Result field is added.
+// It also books the re-rate of the tokens that stay: stay x (rate at base size - rate at billed size) for
+// each tier. The saving is then the whole bill difference. The re-rate splits across the operations by net
+// saved tokens, so the components add up to the request total. With no operation that saved, it goes to
+// interaction.usd.
 
 type CacheEffectKind string // break | rescue | split | ttlPremium | ttlRescue | markPremium | markPayback
 
