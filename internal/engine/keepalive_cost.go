@@ -102,3 +102,93 @@ func AvoidedMissesUSD(n int64, missUSD float64) float64 {
 	}
 	return float64(n) * missUSD
 }
+
+// RequestCostInput is the billed usage of one request, for [RequestCost].
+type RequestCostInput struct {
+	Model string
+	At    time.Time
+	// Billed is the usage the provider billed, as in [FigureInput]: CacheWrite counts every lifetime, and
+	// CacheWrite1h is the part of it billed at the 1-hour tier.
+	Billed Usage
+	// Output is the output tokens the provider billed.
+	Output int
+	// PromptTokens is the prompt size that picks the price tier. 0 or less means Input + CacheRead +
+	// CacheWrite, the size the provider counts.
+	PromptTokens int64
+}
+
+// RequestCost is the dollars of one billed request:
+//
+//	Input x input + CacheRead x read + (CacheWrite - CacheWrite1h) x write5m + CacheWrite1h x write1h + Output x output
+//
+// Every rate is the rate at PromptTokens. A tier with no tokens makes no price call, so it cannot mark the
+// cost estimated. A negative count counts as 0. CacheWrite1h counts only as far as CacheWrite: a larger
+// value is clamped to CacheWrite, so the 1-hour part never exceeds the write. A model that the pricer does
+// not know gives the pricer's dollars and estimated true. It uses the same token pricer as [Figure].
+func RequestCost(in RequestCostInput, p SizedPricer) (usd float64, estimated bool) {
+	u := in.Billed
+	size := in.PromptTokens
+	if size <= 0 {
+		size = int64(max(u.Input, 0)) + int64(max(u.CacheRead, 0)) + int64(max(u.CacheWrite, 0))
+	}
+	fp := &figurePricer{p: p, model: in.Model, at: in.At}
+	w1h := min(max(u.CacheWrite1h, 0), max(u.CacheWrite, 0))
+	usd, estimated = fp.usd(TierTokens{Input: max(u.Input, 0), CacheRead: max(u.CacheRead, 0),
+		CacheWrite5m: max(u.CacheWrite, 0) - w1h, CacheWrite1h: w1h}, size)
+	if in.Output > 0 {
+		r, e := fp.rate(TierOutput, size)
+		usd += r * float64(in.Output)
+		estimated = estimated || e
+	}
+	return usd, estimated
+}
+
+// LatePingInput is a keep-alive ping that fires after its entry expired. It writes the prefix again, it
+// does not read it.
+type LatePingInput struct {
+	PingInput
+	// OneHour says that the entry was written at the 1-hour tier, so its rewrite is too.
+	OneHour bool
+}
+
+// LatePingCost is the dollars of a ping that arrives too late:
+//
+//	Prefix x write + FreshInput x input + Output x output
+//
+// The write rate is the 5-minute rate, or the 1-hour rate when OneHour is set. Every rate is at
+// PromptTokens, or at Prefix + FreshInput when it is 0 or less. A negative count counts as 0.
+//
+// A ping is a write here, so it follows the rule of [MissCost]: a write rate of 0 or less is unknown. The
+// result is then 0 and estimated is true. A ping with no prefix writes nothing and has no such check.
+func LatePingCost(in LatePingInput, p SizedPricer) (usd float64, estimated bool) {
+	prefix, fresh, out := max(in.Prefix, 0), max(in.FreshInput, 0), max(in.Output, 0)
+	size := in.PromptTokens
+	if size <= 0 {
+		size = prefix + fresh
+	}
+	// Each tier is priced once. The sum keeps the tier order of [RequestCost]: input, write, output.
+	var write float64
+	if prefix > 0 {
+		tier := TierCacheWrite5m
+		if in.OneHour {
+			tier = TierCacheWrite1h
+		}
+		var we bool
+		if write, we = p.PriceAt(in.Model, in.At, tier, size); write <= 0 {
+			return 0, true
+		}
+		estimated = we
+	}
+	if fresh > 0 {
+		r, e := p.PriceAt(in.Model, in.At, TierInput, size)
+		usd += float64(fresh) * r
+		estimated = estimated || e
+	}
+	usd += float64(prefix) * write
+	if out > 0 {
+		r, e := p.PriceAt(in.Model, in.At, TierOutput, size)
+		usd += float64(out) * r
+		estimated = estimated || e
+	}
+	return usd, estimated
+}

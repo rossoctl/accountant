@@ -167,13 +167,28 @@ func HeadTier(u Usage) Tier { return engine.HeadTier(u) }
 // §6.6.
 func RemovalSaving(in RemovalInput, p SizedPricer) RemovalFigure { return engine.RemovalSaving(in, p) }
 
-// Keep-alive costs. A host prices a ping and a cache miss with these, and never with its own formula.
+// Keep-alive costs. A host prices a ping, a cache miss, a billed request and a late ping with these, and
+// never with its own formula.
 type (
 	// PingInput is one keep-alive ping: the prefix it reads, the fresh input it carries and its output.
 	PingInput = engine.PingInput
 	// MissInput is one cache miss on a prefix.
 	MissInput = engine.MissInput
+	// RequestCostInput is the billed usage of one request.
+	RequestCostInput = engine.RequestCostInput
+	// LatePingInput is a ping that fires after its entry expired.
+	LatePingInput = engine.LatePingInput
 )
+
+// RequestCost is the dollars of one billed request, at the rates of its prompt size. See [RequestCostInput].
+func RequestCost(in RequestCostInput, p SizedPricer) (usd float64, estimated bool) {
+	return engine.RequestCost(in, p)
+}
+
+// LatePingCost is the dollars of a ping that arrives after its entry expired: it writes the prefix. See [LatePingInput].
+func LatePingCost(in LatePingInput, p SizedPricer) (usd float64, estimated bool) {
+	return engine.LatePingCost(in, p)
+}
 
 // PingCost is the dollars of one keep-alive ping, at the rates of its own prompt size. 0 with estimated
 // true means the rate is unknown. See [PingInput].
