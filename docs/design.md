@@ -1534,6 +1534,8 @@ type Result struct {
                             // DryRun ones included
     OldestActiveTurns int   // requests since the oldest of them entered Active; 0 when it entered on
                             // this request, and 0 when nothing is active
+    MessageTokens int       // the client messages in tokens, at this request's byte ratio; 0 when nothing
+                            // was priced. The size bound reads it (§6.7)
 }
 
 // ActiveOps and OldestActiveTurns change no figure. They are for the host's events (events.md §6.8).
@@ -1589,6 +1591,8 @@ type PricedOp struct {
     DryRun    bool
     Saved     TierTokens // tokens the provider did not bill, by tier; never negative
     Caused    TierTokens // tokens the provider billed because of this operation; never negative
+    SavedMessages  TierTokens // the size of the spans in the messages section, at the request ratio (§6.7)
+    CausedMessages TierTokens // the same for the added spans (§6.7)
     Call      *ModelCall // spend only: copied from the operation, for the host to price
     Estimated bool
 }
@@ -1943,20 +1947,29 @@ what the inserting operations added (check 13, §6.5). So the operations cannot 
 body had plus the tokens they caused. `Withhold(res)` tests this bound with the library's own size, so a host
 passes no size. Only the messages section counts:
 
-- **The size** is `Result.MessageTokens`: the tokens of the messages of the client body, by the byte ratio of
-  this request (the same ratio as check 6). It is 0 when nothing was priced.
-- **The saved tokens** are `PricedOp.SavedMessages`: the part of `Saved` that comes from spans in the messages
-  section, in every tier. **The caused tokens** are `PricedOp.CausedMessages`, the same way.
+- **The unit** is the byte ratio of this request (the same ratio as check 6), on both sides. The bound
+  never uses the host's own token counts (`Size.Tokens`). A host count can be denser than the request
+  average, for example for hex or code. If one side used the host count, an honest request would be withheld.
+- **The size** is `Result.MessageTokens`: the tokens of the messages of the client body, at that ratio. It is
+  0 when nothing was priced.
+- **The saved tokens** are `PricedOp.SavedMessages`: the size of the spans in the messages section, at that
+  ratio, in every tier. It can differ from the messages part of `Saved`, which uses the host count when the
+  host gives one. **The caused tokens** are `PricedOp.CausedMessages`, the same way.
 - An operation that is `DryRun` or a `spend` is not counted.
 - The request is withheld when the saved message tokens are above `MessageTokens` plus the caused message
   tokens. A request that saved nothing in the messages always passes.
+- **What it can catch.** A saving larger than the messages could hold, at one ratio. The span and sum checks
+  already keep the claimed bytes inside the body, so this bound is a second defense for a result that passes
+  them by an error in the library or in a host that builds a `Result` by hand.
+- **What it cannot catch.** A wrong host token count. Check 12 limits that count to 0.05 to 2 tokens a byte,
+  and conservation (check 6) tracks the gap. A host that needs a bound on its own count uses the legacy form.
 
 **Why only messages.** A host measure that counts the tool declarations withholds a healthy request. Example
 (context-guru#907): a deferral removes 2,188 tokens of tool declarations from a request whose messages hold
 121 tokens. 2,188 is above 121, but no message token was saved. The tool declarations and the system are not
 messages, so the bound ignores `Saved` in those sections. `Saved` itself still holds them: the figure books them.
 The tokens that an operation caused in the tools or the system do not widen the bound for the same reason.
-Example (more_examples.md#I44): `retrieve` inserts 25,000 tokens into an 8,000-token body of messages, and `cmdfilter`
+Example: `retrieve` inserts 25,000 tokens into an 8,000-token body of messages, and `cmdfilter`
 removes 20,000 of them. 20,000 is above 8,000, but not above 8,000 + 25,000, so the request passes.
 
 **The legacy form.** `Withhold(res, tokensBefore)` is deprecated and keeps its old rule. `tokensBefore` is the

@@ -2268,9 +2268,6 @@ func (c *calcState) price(res *Result) {
 					var got TierTokens
 					c.addTier(&got, c.client, false, mustFlat(c.client, from), c.bstar, c.clientBPs, d)
 					p.Saved = p.Saved.Add(got)
-					if sp.from.Section == SectionMessages {
-						p.SavedMessages = p.SavedMessages.Add(got)
-					}
 					if !it.op.DryRun {
 						c.interaction(res, from, d)
 					}
@@ -2289,8 +2286,19 @@ func (c *calcState) price(res *Result) {
 						c.addTier(&got, c.fwd, true, at, c.bstarFwd, c.fwdBPs, -d)
 					}
 					p.Caused = p.Caused.Add(got)
-					if sp.from.Section == SectionMessages {
-						p.CausedMessages = p.CausedMessages.Add(got)
+				}
+				if sp.from.Section == SectionMessages {
+					// the size bound (§6.7) measures in the request ratio, as MessageTokens does, never in
+					// the host's tokens: dense content would else look larger than its own messages
+					switch dr := c.ratio.sizeOf(sp.before.Bytes, bm) - c.ratio.sizeOf(sp.after.Bytes, am); {
+					case dr > 0:
+						c.addTier(&p.SavedMessages, c.client, false, mustFlat(c.client, c.clientSide(k, sp.from)), c.bstar, c.clientBPs, dr)
+					case dr < 0:
+						fp, _ := c.fwdSide(k, sp.from)
+						if sp.before.Bytes == 0 && it.op.MessageSplice != nil {
+							fp, _ = c.toFwdSkipping(k, sp.from)
+						}
+						c.addTier(&p.CausedMessages, c.fwd, true, mustFlat(c.fwd, fp), c.bstarFwd, c.fwdBPs, -dr)
 					}
 				}
 			}

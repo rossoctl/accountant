@@ -215,7 +215,9 @@ const (
 	WithheldImplausibleSize   = engine.WithheldImplausibleSize
 
 	// SizeNotGiven is the legacy tokensBefore of a host with no measure of the request size: [Withhold]
-	// skips the size gate. Deprecated: call Withhold(res) and the library measures the size.
+	// skips the size gate.
+	//
+	// Deprecated: call Withhold(res) and the library measures the size.
 	SizeNotGiven = engine.SizeNotGiven
 )
 
@@ -225,7 +227,8 @@ const (
 // Call it as Withhold(res). The size bound then uses the library's own measure of the client messages
 // ([Result.MessageTokens]) and counts message tokens only, so a removed tool declaration does not
 // trip it. The optional size is the legacy form: the size of the body the client sent, by the host's
-// own measure, or [SizeNotGiven], which skips the size bound. It is deprecated. See docs/design.md §6.7.
+// own measure, or [SizeNotGiven], which skips the size bound. The optional size is deprecated: a variadic
+// cannot carry its own marker, so new code must not pass it. See docs/design.md §6.7.
 func Withhold(res Result, tokensBefore ...int) string { return engine.Withhold(res, tokensBefore...) }
 
 // What a host reports.

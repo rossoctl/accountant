@@ -197,8 +197,9 @@ difference.)
    any request. `TokensBefore` above 0 is the host's own size: the sink gives it to `Withhold`, which counts
    every operation. With `TokensBefore` 0 or less, the sink calls `Withhold(res)`: the library measures the
    client messages and counts message tokens only, so a removed tool declaration does not withhold the
-   request. Before this rule, the sink skipped the size gate in that case. One unpriced operation (for example `size_range` or `media_tokens`) withholds the whole request:
-   the sink books none of its other operations either. Before this rule, it booked them.
+   request. Before this rule, the sink skipped the size gate in that case. One unpriced operation (for example
+   `size_range` or `media_tokens`) withholds the whole request: the sink books none of its other
+   operations either. Before this rule, it booked them.
 
 ## Not in this module
 

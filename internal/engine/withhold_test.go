@@ -218,19 +218,39 @@ func TestWithholdKeepsALargeToolRemoval(t *testing.T) {
 	}
 }
 
-// End to end: the host measured 1,800 tokens for a 900-byte message, 2 tokens a byte, the most the size
-// check allows. The conversation is 1,000 bytes, so about 1,000 tokens. The operator cannot have saved more
-// tokens than the messages hold.
-func TestWithholdGatesAnImplausibleMessageSaving(t *testing.T) {
-	client := mk(nil, nil, []blk{b("m0", 100), b("m1", 900)})
-	fwd := mk(nil, nil, []blk{b("m0", 100)})
-	op := rewrite("o1", "h.drop", "d:m1", msg(1), 900, 0)
-	op.SizeBefore.Tokens = 1800
-	res := req{at: t0, client: client, fwd: fwd, usage: Usage{Input: 100}, ops: []Operation{op}}.run(NewTrackers())
-	if got := tierSum(findOp(t, res, "o1").SavedMessages); got != 1800 || res.MessageTokens != 1000 {
-		t.Fatalf("SavedMessages = %d, MessageTokens = %d, want 1800 and 1000", got, res.MessageTokens)
-	}
+// The bound is a defense: the span and sum checks already keep the saved bytes inside the body, so no
+// request that passes them can save more message tokens than its messages hold. A result that does is
+// withheld, also when its own checks are clean.
+func TestWithholdGatesAnImpossibleMessageSaving(t *testing.T) {
+	res := Result{MessageTokens: 1000, Ops: []PricedOp{
+		{OpID: "o1", Kind: KindRewrite, Saved: TierTokens{Input: 1800}, SavedMessages: TierTokens{Input: 1800}},
+	}}
 	if got := Withhold(res); got != WithheldImplausibleSize {
 		t.Errorf("Withhold = %q, want %q", got, WithheldImplausibleSize)
+	}
+	res.Ops[0].CausedMessages = TierTokens{Input: 800}
+	if got := Withhold(res); got != "" {
+		t.Errorf("Withhold with the caused tokens = %q, want \"\"", got)
+	}
+}
+
+// End to end: the host counts the removed message at 0.67 tokens a byte (600 for 900 bytes). Check 12
+// accepts that. The request ratio is 0.25, so the whole messages section is 250 tokens and the host
+// count alone is above it. The bound measures at the ratio (225 tokens), so the saving is booked.
+func TestWithholdKeepsDenserThanRatioRemovedContent(t *testing.T) {
+	client := mk([]blk{b("t0", 4000)}, nil, []blk{b("m0", 100), b("m1", 900)})
+	fwd := mk([]blk{b("t0", 4000)}, nil, []blk{b("m0", 100)})
+	op := rewrite("o1", "h.drop", "d:m1", msg(1), 900, 0)
+	op.SizeBefore.Tokens = 600
+	res := req{at: t0, client: client, fwd: fwd, usage: Usage{Input: 1025}, ops: []Operation{op}}.run(NewTrackers())
+	p := findOp(t, res, "o1")
+	if got := tierSum(p.Saved); got != 600 {
+		t.Fatalf("Saved = %d, want the host's 600", got)
+	}
+	if got := tierSum(p.SavedMessages); got != 225 || res.MessageTokens != 250 {
+		t.Fatalf("SavedMessages = %d, MessageTokens = %d, want 225 and 250 (both at the ratio)", got, res.MessageTokens)
+	}
+	if got := Withhold(res); got != "" {
+		t.Errorf("Withhold = %q, want \"\": dense content is not a size fault", got)
 	}
 }

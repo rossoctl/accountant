@@ -176,10 +176,13 @@ func TestOneUnpricedOpWithholdsTheRequest(t *testing.T) {
 	}
 }
 
-// A negative TokensBefore is "not given", as 0 is: the size gate is skipped.
-func TestNegativeTokensBeforeSkipsTheSizeGate(t *testing.T) {
+// A negative TokensBefore is "not given", as 0 is: the library's own bound decides (design §6.7). The
+// request saves fewer message tokens than its messages hold, so nothing is withheld.
+func TestNegativeTokensBeforeUsesTheLibrarysBound(t *testing.T) {
 	s, r := newSink(t)
 	o := withheldObs()
+	o.Result.MessageTokens = 5000
+	o.Result.Ops[0].SavedMessages = accountant.TierTokens{Input: 1000}
 	o.TokensBefore = -7
 	s.Observe(o)
 	if w := collect(t, r)["llm.savings.withheld"]; len(w) != 0 {
