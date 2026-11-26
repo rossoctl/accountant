@@ -136,8 +136,10 @@ func TestReRateSplitsByNetSavedTokens(t *testing.T) {
 func TestNegativeReRateGoesToTheOperationsThatAdded(t *testing.T) {
 	r := accountant.Result{Ops: []accountant.PricedOp{op("a", tok(1_000), tok(30_000))}} // net added 29,000
 	f := fig(gpt56{}, accountant.Usage{Input: 290_000}, 0, r)                            // without: 261,000
-	if f.UnownedReRateUSD != 0 || !near(f.ByComponent["a"], f.DeltaUSD) || f.ByComponent["a"] >= -30_000*10e-6 {
-		t.Fatalf("unowned %v, a %v, delta %v: a owns the whole negative re-rate", f.UnownedReRateUSD, f.ByComponent["a"], f.DeltaUSD)
+	// a: its saved 1,000 at the base size (261,000, below the line), its caused 30,000 at the billed size,
+	// and the re-rate of the 260,000 that stay.
+	if want := 1_000*5e-6 - 30_000*10e-6 - 260_000*(10e-6-5e-6); f.UnownedReRateUSD != 0 || !near(f.ByComponent["a"], want) || !near(f.DeltaUSD, want) {
+		t.Fatalf("unowned %v, a %v, delta %v: want a = delta = %v", f.UnownedReRateUSD, f.ByComponent["a"], f.DeltaUSD, want)
 	}
 	r = accountant.Result{Ops: []accountant.PricedOp{op("a", tok(2_000), accountant.TierTokens{}), op("b", accountant.TierTokens{}, tok(30_000))}}
 	f = fig(gpt56{}, accountant.Usage{Input: 275_000}, 0, r) // without: 247,000: below the line
@@ -150,6 +152,27 @@ func TestNegativeReRateGoesToTheOperationsThatAdded(t *testing.T) {
 	}
 	if want := -30_000*10e-6 - 245_000*(10e-6-5e-6); !near(f.ByComponent["b"], want) {
 		t.Fatalf("b %v want %v", f.ByComponent["b"], want)
+	}
+	// b saved nothing, so its share is not a first removal.
+	if f.ByComponentFirst["b"] != 0 {
+		t.Fatalf("ByComponentFirst[b] = %v, want 0: an adder's share is in ByComponent only", f.ByComponentFirst["b"])
+	}
+}
+
+// The operations make the prompt smaller and take it below the line. The saver owns the whole re-rate, and
+// an adder in the same request pays only for its own tokens.
+func TestReRateGoesToTheSaverWhenTheSizeGoesDown(t *testing.T) {
+	r := accountant.Result{Ops: []accountant.PricedOp{
+		op("a", accountant.TierTokens{}, tok(10_000)), op("b", tok(40_000), accountant.TierTokens{})}}
+	f := fig(gpt56{}, accountant.Usage{Input: 250_000}, 0, r) // without: 280,000, above the line
+	if want := -10_000 * 5e-6; !near(f.ByComponent["a"], want) {
+		t.Fatalf("a %v want %v (its added tokens at the billed size, no share)", f.ByComponent["a"], want)
+	}
+	if want := 40_000*10e-6 + 240_000*(10e-6-5e-6); !near(f.ByComponent["b"], want) || !near(f.ByComponentFirst["b"], want) {
+		t.Fatalf("b %v first %v want %v (its saving and the re-rate of the 240,000 that stay)", f.ByComponent["b"], f.ByComponentFirst["b"], want)
+	}
+	if want := 280_000*10e-6 - 250_000*5e-6; !near(f.DeltaUSD, want) {
+		t.Fatalf("delta %v want the bill difference %v", f.DeltaUSD, want)
 	}
 }
 

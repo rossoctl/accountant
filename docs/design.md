@@ -1587,7 +1587,8 @@ type TierTokens struct {
 // It also books the re-rate of the tokens that stay: stay x (rate at base size - rate at billed size) for
 // each tier. The saving is then the whole bill difference. The re-rate splits across the operations that
 // moved the size, by their net tokens (the net savers when the size went down, the net adders when it went
-// up), so the components add up to the request total. With no such operation, it goes to interaction.usd. A counted cache effect's Caused tokens do not stay: the effect booking prices them.
+// up), so the components add up to the request total. With no such operation, it goes to interaction.usd.
+// A counted cache effect's Caused tokens do not stay: the effect booking prices them.
 // The interaction is priced whole at the size without the operations.
 // The output tokens (Observation.Output, never part of the prompt size) are re-rated the same way.
 
@@ -1830,15 +1831,16 @@ All output stays. The re-rate can be negative. The operations that moved the siz
 - If they made the prompt larger, each operation with net added tokens takes a share in proportion to those.
   So an operation that pushes a prompt over a price line pays the premium of the tokens that stay.
 
-The share goes into `ByComponent` and `ByComponentFirst`. With no such operation the amount is
-`UnownedReRateUSD`.
+The share goes into `ByComponent`. A net saver's share also goes into `ByComponentFirst`. An adder saved
+nothing, so its share is not there. With no such operation the amount is `UnownedReRateUSD`. That is a guard:
+the sum of the nets is the size difference, so a re-rate always has an owner today.
 
 **The fields of `USDFigure`.**
 
 | Field | Meaning |
 |---|---|
 | `ByComponent` | Net dollars of each operator: saved minus caused, plus the breaks and mark effects it owns, plus its re-rate share. |
-| `ByComponentFirst`, `ByComponentReplay` | The Saved tokens by tier: write and input (a first removal, with the re-rate share) and read (a replay). |
+| `ByComponentFirst`, `ByComponentReplay` | The Saved tokens by tier: write and input (a first removal, with the re-rate share of a net saver) and read (a replay). An adder's re-rate share is in `ByComponent` only. |
 | `ByComponentSaved`, `ByComponentSavedAsRead` | The Saved tokens at their own tier, and the same tokens priced as reads. A host that must hold back an uncertain figure builds its lower bound from them. |
 | `KeepAliveSavedUSD`, `SplitUSD`, `TTLUSD` | The rescue, split, and head-TTL (premium plus rescue) effects. |
 | `EndedBreakUSD` | The break an ended change left behind. No operation owns it. Negative. |

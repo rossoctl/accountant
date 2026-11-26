@@ -97,8 +97,9 @@ type USDFigure struct {
 	// effects it owns, plus its share of the re-rate.
 	ByComponent map[string]float64
 	// ByComponentFirst and ByComponentReplay split the SAVED tokens of each operation by tier: the write
-	// and input tiers (content the provider had not cached: a first removal, with the re-rate share) and
-	// the read tier (a replay of content in the cached prefix).
+	// and input tiers (content the provider had not cached: a first removal, with the re-rate share of a
+	// net saver) and the read tier (a replay of content in the cached prefix). An adder's re-rate share is
+	// in ByComponent only: it saved nothing.
 	ByComponentFirst, ByComponentReplay map[string]float64
 	// ByComponentSaved is the dollars of the Saved tokens of each operation, at the size without the
 	// operations. ByComponentSavedAsRead is the same tokens priced at the read tier. A host that wants a
@@ -117,7 +118,8 @@ type USDFigure struct {
 	// UnownedMarkUSD is the value of the markPremium and markPayback effects that no counted operation
 	// owns. Counted in DeltaUSD. The host chooses its row.
 	UnownedMarkUSD float64
-	// UnownedReRateUSD is the re-rate when no operation moved the size to own it. Counted in DeltaUSD.
+	// UnownedReRateUSD is the re-rate when no operation moved the size to own it. Counted in DeltaUSD. It is
+	// a guard: a re-rate always has an owner today (see Figure), so it is 0.
 	UnownedReRateUSD float64
 	// InteractionUSD is the net value of Result.Interaction minus Result.InteractionCaused, at the size
 	// without the operations. Signed. Counted in TotalUSD, not in DeltaUSD.
@@ -162,7 +164,9 @@ func (f USDFigure) TotalUSD() float64 {
 // caused, above 0) takes a share in proportion to them. If they made it larger, each operation with net
 // added tokens takes a share in proportion to those. So the components add up to the request total, and
 // an operation that pushes a prompt over a price line pays the premium of the tokens that stay. With no
-// such operation the re-rate is UnownedReRateUSD.
+// such operation the re-rate is UnownedReRateUSD. That is a guard: the sum of the nets is the size
+// difference, so a re-rate always has an owner, and UnownedReRateUSD is 0 with a pricer whose rate
+// depends only on the model, the tier and the size.
 //
 // A spend call is priced at its own model, and at the size of its own usage.
 func Figure(in FigureInput, p SizedPricer) USDFigure {
@@ -438,7 +442,9 @@ func (f *USDFigure) reRate(fp *figurePricer, in FigureInput, shares []opShare, e
 		for _, s := range shares {
 			part := d * float64(s.net) / float64(total)
 			f.ByComponent[s.op] += part
-			f.ByComponentFirst[s.op] += part
+			if sum > 0 { // a saver's share is part of its first removal; an adder saved nothing
+				f.ByComponentFirst[s.op] += part
+			}
 			f.DeltaUSD += part
 			dir := DirSaved
 			mag := part
