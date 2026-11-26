@@ -65,16 +65,21 @@ A host adds one method to its `Pricer`:
     tokens of every cache effect that is not `InBaseline`. An effect moves tokens between tiers, and its own
     booking already prices that whole difference, so those tokens do not stay. An `InBaseline` effect is in the
     client body too, so its tokens stay.
-  - It books **to the operations**, so the per-component counters add up to the request total. Each operation
-    takes a share in proportion to its net saved tokens (saved minus caused, only where above 0).
+  - It books **to the operations that moved the size**, so the per-component counters add up to the request
+    total. Each operation has a net: saved minus caused tokens.
+    - If the operations made the prompt smaller, each operation with a net above 0 takes a share in proportion
+      to its net saved tokens.
+    - If they made the prompt larger, each operation with a net below 0 takes a share in proportion to its net
+      added tokens.
   - A positive amount books to `saved.usd` and a negative one to `added.usd`, with the operation's `kind`, the
     tier and the `component`. A negative amount happens when the sent request is above the line and the request
-    without the operations is not, for example when an operation adds tokens. The component's net
-    (`saved.usd` minus `added.usd`) can then be below 0.
-  - If no operation has a net saving above 0, nobody owns the re-rate. It books to `interaction.usd` as one
-    point for all tiers, with the sign of the total as `direction` (saved or added), as the interaction booking does. The request total still holds it.
-  - Why proportional: the line is crossed by the operations together, so one operation alone does not own the
-    change. Net saved tokens is a fair, stable weight, and it needs no extra data.
+    without the operations is not: an operation added tokens and took the prompt over the line. That operation
+    pays it. An operation that saved tokens in the same request keeps its saving.
+  - If no operation moved the size, nobody owns the re-rate. It books to `interaction.usd` as one point for all
+    tiers, with the sign of the total as `direction` (saved or added), as the interaction booking does. This is
+    a guard: the sum of the nets is the size difference, so a re-rate always has an owner today.
+  - Why proportional: the operations cross the line together, so one operation alone does not own the change.
+    Net tokens is a fair, stable weight, and it needs no extra data.
   - **Output tokens.** The host gives them in `Observation.Output`. The output is the same with and without
     the operations, so all of it stays. Its re-rate is `output x (rate at base size - rate at billed size)` in
     the `output` tier, split like the other tiers. Example: GPT bills output at 1.5x above the line, so 2,000

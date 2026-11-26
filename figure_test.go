@@ -76,16 +76,16 @@ func TestSavedSideIsPricedAtTheClientSize(t *testing.T) {
 	}
 }
 
-// A component adds 40,000 tokens to a request of 300,000. Nobody has a net saving, so the re-rate of
-// the 260,000 that stay (-1.30) is unowned.
+// A component adds 40,000 tokens to a request of 260,000 and takes it over the line. Its added tokens are
+// priced at the billed size, and it pays the re-rate of the 260,000 that stay (-1.30): it moved the size.
 func TestCausedSideIsPricedAtTheBilledSize(t *testing.T) {
 	r := accountant.Result{Ops: []accountant.PricedOp{op("mask", accountant.TierTokens{}, tok(40_000))}}
 	f := fig(gpt56{}, accountant.Usage{Input: 300_000}, 0, r)
-	if want := -40_000 * 10e-6; !near(f.ByComponent["mask"], want) {
+	if want := -40_000*10e-6 - 260_000*5e-6; !near(f.ByComponent["mask"], want) {
 		t.Fatalf("cost %v want %v", f.ByComponent["mask"], want)
 	}
-	if want := -260_000 * 5e-6; !near(f.UnownedReRateUSD, want) {
-		t.Fatalf("unowned re-rate %v want %v", f.UnownedReRateUSD, want)
+	if f.UnownedReRateUSD != 0 {
+		t.Fatalf("unowned re-rate %v want 0", f.UnownedReRateUSD)
 	}
 	if want := 260_000*5e-6 - 300_000*10e-6; !near(f.DeltaUSD, want) {
 		t.Fatalf("delta %v want %v", f.DeltaUSD, want)
@@ -131,19 +131,48 @@ func TestReRateSplitsByNetSavedTokens(t *testing.T) {
 	}
 }
 
-// The request sent is above the line and the one without is below it: the re-rate is negative, and the
-// owner of the net saving can go below 0.
-func TestNegativeReRateCanTakeAComponentBelowZero(t *testing.T) {
-	r := accountant.Result{Ops: []accountant.PricedOp{op("a", tok(1_000), tok(30_000))}} // net saved < 0: unowned
+// The request sent is above the line and the one without is below it: the re-rate is negative. The
+// operations that made the prompt larger pay it, and an operation that saved keeps its saving.
+func TestNegativeReRateGoesToTheOperationsThatAdded(t *testing.T) {
+	r := accountant.Result{Ops: []accountant.PricedOp{op("a", tok(1_000), tok(30_000))}} // net added 29,000
 	f := fig(gpt56{}, accountant.Usage{Input: 290_000}, 0, r)                            // without: 261,000
-	if f.UnownedReRateUSD >= 0 {
-		t.Fatalf("unowned re-rate %v want < 0", f.UnownedReRateUSD)
+	// a: its saved 1,000 at the base size (261,000, below the line), its caused 30,000 at the billed size,
+	// and the re-rate of the 260,000 that stay.
+	if want := 1_000*5e-6 - 30_000*10e-6 - 260_000*(10e-6-5e-6); f.UnownedReRateUSD != 0 || !near(f.ByComponent["a"], want) || !near(f.DeltaUSD, want) {
+		t.Fatalf("unowned %v, a %v, delta %v: want a = delta = %v", f.UnownedReRateUSD, f.ByComponent["a"], f.DeltaUSD, want)
 	}
 	r = accountant.Result{Ops: []accountant.PricedOp{op("a", tok(2_000), accountant.TierTokens{}), op("b", accountant.TierTokens{}, tok(30_000))}}
 	f = fig(gpt56{}, accountant.Usage{Input: 275_000}, 0, r) // without: 247,000: below the line
 	want := 247_000*5e-6 - 275_000*10e-6
-	if !near(f.DeltaUSD, want) || f.ByComponent["a"] >= 2_000*5e-6 {
-		t.Fatalf("delta %v want %v, a %v", f.DeltaUSD, want, f.ByComponent["a"])
+	if !near(f.DeltaUSD, want) || !near(f.ByComponent["a"]+f.ByComponent["b"], want) {
+		t.Fatalf("delta %v, a+b %v, want %v", f.DeltaUSD, f.ByComponent["a"]+f.ByComponent["b"], want)
+	}
+	if !near(f.ByComponent["a"], 2_000*5e-6) {
+		t.Fatalf("a %v want its saving %v: b took the prompt over the line, so b pays the re-rate", f.ByComponent["a"], 2_000*5e-6)
+	}
+	if want := -30_000*10e-6 - 245_000*(10e-6-5e-6); !near(f.ByComponent["b"], want) {
+		t.Fatalf("b %v want %v", f.ByComponent["b"], want)
+	}
+	// b saved nothing, so its share is not a first removal.
+	if f.ByComponentFirst["b"] != 0 {
+		t.Fatalf("ByComponentFirst[b] = %v, want 0: an adder's share is in ByComponent only", f.ByComponentFirst["b"])
+	}
+}
+
+// The operations make the prompt smaller and take it below the line. The saver owns the whole re-rate, and
+// an adder in the same request pays only for its own tokens.
+func TestReRateGoesToTheSaverWhenTheSizeGoesDown(t *testing.T) {
+	r := accountant.Result{Ops: []accountant.PricedOp{
+		op("a", accountant.TierTokens{}, tok(10_000)), op("b", tok(40_000), accountant.TierTokens{})}}
+	f := fig(gpt56{}, accountant.Usage{Input: 250_000}, 0, r) // without: 280,000, above the line
+	if want := -10_000 * 5e-6; !near(f.ByComponent["a"], want) {
+		t.Fatalf("a %v want %v (its added tokens at the billed size, no share)", f.ByComponent["a"], want)
+	}
+	if want := 40_000*10e-6 + 240_000*(10e-6-5e-6); !near(f.ByComponent["b"], want) || !near(f.ByComponentFirst["b"], want) {
+		t.Fatalf("b %v first %v want %v (its saving and the re-rate of the 240,000 that stay)", f.ByComponent["b"], f.ByComponentFirst["b"], want)
+	}
+	if want := 280_000*10e-6 - 250_000*5e-6; !near(f.DeltaUSD, want) {
+		t.Fatalf("delta %v want the bill difference %v", f.DeltaUSD, want)
 	}
 }
 
@@ -479,5 +508,23 @@ func TestInBaselineEffectsArePricedOnlyWhereBooked(t *testing.T) {
 	f = fig(p, accountant.Usage{}, 0, accountant.Result{CacheEffects: []accountant.CacheEffect{brk}})
 	if n == 0 || f.UnattributedBreakUSD <= 0 {
 		t.Fatalf("calls %d unattributed %v", n, f.UnattributedBreakUSD)
+	}
+}
+
+// Two components add 30,000 and 10,000 tokens to a request of 250,000 and take it over the line. They
+// split the re-rate of the 250,000 that stay 3:1, and the components add up to the bill difference.
+func TestReRateSplitsByNetAddedTokens(t *testing.T) {
+	r := accountant.Result{Ops: []accountant.PricedOp{
+		op("a", accountant.TierTokens{}, tok(30_000)), op("b", accountant.TierTokens{}, tok(10_000))}}
+	f := fig(gpt56{}, accountant.Usage{Input: 290_000}, 0, r) // without: 250,000
+	re := -250_000 * (10e-6 - 5e-6)
+	if want := -30_000*10e-6 + re*0.75; !near(f.ByComponent["a"], want) {
+		t.Fatalf("a %v want %v", f.ByComponent["a"], want)
+	}
+	if want := -10_000*10e-6 + re*0.25; !near(f.ByComponent["b"], want) {
+		t.Fatalf("b %v want %v", f.ByComponent["b"], want)
+	}
+	if want := 250_000*5e-6 - 290_000*10e-6; !near(f.ByComponent["a"]+f.ByComponent["b"], want) || f.UnownedReRateUSD != 0 {
+		t.Fatalf("sum %v want %v, unowned %v", f.ByComponent["a"]+f.ByComponent["b"], want, f.UnownedReRateUSD)
 	}
 }
