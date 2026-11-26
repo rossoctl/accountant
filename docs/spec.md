@@ -443,7 +443,9 @@ numbers are not used: those requirements were dropped.
   no payer of its own. It is priced with the `Billing` of its request. If a context operator calls a model
   on another credential (for example a summarizer on the deployer's API key, in a session on the
   user's subscription), the call is priced as the user's. A standalone `RequestOps`, such as a
-  ping, carries the `Billing` of the credential it used.
+  ping, carries the `Billing` of the credential it used. A detached call in Cortex is reported as a
+  `spend` of its request, so it has this limitation too: its standalone `RequestOps` carries the
+  `Billing` of that request ([cortex-wiring W4.6](cortex-wiring.md#w46-how-context-operations-reach-the-host)).
 
 ### 9.1 What this design does not replace
 

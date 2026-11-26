@@ -52,14 +52,16 @@ Cortex side. This document answers them as follows.
 ### W4.6 How context operations reach the host
 
 There are three kinds of context operator, and each reaches the host through a path that already exists.
-The design adds no new reporting interface for the engine or the keeper.
+The design adds no new reporting interface for the engine or the keeper. The last row is not a fourth
+kind of operator: it is a model call of an engine or a plugin that finishes late. In Cortex it needs one
+new host capability, `pipeline.LateOpsAccountant`, and no new interface for the plugin.
 
 | Context operator | When it runs | How its context operations reach the host |
 |---|---|---|
 | **The context-guru engine** (every component, including the ones whose bytes `apply` writes, §4.2 rule 8) | inside a request | **`apply.Result.Ops`**: the engine returns its context operations with the rewritten body, in both hosts. In Cortex the context-guru plugin passes them to `pctx.ReportOps(result.Ops...)`. In the proxy there is no other context operator, so the proxy reads `result.Ops` directly. |
 | **Another Cortex plugin** (tool-prune, cpex) | inside a request | `pctx.ReportOps(ops...)`, during its own pass. Cortex only. |
 | **The keeper** | between requests | the host's `components.Emitter`, through its optional capability `KeepAliveEmitter.KeepAlivePing(KeepAliveReport)`. |
-| A **detached** model call (engine or plugin) | after the request was accounted | In Cortex: the same `pipeline.OpReporter.Report` as an in-request call. The pipeline sends a report that comes after the seal to the accountant host (`pipeline.LateOpsAccountant`, W4.8 B). In the proxy: `OpsEmitter.Ops(RequestOps)`, an optional `Emitter` capability (not built). |
+| A **detached** model call (engine or plugin) | after the response (in Cortex: after the op list is sealed) | In Cortex (proposed in cortex#2140): the same `pipeline.OpReporter.Report` as an in-request call. The pipeline sends a report that comes after the seal to the accountant host (`pipeline.LateOpsAccountant`, W4.8 B). In the proxy: `OpsEmitter.Ops(RequestOps)`, an optional `Emitter` capability (not built). |
 
 **Why not a new `Sink`.** A `Sink` interface for pings would duplicate what exists. The keeper already
 has a host-agnostic report path: `components.KeepAliveEmitter`, added so the keeper could be
@@ -117,8 +119,8 @@ request asked for. A gateway can bill a 1h ask as 5m. When the host learns this 
 breakpoint, in the forwarded body and in the client body, so the entry is a 5m entry (accountant#56). `LowerTTL` only lowers, and it does
 nothing before `EndRequest`. A host cannot change the record in any other way, because `Request` has no exported fields.
 
-**Status.** Cortex books a detached call (cortex#2140, W4.8 B). The plugin needs no new interface,
-because the pipeline knows when a report is late. The proxy has no pipeline, so it needs the
+**Status (2026-11-26).** cortex#2140 proposes how Cortex books a detached call (W4.8 B). It is not
+merged. The plugin needs no new interface, because the pipeline knows when a report is late. The proxy has no pipeline, so it needs the
 `OpsEmitter` below. `OpsEmitter` does not exist in context-guru (checked at `b87af32`), so the proxy
 reports no detached call yet. The interface below is the proposal for the proxy.
 
@@ -135,24 +137,39 @@ The contract of both capabilities: safe for concurrent use; no
 blocking I/O; never makes the session active (a ping is not agent activity); may drop a report for
 a session that no longer exists.
 
-**The `ibac` judge and other plugin calls (R47).** A plugin that calls a model through `core/llmclient` wraps the client the host gives it, as `cgModel` does, so that the call's billed usage fills a `ModelCall`. The plugin reports a `spend` with an empty `ChangeID` through the `pipeline.OpReporter` it took on the request goroutine. The same call works when the model call is detached: the pipeline sends a late report to the host (W4.8 B).
+**The two Cortex report calls.** `pctx.ReportOps(ops...)` reports on the request goroutine, during
+the plugin's own pass. `pctx.OpReporter()` returns a handle that keeps the plugin's name and its
+dry-run state. Its `Report(ops...)` adds to the same op list as `ReportOps`, and is safe from any
+goroutine. A plugin takes it during its pass, for a model call that it makes on another goroutine.
+
+**The `ibac` judge and other plugin calls (R47).** A plugin that calls a model through `core/llmclient` wraps the client the host gives it, as `cgModel` does, so that the call's billed usage fills a `ModelCall`. The plugin reports a `spend` with an empty `ChangeID`: through `pctx.ReportOps` when it reports during its pass, or through `OpReporter.Report` from another goroutine. In Cortex the same `Report` also works when the model call is detached: the pipeline sends a late report to the host (W4.8 B).
 
 **Who builds a standalone `RequestOps`.** No request record is open, so the caller fills it from what it
 knows about the thread it acts on: `Session` and `Thread`. It sets `Billing` from the credential its
-call used (R41, R42, design §7.1).
+call used (R41, R42, design §7.1). One exception: a detached call in Cortex. It is reported as a
+`spend` of its request, which has no payer of its own, so the host sets `Billing` from that request.
+This is the known limitation of spec §9 ("the payer of a call is the payer of its request"). It is
+the same as for that call when it finishes inside the request.
 
 **Where the usage comes from.** The host gives the engine its model client (`components.Model`;
 in Cortex, `cgModel`). The client reads the usage from each response, and fills `ModelCall`. The
 engine's own usage accounting is not used, because under Cortex it is zero (2026-10-14 spec, §0).
 
-**A detached call.** A summarizer call can finish after its request was accounted. Its `spend`
+**A detached call.** A summarizer call can finish after its request was answered. Its `spend`
 context operation then cannot travel in that request's `apply.Result` or op list. The host prices it
 as a standalone `RequestOps` with `ComputeStandalone`, with `Detached = true` on the call, and
-`Session`/`Thread`/`Billing` from the request that caused the call. Its `ChangeID` is the change it
-made, so the cost is still joined to that change.
+`Session`/`Thread` from the request that caused the call. `Billing` follows the rule above. Its
+`ChangeID` is the change it made, so the cost is still joined to that change.
 
-- **In Cortex**, the pipeline builds nothing new for the plugin. `Run` seals the op list right
-  before `RequestEnd`. Before the seal, it asks the host for a late handler
+**When `Detached` is set in Cortex.** Cortex seals the op list when the last plugin's request pass
+ends, before it sends the request upstream. So Cortex sets `Detached` on every call that finishes
+after the seal. This includes a call that finishes after the seal but before the response. That is
+earlier than "after the request it served was answered" (`ModelCall.Detached`, design §ModelCall).
+The price is the same either way: `ComputeStandalone` prices a call by its own usage, and the
+request's `Compute` does not read a spend's usage to find a cache effect.
+
+- **In Cortex** (proposed in cortex#2140), the pipeline builds nothing new for the plugin. `Run`
+  seals the op list right before `RequestEnd`. Before the seal, it asks the host for a late handler
   (`LateOpsAccountant.LateOps(pctx)`). The host keeps the session, thread, billing, upstream and
   client of the request there, on the request goroutine. An op reported after the seal goes to that
   handler, and the pipeline sets `Call.Detached`. The seal and the handler are under one lock, so an
@@ -166,8 +183,8 @@ was designed for (measured 19,595 read, 0 written). When the sweep falls back to
 cached prefix, the same context operation shows fresh input instead. No new kind is needed; the test cases
 cover both (testing §10.3).
 
-**How the host records it.** The host handles context operations from `apply.Result`, from `ReportOps`,
-and from either Emitter capability the same way. It prices `Saved`, `Caused` and `Call.Usage` with
+**How the host records it.** The host handles context operations from `apply.Result`, from `ReportOps`
+and `OpReporter.Report`, from the Cortex late handler, and from either Emitter capability the same way. It prices `Saved`, `Caused` and `Call.Usage` with
 one resolver. So spend has the same rates, provenance, currency and billing basis (design §7.1) as the
 savings.
 
@@ -214,10 +231,12 @@ sequenceDiagram
     Pipeline-->>Client: response
 ```
 
-**B. A detached call.** The request has already been accounted; its op list is sealed. The
-summarizer call finishes afterward and reports through the same `OpReporter` as an in-request call.
-The pipeline sends the late op to the host's handler. This is the Cortex flow (cortex#2140). The
+**B. A detached call.** The request's op list is already sealed. The summarizer call finishes
+afterward and reports through the same `OpReporter` as an in-request call. The pipeline sends the
+late op to the host's handler. This is the Cortex flow that cortex#2140 proposes (not merged). The
 proxy would send a standalone `RequestOps` through `OpsEmitter` instead (not built).
+`accounting.Host` is the Cortex accountant host. Flows A and C show its pricing step as `settle`;
+diagram B shows the host, because the late handler is on the host.
 
 ```mermaid
 sequenceDiagram
@@ -229,7 +248,7 @@ sequenceDiagram
     participant Store as Ledger, /v1/usage, session store<br/>(Cortex)
 
     Plugin->>Plugin: OnRequest: take pctx.OpReporter(),<br/>start the summarizer call (async)
-    Pipeline->>Host: LateOps(pctx): keep Session, Thread,<br/>Billing, upstream of request N
+    Pipeline->>Host: LateOps(pctx): keep Session, Thread,<br/>Billing (§9 limitation), upstream of request N
     Pipeline->>Pipeline: seal the op list (with the late handler)
     Pipeline->>Host: RequestEnd(pctx)
     Model-->>Plugin: response + billed usage
@@ -238,7 +257,7 @@ sequenceDiagram
     Host->>Lib: standalone RequestOps (kept fields, one spend op)
     Lib-->>Host: Result, no ThreadState read or written
     Host->>Host: price Call.Usage at the call's own model and prompt size<br/>(same rule as an in-request spend)
-    Host->>Store: one cost event, purpose detached-spend:<br/>plugin spend only, no request
+    Host->>Store: one cost record (Cortex Event.Purpose "detached-spend")<br/>with one SpendRecord, ChangeID kept:<br/>plugin spend only, no request
 ```
 
 **C. A standalone keep-alive ping.** No request is open at all; the keeper acts between turns.
