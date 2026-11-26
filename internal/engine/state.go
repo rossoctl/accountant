@@ -234,7 +234,8 @@ func (r *Request) EndRequest(thread Thread, forwarded Body, breakpoints []Breakp
 // 5m, in the forwarded body and in the client body alike: the library judges each part of an entry by
 // the TTL of the breakpoint that wrote it, and the client body is billed through the same gateway
 // (accountant#56). A ttl between 5m and 1h counts as 5m for the breakpoints, because the engine knows
-// only 5m and 1h; that can only lower a saving (R45). The host's own breakpoint slices are not changed.
+// only 5m and 1h. A lower TTL can move a saving in either direction (design §4.4, cortex#2136), so
+// the host calls it only for a downgrade it has proved. The host's own breakpoint slices are not changed.
 // It does nothing before EndRequest, for a ttl that is not shorter than the TTL in EntryFacts, or for a
 // ttl of 0 or less: it only lowers. It leaves EntryFacts.Lifetime alone, so the host passes
 // LifetimeExact for a lifetime it read from the bill.

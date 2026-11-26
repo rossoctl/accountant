@@ -527,8 +527,20 @@ after `EndRequest` and before `Compute`. The library lowers `EntryFacts.TTL` and
 body and in the client body, so the request is priced as one whose breakpoints and `EntryFacts.TTL` were the lower ones.
 The inference gates above do not apply, because the host speaks from the bill: with a cache read or a 1h write in the
 usage, the host's call still lowers, where the inferred rule would not. The host calls it only for a downgrade it has
-proved. A `ttl` between 5m and 1h sets the
-breakpoints to 5m, which can only lower a saving (R45). `LowerTTL` leaves `EntryFacts.Lifetime` alone.
+proved. A turn that wrote nothing has no tier of its own in the bill, so the host uses the thread's last billed tier
+(wiring document, W6.6). The engine knows only 5m and 1h, so a `ttl` between them sets the breakpoints to 5m.
+`LowerTTL` leaves `EntryFacts.Lifetime` alone.
+
+**A TTL that is too long is wrong in both directions, not only high (cortex#2136).** A host that does not lower a
+downgraded 1h ask gives the library an entry that lives 1h where the provider kept it 5m:
+
+- **Too high.** The library prices a write saving at the 1h write rate, not the 5m rate.
+- **Too low.** After an idle gap past 5m, the library thinks the entry is alive. It reads the cold write as a
+  `break` and books a cost. A keep-alive ping that kept a 5m entry alive gets no `rescue`, because the entry looks
+  alive without it.
+
+So `LowerTTL` does not only lower a saving, and a missing call is not a safe error in either direction. It is not
+an R45 case: R45 is about a lifetime that is only a floor, and this one is an exact lifetime that the host got wrong.
 
 What the request wrote does not enter the rule. An earlier version also required that the provider read
 more than it wrote. A long user turn or a large tool result adds to the write and does not change what the
