@@ -11,12 +11,12 @@ type tierPricer struct {
 	rates  map[Tier]float64
 	est    map[Tier]bool
 	sizes  []int64
-	unkown bool
+	unknown bool
 }
 
 func (t *tierPricer) PriceAt(_ string, _ time.Time, tier Tier, n int64) (float64, bool) {
 	t.sizes = append(t.sizes, n)
-	if t.unkown {
+	if t.unknown {
 		return 0, true
 	}
 	r := t.rates[tier]
@@ -67,7 +67,7 @@ func TestPingCostFreeReadRateStillPricesTheOutput(t *testing.T) {
 
 func TestPingCostUnknownAndEstimate(t *testing.T) {
 	p := newTierPricer()
-	p.unkown = true
+	p.unknown = true
 	if usd, est := PingCost(PingInput{Model: "x", Prefix: 1000, Output: 1}, p); usd != 0 || !est {
 		t.Fatalf("unknown: got %v %v", usd, est)
 	}
@@ -108,7 +108,7 @@ func TestMissCostFloorAndUnknown(t *testing.T) {
 		t.Fatalf("a write rate equal to the read rate must give 0, got %v", usd)
 	}
 	p = newTierPricer()
-	p.unkown = true
+	p.unknown = true
 	if usd, est := MissCost(MissInput{Model: "m", Prefix: 1000}, p); usd != 0 || !est {
 		t.Fatalf("unknown: %v %v", usd, est)
 	}
@@ -123,5 +123,31 @@ func TestAvoidedMissesUSD(t *testing.T) {
 	}
 	if AvoidedMissesUSD(-1, 0.5) != 0 || AvoidedMissesUSD(2, -1) != 0 {
 		t.Fatal("never negative")
+	}
+}
+
+func TestNegativeCountsCountAsZero(t *testing.T) {
+	p := newTierPricer()
+	p.est[TierCacheRead], p.est[TierInput], p.est[TierOutput] = true, true, true
+	if usd, est := PingCost(PingInput{Model: "m", Prefix: -5, FreshInput: -5, Output: -5, PromptTokens: -5}, p); usd != 0 || est {
+		t.Fatalf("PingCost with negative counts: %v %v, want 0 false", usd, est)
+	}
+	if usd, est := MissCost(MissInput{Model: "m", Prefix: -5}, p); usd != 0 || est {
+		t.Fatalf("MissCost with a negative prefix: %v %v, want 0 false", usd, est)
+	}
+	// A negative PromptTokens falls back to Prefix + FreshInput.
+	p = newTierPricer()
+	usd, _ := PingCost(PingInput{Model: "m", Prefix: 199_995, FreshInput: 7, PromptTokens: -1}, p)
+	if want := 2 * (199_995*1e-7 + 7*1e-6); !near(usd, want) {
+		t.Fatalf("negative PromptTokens: %v want %v", usd, want)
+	}
+}
+
+func TestPingCostWithNoPrefixMakesNoReadCall(t *testing.T) {
+	p := newTierPricer()
+	p.est[TierCacheRead] = true
+	usd, est := PingCost(PingInput{Model: "m", FreshInput: 7, Output: 1}, p)
+	if want := 7*1e-6 + 5e-6; !near(usd, want) || est {
+		t.Fatalf("got %v %v, want %v false: an estimated read rate must not mark a ping that reads nothing", usd, est, want)
 	}
 }
