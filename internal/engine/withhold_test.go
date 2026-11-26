@@ -13,6 +13,25 @@ func TestWithhold(t *testing.T) {
 	}{
 		{"clean", Result{Ops: []PricedOp{saved(100)}}, 1000, ""},
 		{"sum", Result{Checks: check(CheckSum)}, 1000, WithheldCheckSum},
+		// Two operations claim one removal: ops claim 8,128 bytes, the bodies lost 4,064 (cortex#2134).
+		{"sum, ops claim bytes", Result{Ops: []PricedOp{saved(100)},
+			Checks: []CheckFailure{sumFailure(SectionTools, 4064, 8128, 2)}}, 1000, WithheldCheckSum},
+		// A plugin appends to system and reports nothing. A reported op in tools is still right.
+		{"sum, unreported change only", Result{Ops: []PricedOp{saved(100)},
+			Checks: []CheckFailure{sumFailure(SectionSystem, -25, 0, 0)}}, 1000, ""},
+		{"sum, unreported change, nothing to book", Result{Checks: []CheckFailure{sumFailure(SectionSystem, -25, 0, 0)}}, 1000, ""},
+		{"sum, unreported change and an overclaim", Result{Ops: []PricedOp{saved(100)},
+			Checks: []CheckFailure{sumFailure(SectionSystem, -25, 0, 0), sumFailure(SectionTools, 4064, 8128, 2)}}, 1000, WithheldCheckSum},
+		{"sum, unreported change, then spans", Result{Ops: []PricedOp{saved(100)},
+			Checks: []CheckFailure{sumFailure(SectionSystem, -25, 0, 0), {Check: CheckSpans}}}, 1000, WithheldCheckSpans},
+		// Got is a net: a false removal of 100 bytes and a real insert of 100 bytes cancel to Got 0. The
+		// section is claimed (Claims 2), so it gates.
+		{"sum, claims cancel to Got 0", Result{Ops: []PricedOp{saved(100)},
+			Checks: []CheckFailure{sumFailure(SectionTools, -100, 0, 2)}}, 1000, WithheldCheckSum},
+		{"sum, Claims absent", Result{Checks: []CheckFailure{{Check: CheckSum, Got: intp(0)}}}, 1000, WithheldCheckSum},
+		// An unreported change in the section of a reported op: ops claim bytes, so it gates.
+		{"sum, reported and unreported in one section", Result{Ops: []PricedOp{saved(100)},
+			Checks: []CheckFailure{sumFailure(SectionMessages, 4089, 4064, 1)}}, 1000, WithheldCheckSum},
 		{"unique change", Result{Checks: check(CheckUniqueChange)}, 1000, WithheldCheckUniqueChange},
 		{"spans", Result{Checks: check(CheckSpans)}, 1000, WithheldCheckSpans},
 		{"informational check", Result{Ops: []PricedOp{saved(100)}, Checks: check(CheckConservation)}, 1000, ""},
@@ -75,5 +94,64 @@ func TestWithholdGatesEveryFatalCheck(t *testing.T) {
 		if !fatal && got != "" {
 			t.Errorf("%s is not fatal, and Withhold gives %q", name, got)
 		}
+	}
+}
+
+// End to end: a reported removal in tools, and a 100-byte system block that no operation reported (a
+// host plugin that injects text). The sum check fails for system with Got 0, and the removal still books.
+func TestWithholdKeepsAReportedOpBesideAnUnreportedChange(t *testing.T) {
+	client := mk([]blk{b("t0", 1000), b("t1", 1000)}, []blk{b("s0", 500)}, msgs(2, 1000))
+	fwd := mk([]blk{b("t0", 1000)}, []blk{b("s0", 500), b("inj", 100)}, msgs(2, 1000))
+	res := req{at: t0, client: client, fwd: fwd, usage: Usage{Input: 3600},
+		ops: []Operation{rewrite("o1", "h.prune", "p:t1", Position{Section: SectionTools, Index: 1}, 1000, 0)}}.run(NewTrackers())
+	f := findCheck(t, res, CheckSum)
+	if f.Section != SectionSystem || f.Got == nil || *f.Got != 0 || f.Claims == nil || *f.Claims != 0 {
+		t.Fatalf("sum failure = %+v, want section system with Got 0 and Claims 0", f)
+	}
+	if res.Reliable() {
+		t.Fatal("Reliable = true: the sum failure is still fatal, only Withhold scopes it")
+	}
+	if got := tierSum(findOp(t, res, "o1").Saved); got <= 0 {
+		t.Fatalf("o1 saved %d, want a saving", got)
+	}
+	if got := Withhold(res, 4000); got != "" {
+		t.Errorf("Withhold = %q, want \"\": the reported removal is right", got)
+	}
+}
+
+// End to end: two operations claim the same removal (cortex#2134). The sum check fails with Got above
+// Want, and Withhold gates.
+func TestWithholdGatesADoubleClaim(t *testing.T) {
+	client := mk([]blk{b("t0", 1000), b("t1", 1000)}, nil, msgs(2, 1000))
+	fwd := mk([]blk{b("t0", 1000)}, nil, msgs(2, 1000))
+	res := req{at: t0, client: client, fwd: fwd, usage: Usage{Input: 3000}, ops: []Operation{
+		rewrite("o1", "h.a", "a:t1", Position{Section: SectionTools, Index: 1}, 1000, 0),
+		rewrite("o2", "h.b", "b:t1", Position{Section: SectionTools, Index: 1}, 1000, 0),
+	}}.run(NewTrackers())
+	f := findCheck(t, res, CheckSum)
+	if f.Got == nil || *f.Got == 0 {
+		t.Fatalf("sum failure = %+v, want Got above 0", f)
+	}
+	if got := Withhold(res, 4000); got != WithheldCheckSum {
+		t.Errorf("Withhold = %q, want %q", got, WithheldCheckSum)
+	}
+}
+
+// End to end: claims that cancel. An insert of a 100-byte tool is real. A removal of 100 bytes from t1
+// is false: t1 is still 1,000 bytes in the forwarded body. The net claim is 0, but the section is
+// claimed, so Withhold gates (review of #121).
+func TestWithholdGatesClaimsThatCancel(t *testing.T) {
+	client := mk([]blk{b("t0", 1000), b("t1", 1000)}, nil, msgs(2, 1000))
+	fwd := mk([]blk{b("t0", 1000), b("t1", 1000), b("new", 100)}, nil, msgs(2, 1000))
+	res := req{at: t0, client: client, fwd: fwd, usage: Usage{Input: 4100}, ops: []Operation{
+		rewrite("i1", "h.insert", "c:new", Position{Section: SectionTools, Index: 2}, 0, 100),
+		rewrite("o1", "h.prune", "p:t1", Position{Section: SectionTools, Index: 1}, 1000, 900),
+	}}.run(NewTrackers())
+	f := findCheck(t, res, CheckSum)
+	if f.Got == nil || *f.Got != 0 || f.Claims == nil || *f.Claims == 0 {
+		t.Fatalf("sum failure = %+v, want Got 0 and Claims above 0", f)
+	}
+	if got := Withhold(res, 5000); got != WithheldCheckSum {
+		t.Errorf("Withhold = %q, want %q: the false removal must not book", got, WithheldCheckSum)
 	}
 }

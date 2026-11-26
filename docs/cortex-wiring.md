@@ -496,7 +496,9 @@ the checks and `Recomputed` (`proxy/accountant_shadow.go`). A request whose `Com
 9. `figure_without_row`, `duplicate_name`, `acted_without_figure`: the figure and the component rows do
    not match.
 
-Gates 6 to 8 are `accountant.Withhold` (design §6.7). Gate 7 includes a cache effect of an unknown kind.
+Gates 6 to 8 are `accountant.Withhold` (design §6.7). Gate 6 skips a `sum` failure in a section that no
+applied operation claims (`CheckFailure.Claims` 0): a host plugin changed that section and reported nothing,
+and the other operations are still right. Gate 7 includes a cache effect of an unknown kind.
 The size bound adds the tokens the operations caused, because an operation can remove what an earlier one
 inserted. The library has them, so the `metrics` sink gates a
 request the same way: it books only the spends of a withheld request, and counts it in

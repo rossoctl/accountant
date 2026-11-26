@@ -93,6 +93,10 @@ type CheckFailure struct {
 
 	Want, WantAfter *int // what the bodies or the bill show; the After value for a check with a before and an after side
 	Got, GotAfter   *int // what the operations claim
+	// Claims is set for sum only: the number of spans of applied operations in Section. Got is the net
+	// of their bytes, so claims that cancel give Got 0. Claims 0 means no applied operation claims the
+	// section: only a change that no operation reported moved its bytes.
+	Claims *int
 
 	Limit, LimitAfter   *int     // size_range only: the size limit before (after), in bytes
 	Tokens, TokensAfter *int     // size_tokens only: the tokens of the span or operation that failed, before (after); only the side that failed is set
