@@ -1868,6 +1868,7 @@ the sum of the nets is the size difference, so a re-rate always has an owner tod
 | `InteractionUSD` | `Interaction` minus `InteractionCaused`, at the size without the operations. |
 | `CallUSD` | The cost of the `spend` calls, each at its own model and size. A separate bill: not in `DeltaUSD` or `TotalUSD`. |
 | `DeltaUSD` | `ByComponent` + `EndedBreakUSD` + `UnownedMarkUSD` + `UnownedReRateUSD`. |
+| `CountedUSD()` | `DeltaUSD` + interaction. The figure a host counts when it shows keep-alive, split and TTL on their own rows. |
 | `TotalUSD()` | The bill difference: `DeltaUSD` + keep-alive + split + TTL + interaction. |
 | `Lines`, `Effects` | Every priced amount, by operator and tier, and every priced effect. The `metrics` sink labels its counters from them. |
 | `Unpriced`, `Estimated` | `Unpriced` has one form, `"opID:reason"`, split at the first colon. A reason with no operation has an empty opID: `":effect_<kind>_unknown_kind"` for an effect of an unknown kind. A call on an operation that is not a spend gives `"opID:not_spend"`. `Estimated` is the estimated mark of the counted operations and effects. |
@@ -1879,6 +1880,24 @@ tokens stay.
 **What stays in the host.** Which components have a row, how a request is held back (a held lower bound),
 the gates of its own (§6.7), and the names of rows. These are host policy. The figure gives a host the
 numbers it needs for them (`ByComponentSaved`, `ByComponentSavedAsRead`) and no more.
+
+#### Removal from the head: `RemovalSaving`
+
+A tool declaration filter and a tool deferral take tokens out of the head of the prefix. A host that has no
+`Result` for them (a dashboard row from stored counts, a ledger) prices them with one function:
+
+```go
+func HeadTier(u Usage) Tier
+func RemovalSaving(in RemovalInput, p SizedPricer) RemovalFigure
+```
+
+- `HeadTier` gives the tier the head was billed at: cache read, else cache write (1h when `CacheWrite1h > 0`),
+  else input.
+- `RemovalSaving` prices `Removed` tokens at that tier and at the size without the change: the billed size plus
+  the net tokens removed, rounded up. `Added` tokens (a names list) price at the billed size.
+- `Factor` is the host's tokenizer correction. The figure applies it once, to the tokens and to the size. The
+  library has no tokenizer, so the host gives it. 0 or less means 1.
+- `Unsized` prices both sides at size 0, the rate of a small request.
 
 ### 6.7 When a host books no saving
 

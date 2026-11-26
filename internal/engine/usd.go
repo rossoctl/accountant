@@ -147,6 +147,10 @@ func (f USDFigure) TotalUSD() float64 {
 	return f.DeltaUSD + f.KeepAliveSavedUSD + f.SplitUSD + f.TTLUSD + f.InteractionUSD
 }
 
+// CountedUSD is DeltaUSD plus InteractionUSD. A host that shows the keep-alive, split and TTL effects
+// on their own rows counts this figure as the savings of the operations. TotalUSD adds those effects.
+func (f USDFigure) CountedUSD() float64 { return f.DeltaUSD + f.InteractionUSD }
+
 // Figure turns a [Result] into dollars. It is deterministic and does no I/O.
 //
 // Two prompt sizes matter. The request sent has the billed size. The request without the operations has
