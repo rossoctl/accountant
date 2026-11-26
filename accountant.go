@@ -167,6 +167,28 @@ func HeadTier(u Usage) Tier { return engine.HeadTier(u) }
 // §6.6.
 func RemovalSaving(in RemovalInput, p SizedPricer) RemovalFigure { return engine.RemovalSaving(in, p) }
 
+// Keep-alive costs. A host prices a ping and a cache miss with these, and never with its own formula.
+type (
+	// PingInput is one keep-alive ping: the prefix it reads, the fresh input it carries and its output.
+	PingInput = engine.PingInput
+	// MissInput is one cache miss on a prefix.
+	MissInput = engine.MissInput
+)
+
+// PingCost is the dollars of one keep-alive ping, at the rates of its own prompt size. 0 with estimated
+// true means the rate is unknown. See [PingInput].
+func PingCost(in PingInput, p SizedPricer) (usd float64, estimated bool) {
+	return engine.PingCost(in, p)
+}
+
+// MissCost is the extra dollars of one cache miss over a hit, never negative. See [MissInput].
+func MissCost(in MissInput, p SizedPricer) (usd float64, estimated bool) {
+	return engine.MissCost(in, p)
+}
+
+// AvoidedMissesUSD is the dollars saved when n misses do not happen: n x missUSD, never negative.
+func AvoidedMissesUSD(n int64, missUSD float64) float64 { return engine.AvoidedMissesUSD(n, missUSD) }
+
 // The reasons [Withhold] returns.
 const (
 	WithheldCheckSum          = engine.WithheldCheckSum
