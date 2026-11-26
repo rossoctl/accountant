@@ -186,3 +186,35 @@ func TestNegativeTokensBeforeSkipsTheSizeGate(t *testing.T) {
 		t.Errorf("withheld = %+v, want none", w)
 	}
 }
+
+// With no TokensBefore the sink uses the library's own size bound (design §6.7). A request that saves more
+// message tokens than its messages hold is withheld, so the push agrees with a host that gates the same way.
+// A large tool removal is not withheld: tool tokens are not message tokens.
+func TestNoTokensBeforeUsesTheLibrarysOwnBound(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		op   accountant.PricedOp
+		want string
+	}{
+		{"messages saved over their size", accountant.PricedOp{Kind: accountant.KindRewrite, Operator: "h.a", ChangeID: "a",
+			Saved: accountant.TierTokens{Input: 1800}, SavedMessages: accountant.TierTokens{Input: 1800}}, accountant.WithheldImplausibleSize},
+		{"a large tool removal", accountant.PricedOp{Kind: accountant.KindRewrite, Operator: "h.defer", ChangeID: "d",
+			Saved: accountant.TierTokens{Input: 24000}}, ""},
+	} {
+		s, r := newSink(t)
+		o := obs("m", c.op)
+		o.Result.MessageTokens = 1000
+		s.Observe(o)
+		got := collect(t, r)
+		w := got["llm.savings.withheld"]
+		switch {
+		case c.want == "" && len(w) != 0:
+			t.Errorf("%s: withheld = %+v, want none", c.name, w)
+		case c.want != "" && (len(w) != 1 || w[0].attrs["reason"] != c.want):
+			t.Errorf("%s: withheld = %+v, want reason %s", c.name, w, c.want)
+		}
+		if c.want != "" && len(got["llm.savings.saved.tokens"]) != 0 {
+			t.Errorf("%s: saved.tokens = %+v, want none on a withheld request", c.name, got["llm.savings.saved.tokens"])
+		}
+	}
+}

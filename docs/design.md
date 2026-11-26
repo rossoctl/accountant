@@ -1914,7 +1914,7 @@ func RemovalSaving(in RemovalInput, p SizedPricer) RemovalFigure
 
 ### 6.7 When a host books no saving
 
-Some figures must not be booked. `Withhold(res, tokensBefore)` returns the first gate that a `Result` fails,
+Some figures must not be booked. `Withhold(res)` returns the first gate that a `Result` fails,
 or `""`. The gates are in the library, so every host and the `metrics` sink gate a request the same way, and
 a new fatal check gates all of them at once (§6.5). The gates, in order:
 
@@ -1923,8 +1923,8 @@ a new fatal check gates all of them at once (§6.5). The gates, in order:
 | `check_sum`, `check_unique_change`, `check_spans` | That fatal check (§6.5). The list of operations or its attribution is wrong. A `sum` failure in a section that no applied operation claims (`Claims` is 0) does not gate (see below). |
 | `check_other` | A fatal check with no reason of its own. A check that becomes fatal gets it until it has a name. |
 | `unpriced` | An entry in `Result.Unpriced` with a reason other than `penalty_unknown`, or a cache effect of a kind the library does not know (§6.6 books nothing for it). `penalty_unknown` does not gate: the figure is an estimate (§6.4). |
-| `size_unknown` | The operations saved tokens, and `tokensBefore` is 0 or less, other than `SizeNotGiven`. |
-| `implausible_size` | The operations saved more tokens than `tokensBefore` plus the tokens they caused. |
+| `size_unknown` | Legacy form only: `Withhold(res, tokensBefore)` with `tokensBefore` 0 or less, other than `SizeNotGiven`, and saved tokens above 0. `Withhold(res)` never gives it. |
+| `implausible_size` | The operations saved more message tokens than the client messages held plus the message tokens the operations caused. |
 
 **An unreported change.** A host plugin can change the body and report no operation, for example a plugin
 that injects text into `system`. The `sum` check then fails for that section, and no applied operation has a span
@@ -1940,14 +1940,30 @@ of the claims, so a false removal of N bytes beside a real insert of N bytes giv
 
 **The size bound.** An operation receives the body that the operations before it left: the client body plus
 what the inserting operations added (check 13, §6.5). So the operations cannot save more tokens than the client
-body had plus the tokens they caused. The bound adds the `Saved` and the `Caused` tokens of each operation that
-is not `DryRun` and not a `spend`, in every tier. It is tested only when the saved tokens are above 0.
-Example (more_examples.md#I44): `retrieve` inserts 25,000 tokens into an 8,000-token body, and `cmdfilter` removes
-20,000 of them. 20,000 is above 8,000, but not above 8,000 + 25,000, so the request passes.
+body had plus the tokens they caused. `Withhold(res)` tests this bound with the library's own size, so a host
+passes no size. Only the messages section counts:
 
-`tokensBefore` is the prompt size of the body the client sent, by the host's own measure. The library cannot
-give it: the size without the operations (§6.6) is the billed size plus the saved tokens minus the caused
-tokens, so a bound on it never fails. A host with no measure passes `SizeNotGiven`, and the bound is not tested.
+- **The size** is `Result.MessageTokens`: the tokens of the messages of the client body, by the byte ratio of
+  this request (the same ratio as check 6). It is 0 when nothing was priced.
+- **The saved tokens** are `PricedOp.SavedMessages`: the part of `Saved` that comes from spans in the messages
+  section, in every tier. **The caused tokens** are `PricedOp.CausedMessages`, the same way.
+- An operation that is `DryRun` or a `spend` is not counted.
+- The request is withheld when the saved message tokens are above `MessageTokens` plus the caused message
+  tokens. A request that saved nothing in the messages always passes.
+
+**Why only messages.** A host measure that counts the tool declarations withholds a healthy request. Example
+(context-guru#907): a deferral removes 2,188 tokens of tool declarations from a request whose messages hold
+121 tokens. 2,188 is above 121, but no message token was saved. The tool declarations and the system are not
+messages, so the bound ignores `Saved` in those sections. `Saved` itself still holds them: the figure books them.
+The tokens that an operation caused in the tools or the system do not widen the bound for the same reason.
+Example (more_examples.md#I44): `retrieve` inserts 25,000 tokens into an 8,000-token body of messages, and `cmdfilter`
+removes 20,000 of them. 20,000 is above 8,000, but not above 8,000 + 25,000, so the request passes.
+
+**The legacy form.** `Withhold(res, tokensBefore)` is deprecated and keeps its old rule. `tokensBefore` is the
+prompt size of the body the client sent, by the host's own measure. The bound then adds the `Saved` and the
+`Caused` tokens of every operation, in every section. `SizeNotGiven` skips the bound, and any other
+`tokensBefore` of 0 or less gives `size_unknown`. Use it only when the host's own measure is better than the
+library's, for example a host that counts tokens exactly.
 
 **What a host books for a withheld request.** No saved or caused tokens of an operation, no cache effect and
 no interaction. The call of each `spend` is real cost, so the host books it. A host can have more gates of

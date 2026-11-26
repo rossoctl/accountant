@@ -161,11 +161,13 @@ func (s *Sink) Observe(o Observation) {
 	res := o.Result
 	money := o.Meta.Billing.Mode == accountant.BillingAPI
 	anyEstimated := !money // unknown, subscription's weights or an unset mode are all estimates
-	before := o.TokensBefore
-	if before <= 0 {
-		before = accountant.SizeNotGiven
+	// A host that gives TokensBefore keeps its own bound. With none, the library's own measure decides.
+	var withheld string
+	if o.TokensBefore > 0 {
+		withheld = accountant.Withhold(res, o.TokensBefore)
+	} else {
+		withheld = accountant.Withhold(res)
 	}
-	withheld := accountant.Withhold(res, before)
 
 	// A spend whose call the library refused to price must not book that call's usage.
 	refused := map[string]bool{}

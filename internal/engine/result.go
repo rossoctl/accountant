@@ -38,6 +38,11 @@ type Result struct {
 	// not read the thread state (end_request_missing, ComputeStandalone) give 0 for both fields. A change that stays for the whole session is normal, so this value
 	// alone is not a sign of an error: read it with ActiveOps.
 	OldestActiveTurns int
+	// MessageTokens is the size of the messages section of the client body, in tokens, by the library's
+	// own measure (the byte ratio of this request). It is the size that [Withhold] tests the saved
+	// message tokens against (§6.7). The tool declarations and the system are not in it. 0 when nothing
+	// was priced (no usage, or a usage that failed a check).
+	MessageTokens int
 }
 
 // CompactionRecord is what the library recorded for a client compaction.
@@ -142,15 +147,20 @@ func (r Result) Reliable() bool {
 
 // PricedOp is one operation in tokens for each tier.
 type PricedOp struct {
-	OpID      string
-	Kind      Kind // copied from the operation: rewrite, spend or setting
-	Operator  string
-	ChangeID  string
-	DryRun    bool
-	Saved     TierTokens // tokens the provider did not bill, by tier; never negative
-	Caused    TierTokens // tokens the provider billed because of this operation; never negative
-	Call      *ModelCall // spend only: copied from the operation, for the host to price
-	Estimated bool
+	OpID     string
+	Kind     Kind // copied from the operation: rewrite, spend or setting
+	Operator string
+	ChangeID string
+	DryRun   bool
+	Saved    TierTokens // tokens the provider did not bill, by tier; never negative
+	Caused   TierTokens // tokens the provider billed because of this operation; never negative
+	// SavedMessages and CausedMessages are the parts of Saved and Caused that come from spans in the
+	// messages section. A removed tool declaration is in Saved only. [Withhold] tests the message part
+	// only, so a request that removes many tool declarations is not withheld for their size (§6.7).
+	SavedMessages  TierTokens
+	CausedMessages TierTokens
+	Call           *ModelCall // spend only: copied from the operation, for the host to price
+	Estimated      bool
 }
 
 // TierTokens is a token count for each billing tier.

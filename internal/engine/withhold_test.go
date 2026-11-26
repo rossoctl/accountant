@@ -155,3 +155,82 @@ func TestWithholdGatesClaimsThatCancel(t *testing.T) {
 		t.Errorf("Withhold = %q, want %q: the false removal must not book", got, WithheldCheckSum)
 	}
 }
+
+// The size bound of Withhold(res) with no size argument (design §6.7). The library measures the client
+// messages itself and counts message tokens only.
+func TestWithholdOwnSizeBound(t *testing.T) {
+	saved := func(n int) PricedOp {
+		return PricedOp{Kind: KindRewrite, Saved: TierTokens{Input: n}, SavedMessages: TierTokens{Input: n}}
+	}
+	for _, c := range []struct {
+		name string
+		res  Result
+		want string
+	}{
+		{"within the messages", Result{MessageTokens: 1000, Ops: []PricedOp{saved(600), saved(400)}}, ""},
+		{"over the messages", Result{MessageTokens: 1000, Ops: []PricedOp{saved(600), saved(401)}}, WithheldImplausibleSize},
+		{"nothing saved", Result{}, ""},
+		{"messages unmeasured, tokens saved", Result{Ops: []PricedOp{saved(1)}}, WithheldImplausibleSize},
+		{"tool declarations do not count", Result{MessageTokens: 121, Ops: []PricedOp{
+			{Kind: KindRewrite, Operator: "h.defer", Saved: TierTokens{CacheRead: 2188}}}}, ""},
+		{"an insertion in messages widens the bound", Result{MessageTokens: 8000, Ops: []PricedOp{
+			{Kind: KindRewrite, CausedMessages: TierTokens{CacheWrite5m: 25000}},
+			{Kind: KindRewrite, SavedMessages: TierTokens{CacheWrite5m: 20000}}}}, ""},
+		{"an insertion in tools does not widen it", Result{MessageTokens: 1000, Ops: []PricedOp{
+			{Kind: KindRewrite, Caused: TierTokens{Input: 5000}},
+			saved(1001)}}, WithheldImplausibleSize},
+		{"dry run and spend not counted", Result{MessageTokens: 1000, Ops: []PricedOp{
+			{Kind: KindRewrite, DryRun: true, SavedMessages: TierTokens{Input: 5000}},
+			{Kind: KindSpend, SavedMessages: TierTokens{Input: 5000}}, saved(100)}}, ""},
+		{"a check before the bound", Result{Ops: []PricedOp{saved(5000)}, Checks: []CheckFailure{{Check: CheckSpans}}}, WithheldCheckSpans},
+	} {
+		if got := Withhold(c.res); got != c.want {
+			t.Errorf("%s: Withhold = %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
+// End to end, the deferral case (context-guru#907): the operator removes 8 of 10 tool declarations
+// (24,000 tokens) from a request whose messages are 1,000 tokens. The request is healthy. The old bound,
+// fed the message size, withholds it only because it counted the tool tokens.
+func TestWithholdKeepsALargeToolRemoval(t *testing.T) {
+	tools := make([]blk, 10)
+	for i := range tools {
+		tools[i] = b("t"+itoa(i), 3000)
+	}
+	client := mk(tools, nil, msgs(2, 500))
+	fwd := mk(tools[:2], nil, msgs(2, 500))
+	res := req{at: t0, client: client, fwd: fwd, usage: Usage{Input: 7000}, ops: []Operation{
+		rewrite("o1", "h.defer", "d:tools", Position{Section: SectionTools, Index: 2}, 24000, 0),
+	}}.run(NewTrackers())
+	op := findOp(t, res, "o1")
+	if tierSum(op.Saved) != 24000 || !op.SavedMessages.IsZero() {
+		t.Fatalf("o1 Saved = %+v, SavedMessages = %+v, want 24000 in tools and none in messages", op.Saved, op.SavedMessages)
+	}
+	if res.MessageTokens != 1000 {
+		t.Fatalf("MessageTokens = %d, want 1000", res.MessageTokens)
+	}
+	if got := Withhold(res); got != "" {
+		t.Errorf("Withhold = %q, want \"\": a tool removal is not a size fault", got)
+	}
+	if got := Withhold(res, 1000); got != WithheldImplausibleSize {
+		t.Errorf("legacy Withhold(res, 1000) = %q, want %q: the old form counts every operation", got, WithheldImplausibleSize)
+	}
+}
+
+// End to end: the host measured 1,800 tokens for a 900-byte message, 2 tokens a byte, the most the size
+// check allows. The conversation is 1,000 bytes, so about 1,000 tokens. The operator cannot have saved more
+// tokens than the messages hold.
+func TestWithholdGatesAnImplausibleMessageSaving(t *testing.T) {
+	client := mk(nil, nil, []blk{b("m0", 100), b("m1", 900)})
+	fwd := mk(nil, nil, []blk{b("m0", 100)})
+	op := rewrite("o1", "h.drop", "d:m1", msg(1), 900, 0)
+	op.SizeBefore.Tokens = 1800
+	res := req{at: t0, client: client, fwd: fwd, usage: Usage{Input: 100}, ops: []Operation{op}}.run(NewTrackers())
+	if got := tierSum(findOp(t, res, "o1").SavedMessages); got != 1800 || res.MessageTokens != 1000 {
+		t.Fatalf("SavedMessages = %d, MessageTokens = %d, want 1800 and 1000", got, res.MessageTokens)
+	}
+	if got := Withhold(res); got != WithheldImplausibleSize {
+		t.Errorf("Withhold = %q, want %q", got, WithheldImplausibleSize)
+	}
+}

@@ -10,8 +10,9 @@ That spec is not in this repository. This page is the contract of the code.
 ## How a host uses it
 
 1. Build the sink once: `metrics.New(meter, pricer, opts...)`.
-2. After `Compute`, call `sink.Observe(metrics.Observation{Meta, Usage, Result})`. Set `TokensBefore`, the
-   prompt size of the body the client sent by the host's own measure, to get the size gate (rule 9).
+2. After `Compute`, call `sink.Observe(metrics.Observation{Meta, Usage, Result})`. The sink applies the size
+   gate with the library's own measure (rule 9). Set `TokensBefore`, the prompt size of the body the client
+   sent by the host's own measure, only to replace that measure.
 3. Use `metrics.Multi` to give the same observation to several observers.
 
 The hook lives in this module, not in the root. `Observer` is a one-method interface,
@@ -193,8 +194,10 @@ difference.)
 9. **Withheld requests** (design §6.7). If `accountant.Withhold` gives a reason, the sink books no saved or
    caused tokens of an operation, no cache effect and no interaction. It books the call of each `spend`, in
    tokens and in money, because that is real cost. `unpriced`, `check_failures` and `estimated` move as for
-   any request. `TokensBefore` 0 or less means the host does not give a size: the sink then skips the size
-   gate only. One unpriced operation (for example `size_range` or `media_tokens`) withholds the whole request:
+   any request. `TokensBefore` above 0 is the host's own size: the sink gives it to `Withhold`, which counts
+   every operation. With `TokensBefore` 0 or less, the sink calls `Withhold(res)`: the library measures the
+   client messages and counts message tokens only, so a removed tool declaration does not withhold the
+   request. Before this rule, the sink skipped the size gate in that case. One unpriced operation (for example `size_range` or `media_tokens`) withholds the whole request:
    the sink books none of its other operations either. Before this rule, it booked them.
 
 ## Not in this module

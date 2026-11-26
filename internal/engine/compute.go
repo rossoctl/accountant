@@ -311,6 +311,9 @@ func (r *Request) calc(s ThreadState, usage Usage) (Result, ThreadState) {
 		c.cacheEffects(&res)
 	}
 	c.price(&res)
+	if !c.skipsPricing() {
+		res.MessageTokens = c.ratio.between(c.client, c.client.Start[2]-1, len(c.client.Pos)-1)
+	}
 	c.checks(&res)
 	c.checkUsage(&res)
 	c.conservation(&res)
@@ -2262,7 +2265,12 @@ func (c *calcState) price(res *Result) {
 				if d > 0 {
 					// in tools or system the position counts content that earlier changes added (accountant#96)
 					from := c.clientSide(k, sp.from)
-					c.addTier(&p.Saved, c.client, false, mustFlat(c.client, from), c.bstar, c.clientBPs, d)
+					var got TierTokens
+					c.addTier(&got, c.client, false, mustFlat(c.client, from), c.bstar, c.clientBPs, d)
+					p.Saved = p.Saved.Add(got)
+					if sp.from.Section == SectionMessages {
+						p.SavedMessages = p.SavedMessages.Add(got)
+					}
 					if !it.op.DryRun {
 						c.interaction(res, from, d)
 					}
@@ -2272,12 +2280,17 @@ func (c *calcState) price(res *Result) {
 						fp, _ = c.toFwdSkipping(k, sp.from) // an inserted item sits in the slot its own splice opened
 					}
 					at := mustFlat(c.fwd, fp)
+					var got TierTokens
 					if sp.before.Bytes == 0 && c.phase == PhaseHot && c.prevExt >= 0 && at <= c.prevExt && at < c.fwdFD && !c.noCacheTokens() {
 						// content the operator added, which the previous request already forwarded
 						// and cached: the provider reads it, whatever B* says (§6.2)
-						p.Caused.CacheRead += -d
+						got.CacheRead += -d
 					} else {
-						c.addTier(&p.Caused, c.fwd, true, at, c.bstarFwd, c.fwdBPs, -d)
+						c.addTier(&got, c.fwd, true, at, c.bstarFwd, c.fwdBPs, -d)
+					}
+					p.Caused = p.Caused.Add(got)
+					if sp.from.Section == SectionMessages {
+						p.CausedMessages = p.CausedMessages.Add(got)
 					}
 				}
 			}
