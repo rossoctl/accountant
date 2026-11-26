@@ -8,9 +8,9 @@ import (
 
 // tierPricer: a rate table with one price line. Above 200k tokens every rate is doubled.
 type tierPricer struct {
-	rates  map[Tier]float64
-	est    map[Tier]bool
-	sizes  []int64
+	rates   map[Tier]float64
+	est     map[Tier]bool
+	sizes   []int64
 	unknown bool
 }
 
