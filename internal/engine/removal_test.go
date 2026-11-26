@@ -31,7 +31,7 @@ func (l linePricer) PriceAt(_ string, _ time.Time, t Tier, size int64) (float64,
 	return 0, true
 }
 
-func near(a, b float64) bool { return math.Abs(a-b) <= 1e-12 }
+func removalNear(a, b float64) bool { return math.Abs(a-b) <= 1e-12 }
 
 func TestHeadTier(t *testing.T) {
 	for _, c := range []struct {
@@ -55,14 +55,14 @@ func TestHeadTier(t *testing.T) {
 func TestRemovalAppliesTheFactorOnce(t *testing.T) {
 	in := RemovalInput{Model: "m", Tier: TierCacheRead, Prompt: 10_000, Removed: 1000, Factor: 1.5}
 	got := RemovalSaving(in, linePricer{})
-	if want := 1000 * 1.5 * 1e-7; !near(got.SavedUSD, want) {
+	if want := 1000 * 1.5 * 1e-7; !removalNear(got.SavedUSD, want) {
 		t.Fatalf("SavedUSD = %g, want %g", got.SavedUSD, want)
 	}
-	if !near(got.PerTokenUSD, 1.5*1e-7) {
+	if !removalNear(got.PerTokenUSD, 1.5*1e-7) {
 		t.Fatalf("PerTokenUSD = %g", got.PerTokenUSD)
 	}
 	in.Factor = 0
-	if got := RemovalSaving(in, linePricer{}); !near(got.SavedUSD, 1000*1e-7) {
+	if got := RemovalSaving(in, linePricer{}); !removalNear(got.SavedUSD, 1000*1e-7) {
 		t.Fatalf("a factor of 0 must mean 1, got %g", got.SavedUSD)
 	}
 }
@@ -71,11 +71,11 @@ func TestRemovalSizeIncludesTheFactor(t *testing.T) {
 	// 199_000 sent + 1000 removed = 200_000: on the line, not above it. With the factor 1.5 the request
 	// without the change has 200_500 tokens: above the line, so the saving prices at 2x.
 	in := RemovalInput{Model: "m", Tier: TierInput, Prompt: 199_000, Removed: 1000, Factor: 1}
-	if got := RemovalSaving(in, linePricer{}); !near(got.SavedUSD, 1000*1e-6) {
+	if got := RemovalSaving(in, linePricer{}); !removalNear(got.SavedUSD, 1000*1e-6) {
 		t.Fatalf("at the line: SavedUSD = %g", got.SavedUSD)
 	}
 	in.Factor = 1.5
-	if got := RemovalSaving(in, linePricer{}); !near(got.SavedUSD, 1500*2e-6) {
+	if got := RemovalSaving(in, linePricer{}); !removalNear(got.SavedUSD, 1500*2e-6) {
 		t.Fatalf("above the line: SavedUSD = %g", got.SavedUSD)
 	}
 }
@@ -83,7 +83,7 @@ func TestRemovalSizeIncludesTheFactor(t *testing.T) {
 func TestRemovalRoundsTheSizeUp(t *testing.T) {
 	// 199_999 + ceil(1.0001) = 200_001: above the line. Truncating would give 200_000 and the cheap side.
 	in := RemovalInput{Model: "m", Tier: TierInput, Prompt: 199_999, Removed: 1, Factor: 1.0001}
-	if got := RemovalSaving(in, linePricer{}); !near(got.PerTokenUSD, 1.0001*2e-6) {
+	if got := RemovalSaving(in, linePricer{}); !removalNear(got.PerTokenUSD, 1.0001*2e-6) {
 		t.Fatalf("PerTokenUSD = %g, want the dearer side", got.PerTokenUSD)
 	}
 }
@@ -92,20 +92,20 @@ func TestRemovalAddedPricesAtTheBilledSize(t *testing.T) {
 	// Sent 150_000. Removed 60_000, added 1000: the request without the change has 209_000 tokens (2x).
 	in := RemovalInput{Model: "m", Tier: TierCacheRead, Prompt: 150_000, Removed: 60_000, Added: 1000, Factor: 1}
 	got := RemovalSaving(in, linePricer{})
-	if !near(got.SavedUSD, 60_000*2e-7) || !near(got.AddedUSD, 1000*1e-7) || !near(got.NetUSD, got.SavedUSD-got.AddedUSD) {
+	if !removalNear(got.SavedUSD, 60_000*2e-7) || !removalNear(got.AddedUSD, 1000*1e-7) || !removalNear(got.NetUSD, got.SavedUSD-got.AddedUSD) {
 		t.Fatalf("figure = %+v", got)
 	}
 }
 
 func TestRemovalUnsizedAndUnknown(t *testing.T) {
 	in := RemovalInput{Model: "m", Tier: TierInput, Prompt: 500_000, Removed: 1000, Unsized: true}
-	if got := RemovalSaving(in, linePricer{}); !near(got.SavedUSD, 1000*1e-6) {
+	if got := RemovalSaving(in, linePricer{}); !removalNear(got.SavedUSD, 1000*1e-6) {
 		t.Fatalf("unsized must price at the base rate, got %g", got.SavedUSD)
 	}
 	if got := RemovalSaving(in, linePricer{unknown: true}); got.SavedUSD != 0 || !got.Estimated {
 		t.Fatalf("unknown model: %+v", got)
 	}
-	if got := RemovalSaving(RemovalInput{Model: "m", Tier: TierInput}, linePricer{}); got.SavedUSD != 0 || !near(got.PerTokenUSD, 1e-6) {
+	if got := RemovalSaving(RemovalInput{Model: "m", Tier: TierInput}, linePricer{}); got.SavedUSD != 0 || !removalNear(got.PerTokenUSD, 1e-6) {
 		t.Fatalf("nothing removed: %+v", got)
 	}
 }
