@@ -102,6 +102,9 @@ func MissCost(in MissInput, p SizedPricer) (usd float64, estimated bool) {
 	if in.HeadTokens > 0 {
 		head := min(in.HeadTokens, prefix)
 		tail := prefix - head
+		if tail == 0 && in.HeadAlive {
+			return 0, false // nothing is rewritten, so no rate is needed
+		}
 		read, re := p.PriceAt(in.Model, in.At, TierCacheRead, size)
 		estimated = re
 		if tail > 0 {
