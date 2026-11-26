@@ -563,6 +563,7 @@ passed. Numbers only; `CheckFailure.Detail` is not sent.
 | `unit` | enum? | `bytes` \| `tokens`. The unit of `want` and `got`, and of `limit`. It depends only on `name`; the accountant gives it (`CheckFailure.Unit()`), so the module keeps no table of its own. Absent when the entry has no `want` and `got`. |
 | `want`, `want_after` | int? | What the bodies or the bill show. `want_after` only for a check with a before and an after side. |
 | `got`, `got_after` | int? | What the operations claim. `got_after` the same. |
+| `claims` | int? | `sum` only: the spans of applied operations in `section`. `got` is the net of their bytes, so claims that cancel give `got` 0. 0 means no applied operation claims the section. |
 | `limit`, `limit_after` | int? | `size_range` only: the size limit before (after), in `unit`. |
 | `tokens`, `tokens_after` | int? | `size_tokens` only: the tokens before (after) of the span, or of the operation with no spans, that failed. Only the side that failed is set. |
 | `bytes`, `bytes_after` | int? | `size_tokens` only: the bytes of the same side. |
