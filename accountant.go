@@ -214,15 +214,22 @@ const (
 	WithheldSizeUnknown       = engine.WithheldSizeUnknown
 	WithheldImplausibleSize   = engine.WithheldImplausibleSize
 
-	// SizeNotGiven is the tokensBefore of a host with no measure of the request size: [Withhold] skips
-	// the size gate.
+	// SizeNotGiven is the legacy tokensBefore of a host with no measure of the request size: [Withhold]
+	// skips the size gate.
+	//
+	// Deprecated: call Withhold(res) and the library measures the size.
 	SizeNotGiven = engine.SizeNotGiven
 )
 
 // Withhold returns the first gate a [Result] fails, or "" when a host may book its savings. With a
-// reason, the host books no saving for the request, only the calls of its spends. tokensBefore is the
-// size of the body the client sent, by the host's own measure, or [SizeNotGiven]. See docs/design.md §6.7.
-func Withhold(res Result, tokensBefore int) string { return engine.Withhold(res, tokensBefore) }
+// reason, the host books no saving for the request, only the calls of its spends.
+//
+// Call it as Withhold(res). The size bound then uses the library's own measure of the client messages
+// ([Result.MessageTokens]) and counts message tokens only, so a removed tool declaration does not
+// trip it. The optional size is the legacy form: the size of the body the client sent, by the host's
+// own measure, or [SizeNotGiven], which skips the size bound. The optional size is deprecated: a variadic
+// cannot carry its own marker, so new code must not pass it. See docs/design.md §6.7.
+func Withhold(res Result, tokensBefore ...int) string { return engine.Withhold(res, tokensBefore...) }
 
 // What a host reports.
 type (

@@ -311,6 +311,9 @@ func (r *Request) calc(s ThreadState, usage Usage) (Result, ThreadState) {
 		c.cacheEffects(&res)
 	}
 	c.price(&res)
+	if !c.skipsPricing() {
+		res.MessageTokens = c.ratio.between(c.client, c.client.Start[2]-1, len(c.client.Pos)-1)
+	}
 	c.checks(&res)
 	c.checkUsage(&res)
 	c.conservation(&res)
@@ -2262,7 +2265,9 @@ func (c *calcState) price(res *Result) {
 				if d > 0 {
 					// in tools or system the position counts content that earlier changes added (accountant#96)
 					from := c.clientSide(k, sp.from)
-					c.addTier(&p.Saved, c.client, false, mustFlat(c.client, from), c.bstar, c.clientBPs, d)
+					var got TierTokens
+					c.addTier(&got, c.client, false, mustFlat(c.client, from), c.bstar, c.clientBPs, d)
+					p.Saved = p.Saved.Add(got)
 					if !it.op.DryRun {
 						c.interaction(res, from, d)
 					}
@@ -2272,12 +2277,32 @@ func (c *calcState) price(res *Result) {
 						fp, _ = c.toFwdSkipping(k, sp.from) // an inserted item sits in the slot its own splice opened
 					}
 					at := mustFlat(c.fwd, fp)
+					var got TierTokens
 					if sp.before.Bytes == 0 && c.phase == PhaseHot && c.prevExt >= 0 && at <= c.prevExt && at < c.fwdFD && !c.noCacheTokens() {
 						// content the operator added, which the previous request already forwarded
 						// and cached: the provider reads it, whatever B* says (§6.2)
-						p.Caused.CacheRead += -d
+						got.CacheRead += -d
 					} else {
-						c.addTier(&p.Caused, c.fwd, true, at, c.bstarFwd, c.fwdBPs, -d)
+						c.addTier(&got, c.fwd, true, at, c.bstarFwd, c.fwdBPs, -d)
+					}
+					p.Caused = p.Caused.Add(got)
+				}
+				if sp.from.Section == SectionMessages {
+					// the size bound (§6.7) measures in the request ratio, as MessageTokens does, never in
+					// the host's tokens: dense content would else look larger than its own messages
+					// the opaque price is the body's, as in MessageTokens: Size.OpaqueTokens is a host count too
+					sb, sa := sp.before, sp.after
+					sb.OpaqueTokens, sa.OpaqueTokens = 0, 0
+					bmr, amr := c.rangeMedia(k, sb, sp, true), c.rangeMedia(k, sa, sp, false)
+					switch dr := c.ratio.sizeOf(sp.before.Bytes, bmr) - c.ratio.sizeOf(sp.after.Bytes, amr); {
+					case dr > 0:
+						c.addTier(&p.SavedMessages, c.client, false, mustFlat(c.client, c.clientSide(k, sp.from)), c.bstar, c.clientBPs, dr)
+					case dr < 0:
+						fp, _ := c.fwdSide(k, sp.from)
+						if sp.before.Bytes == 0 && it.op.MessageSplice != nil {
+							fp, _ = c.toFwdSkipping(k, sp.from)
+						}
+						c.addTier(&p.CausedMessages, c.fwd, true, mustFlat(c.fwd, fp), c.bstarFwd, c.fwdBPs, -dr)
 					}
 				}
 			}

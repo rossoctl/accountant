@@ -343,8 +343,9 @@ numbers are not used: those requirements were dropped.
 - <a id="r57"></a>**R57.** A host does not book a saving that the library says is wrong. `Withhold` names the first
   gate a `Result` fails: a fatal check (but not a `sum` failure in a section that no applied operation claims), an
   unpriced operation (not `penalty_unknown`) or a cache effect of an unknown kind, or the size bound
-  ([§6.7](design.md#67-when-a-host-books-no-saving)). For such a request the host books only the calls of its
-  spends. The `metrics` sink follows the same rule.
+  ([§6.7](design.md#67-when-a-host-books-no-saving)). The library measures the size itself, and counts message
+  tokens only, so a host gives no size and a removed tool declaration does not trip the bound. For such a request
+  the host books only the calls of its spends. The `metrics` sink follows the same rule.
 - <a id="r53"></a>**R53.** Two requests of one thread can run at the same time (a retry, parallel calls of one agent).
   A subagent is not one of them: it is its own thread, with its own Tracker. A keep-alive ping and a
   detached call are not either: each is a standalone `RequestOps`, which reads and writes no

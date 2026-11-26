@@ -502,9 +502,16 @@ and the other operations are still right. Gate 7 includes a cache effect of an u
 The size bound adds the tokens the operations caused, because an operation can remove what an earlier one
 inserted. The library has them, so the `metrics` sink gates a
 request the same way: it books only the spends of a withheld request, and counts it in
-`llm.savings.withheld`. The proxy's size bound leaves out some operators, and `Withhold` does not. So the
-proxy passes `SizeNotGiven` to `Withhold` and keeps its own bound. Cortex uses gates 6 to 8, with its own
-size measure: the billed prompt, scaled by the bytes of the client and forwarded bodies.
+`llm.savings.withheld`. `Withhold(res)` measures the size itself and counts message tokens only, so a removed tool declaration
+does not trip the bound (design §6.7). A host that has no better measure calls `Withhold(res)`. Cortex uses
+gates 6 to 8, with its own size measure: the billed prompt, scaled by the bytes of the client and forwarded
+bodies. It passes that size as the legacy argument. The context-guru proxy has two paths:
+- **The dashboard and /stats gate** (`accrec.Gate`) passes `SizeNotGiven` and keeps its own size bound.
+  It moves to `Withhold(res)` in context-guru step 2 (#1519).
+- **The metrics push** sends an `Observation` with no `TokensBefore`. The sink then calls `Withhold(res)`.
+  So the library bound applies to the push as soon as the proxy uses this release.
+
+Until step 2, the two bounds can differ for one request.
 
 How the proxy books what passes:
 
