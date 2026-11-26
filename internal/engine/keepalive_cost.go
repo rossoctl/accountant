@@ -14,21 +14,27 @@ type PingInput struct {
 	FreshInput int64
 	// Output is the output tokens the ping bills.
 	Output int64
+	// PromptTokens is the prompt size that picks the price tier. 0 means Prefix + FreshInput. A host
+	// that prices the read of a prefix inside a larger request gives that request's size.
+	PromptTokens int64
 }
 
 // PingCost is the dollars of one keep-alive ping:
 //
 //	Prefix x read + FreshInput x input + Output x output
 //
-// Every rate is the rate at the prompt size of the ping, Prefix + FreshInput, so a ping near a price
-// line gets the tier its request gets. A negative count counts as 0.
+// Every rate is the rate at the prompt size of the ping, PromptTokens or else Prefix + FreshInput, so a
+// ping near a price line gets the tier its request gets. A negative count counts as 0.
 //
 // A ping on a prefix with no known read rate (a rate of 0 or less) is unpriced: the result is 0 and
 // estimated is true. The host reads 0 with estimated true as "unknown", never as free. A rate that the
 // pricer marks as an estimate makes estimated true. A tier with no tokens makes no price call.
 func PingCost(in PingInput, p SizedPricer) (usd float64, estimated bool) {
 	prefix, fresh, out := max(in.Prefix, 0), max(in.FreshInput, 0), max(in.Output, 0)
-	size := prefix + fresh
+	size := in.PromptTokens
+	if size <= 0 {
+		size = prefix + fresh
+	}
 	read, est := p.PriceAt(in.Model, in.At, TierCacheRead, size)
 	estimated = est
 	if read <= 0 {

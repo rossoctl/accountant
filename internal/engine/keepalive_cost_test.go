@@ -48,6 +48,14 @@ func TestPingCost(t *testing.T) {
 	}
 }
 
+func TestPingCostPromptTokensPicksTheTier(t *testing.T) {
+	p := newTierPricer()
+	usd, _ := PingCost(PingInput{Model: "m", Prefix: 150_000, PromptTokens: 250_000}, p)
+	if want := 150_000 * 1e-7 * 2; !near(usd, want) {
+		t.Fatalf("got %v want %v", usd, want)
+	}
+}
+
 func TestPingCostUnknownAndEstimate(t *testing.T) {
 	p := newTierPricer()
 	p.unkown = true
