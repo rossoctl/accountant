@@ -1922,6 +1922,25 @@ no interaction. The call of each `spend` is real cost, so the host books it. A h
 its own, for example a figure with no row (`cortex-wiring.md` W6.5). `Withhold` is pure: it does no I/O,
 and the same input gives the same reason.
 
+### 6.8 Keep-alive costs
+
+A host prices a keep-alive ping and a cache miss with these three functions. It does not write the
+formula itself. All three are pure and do no I/O. The rate table is the host's [SizedPricer] (§6.6).
+
+| Function | Result |
+|---|---|
+| `PingCost(PingInput, p)` | `Prefix x read + FreshInput x input + Output x output`. Every rate is at the prompt size `PromptTokens`. When it is 0 or less, the tier is the one of a prompt of `Prefix + FreshInput` tokens. A tier with no tokens makes no price call. |
+| `MissCost(MissInput, p)` | `max(0, Prefix x (write - read))`. `write` is the 5-minute rate, or the 1-hour rate when `OneHour` is set. Every rate is at `PromptTokens`. When it is 0 or less, the tier is the one of a prompt of `Prefix` tokens. |
+| `AvoidedMissesUSD(n, miss)` | `n x miss`, never negative. |
+
+- **Unknown rate.** A model that the pricer does not know gives the pricer's dollars (0 for an unknown model) and `estimated` true. A write
+  rate of 0 or less in `MissCost` is unknown too. A host reads that as "unknown", never as "free". A guard that uses the result then
+  fails open.
+- **The floor.** A miss never costs less than 0. A write rate at or below the read rate gives 0.
+- **What the host owns.** The size of the ping body (`FreshInput`), its output budget, and the prompt size
+  that picks the tier (`PromptTokens`, when it is not `Prefix + FreshInput`) are facts about
+  the host's own request. The host gives them. The library only prices them.
+
 ## 7. Billing plans
 
 How a host records the result, the size limit on recorded changes, and the totals over a session
