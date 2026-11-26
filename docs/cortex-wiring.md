@@ -494,8 +494,10 @@ How the proxy books what passes:
   asks for 1h. When the usage shows that a 1h ask was billed as
   5m, the proxy calls `LowerTTL(5m)` before `Compute` (#919). A store of at most 8192 entries remembers
   each thread's billed tier (#1078). The rule (`accrec.BilledTTL`):
-  1. A response that wrote to the cache bills its tier on the tokens it wrote: 1h only when
-     `CacheWrite1h >= CacheWrite`. The thread remembers that tier.
+  1. A response that wrote to the cache bills its tier on the tokens it wrote: 1h only when all of them are 1h
+     (`CacheWrite1h` = `CacheWrite`; check 8 refuses a larger `CacheWrite1h`). The thread remembers that tier.
+     This step needs a host that fills `CacheWrite1h` from the bill. For a host that never fills it, every write
+     looks like 5m.
   2. A response that wrote nothing keeps the thread's last billed tier. Without this step, the read-only turn
      after a downgraded write is priced at 1h again, and a `rescue` on it is too high.
   3. A thread with no write yet keeps the asked tier.

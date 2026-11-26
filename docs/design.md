@@ -535,9 +535,13 @@ proved. A turn that wrote nothing has no tier of its own in the bill, so the hos
 downgraded 1h ask gives the library an entry that lives 1h where the provider kept it 5m:
 
 - **Too high.** The library prices a write saving at the 1h write rate, not the 5m rate.
-- **Too low.** After an idle gap past 5m, the library thinks the entry is alive. It reads the cold write as a
-  `break` and books a cost. A keep-alive ping that kept a 5m entry alive gets no `rescue`, because the entry looks
-  alive without it.
+- **Too low.** After an idle gap past 5m, the library thinks the entry is alive (phase `hot`), but the provider
+  wrote it again. A change's saving is then priced at the read tier, not the write tier. In the cortex#2136 repro, a
+  prune saved 2,796 read tokens in place of 994 5m-write tokens. The cold write is also a `break`. That break costs a
+  saving only when a change that is new on the request caused it (§5.2 rows 1 and 3). Otherwise it is in the
+  baseline (row 4), and no figure counts it (§6.6).
+- **Too low.** A keep-alive ping that kept a 5m entry alive gets no `rescue`, because the entry looks alive without
+  it.
 
 So `LowerTTL` does not only lower a saving, and a missing call is not a safe error in either direction. It is not
 an R45 case: R45 is about a lifetime that is only a floor, and this one is an exact lifetime that the host got wrong.
