@@ -180,7 +180,7 @@ func TestOpaqueSurvivesSaveAndRestore(t *testing.T) {
 
 // A host count for the removed block (Size.OpaqueTokens) is not the unit of the size bound. Here the host
 // counts 1,000 thinking tokens for a signature of 4,000 bytes. The body holds no count for it, so
-// MessageTokens prices it at the D15 price (16 tokens). The messages are about 520 tokens, so the host
+// MessageTokens prices it at the D15 price (16 tokens). The messages are 543 tokens (527 text at 0.25, 16 opaque), so the host
 // count alone would be above them. The saving is booked, and the bound measures at the body's price.
 func TestWithholdKeepsAHostCountedSignatureOverAnUncountedBody(t *testing.T) {
 	think := thinkingBlock("t", 4000)
