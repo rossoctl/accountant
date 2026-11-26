@@ -60,7 +60,7 @@ func PingOps(p Ping, b Billing) (RequestOps, PingFacts) {
 	id := pingThread(p.ThreadID)
 	change := PingWindowID(p.ThreadID, p.Window)
 	return RequestOps{
-			Version: 1,
+			Version: 1, // RequestOps.Version, the version of this input record. It is not RulesVersion.
 			Session: p.Session,
 			Thread:  Thread{ID: id},
 			Model:   p.Model,

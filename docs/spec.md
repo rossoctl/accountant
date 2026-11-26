@@ -182,7 +182,8 @@ write price, reporting, granularity). It grows as each provider is read.
 - **One library**, standalone and usable by any AI framework, turns context operations into **tokens for each billing tier**.
   A **tier** is the rate class a provider bills a token at: input, cache write (5m or 1h), or cache
   read.
-- **The library turns tokens into dollars** with `Figure`, through the host's rate table (`SizedPricer`).
+- **The library turns tokens into dollars** with `Figure` (a request with a `Result`) or `RemovalSaving` (a
+  head removal that has none), through the host's rate table (`SizedPricer`).
   There are two hosts: **Cortex** (`pricing.Resolver`) and the **context-guru proxy** (`internal/modelinfo`).
   For the same request, both get the same tokens for each tier. **A host must not price a saving itself**
   (design §6.6).

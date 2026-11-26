@@ -82,7 +82,8 @@ type USDEffect struct {
 }
 
 // USDFigure is the savings of one request in money. [Figure] makes it. It is the only place in which
-// the savings of a request are turned into dollars: a host maps its fields to its own rows and columns,
+// the savings of a request with a [Result] are turned into dollars. A head removal that has no Result is
+// priced by [RemovalSaving]. A host maps its fields to its own rows and columns,
 // and does not price a saving itself.
 //
 // Keys of the maps are the Operator of the operation, as the host gave it.
@@ -146,6 +147,10 @@ type USDFigure struct {
 func (f USDFigure) TotalUSD() float64 {
 	return f.DeltaUSD + f.KeepAliveSavedUSD + f.SplitUSD + f.TTLUSD + f.InteractionUSD
 }
+
+// CountedUSD is DeltaUSD plus InteractionUSD. A host that shows the keep-alive, split and TTL effects
+// on their own rows counts this figure as the savings of the operations. TotalUSD adds those effects.
+func (f USDFigure) CountedUSD() float64 { return f.DeltaUSD + f.InteractionUSD }
 
 // Figure turns a [Result] into dollars. It is deterministic and does no I/O.
 //

@@ -134,6 +134,10 @@ type (
 	USDLine = engine.USDLine
 	// USDEffect is one priced cache effect.
 	USDEffect = engine.USDEffect
+	// RemovalInput is a change that took tokens out of the head of a request.
+	RemovalInput = engine.RemovalInput
+	// RemovalFigure is the saving of such a change in dollars.
+	RemovalFigure = engine.RemovalFigure
 )
 
 const (
@@ -151,6 +155,17 @@ const (
 // the tokens that stay when the request crosses a price line. It is deterministic and does no I/O. See
 // [USDFigure] for the fields, and docs/design.md for the rules.
 func Figure(in FigureInput, p SizedPricer) USDFigure { return engine.Figure(in, p) }
+
+// RulesVersion is the version of the accountant rules (R46). Result.Version and RemovalFigure.Version carry it.
+const RulesVersion = engine.RulesVersion
+
+// HeadTier is the tier the head of a request's prefix was billed at, from its usage.
+func HeadTier(u Usage) Tier { return engine.HeadTier(u) }
+
+// RemovalSaving prices a change that took tokens out of the head of a request, such as a tool
+// declaration filter or a tool deferral. The host's tokenizer factor is applied once. See docs/design.md
+// §6.6.
+func RemovalSaving(in RemovalInput, p SizedPricer) RemovalFigure { return engine.RemovalSaving(in, p) }
 
 // Keep-alive costs. A host prices a ping and a cache miss with these, and never with its own formula.
 type (

@@ -1818,8 +1818,9 @@ The events schema sends the fields, never `Detail` (`docs/events/events.md` §6.
 
 ### 6.6 The dollar figure
 
-The library returns tokens. A host turns tokens into money with **one** function, `accountant.Figure`.
-**A host must use it. A host must not price a saving itself.** The `metrics` sink and a dashboard then show the
+The library returns tokens. A host turns tokens into money with the function `accountant.Figure`.
+The one exception is a head removal that has no `Result`: `RemovalSaving` prices it (below).
+**A host must use these two. A host must not price a saving itself.** The `metrics` sink and a dashboard then show the
 same dollars for the same request. A host keeps only the mapping from the figure to its own rows, columns and
 labels.
 
@@ -1868,6 +1869,7 @@ the sum of the nets is the size difference, so a re-rate always has an owner tod
 | `InteractionUSD` | `Interaction` minus `InteractionCaused`, at the size without the operations. |
 | `CallUSD` | The cost of the `spend` calls, each at its own model and size. A separate bill: not in `DeltaUSD` or `TotalUSD`. |
 | `DeltaUSD` | `ByComponent` + `EndedBreakUSD` + `UnownedMarkUSD` + `UnownedReRateUSD`. |
+| `CountedUSD()` | `DeltaUSD` + interaction. The figure a host counts when it shows keep-alive, split and TTL on their own rows. |
 | `TotalUSD()` | The bill difference: `DeltaUSD` + keep-alive + split + TTL + interaction. |
 | `Lines`, `Effects` | Every priced amount, by operator and tier, and every priced effect. The `metrics` sink labels its counters from them. |
 | `Unpriced`, `Estimated` | `Unpriced` has one form, `"opID:reason"`, split at the first colon. A reason with no operation has an empty opID: `":effect_<kind>_unknown_kind"` for an effect of an unknown kind. A call on an operation that is not a spend gives `"opID:not_spend"`. `Estimated` is the estimated mark of the counted operations and effects. |
@@ -1879,6 +1881,36 @@ tokens stay.
 **What stays in the host.** Which components have a row, how a request is held back (a held lower bound),
 the gates of its own (§6.7), and the names of rows. These are host policy. The figure gives a host the
 numbers it needs for them (`ByComponentSaved`, `ByComponentSavedAsRead`) and no more.
+
+#### Removal from the head: `RemovalSaving`
+
+A tool declaration filter and a tool deferral take tokens out of the head of the prefix. A host that has no
+`Result` for them (a dashboard row from stored counts, a ledger) prices them with one function:
+
+```go
+func HeadTier(u Usage) Tier
+func RemovalSaving(in RemovalInput, p SizedPricer) RemovalFigure
+```
+
+- `HeadTier` gives the tier the head was billed at: cache read, else cache write (1h when `CacheWrite1h > 0`),
+  else input. **Why 1h on a mixed write:** the provider's constraint is that longer lifetimes come before
+  shorter ones in prompt order (tools, then system, then messages; [cached-prefix.md](cached-prefix.md)). So
+  when any 1h tokens were written, the first breakpoint, which ends the head, is 1h. This follows from the
+  provider constraint alone. The context-guru proxy also keeps the order: `apply/headttl.go` and
+  `apply/breakpoint.go`, in that repository, write 1h only into the head, relabel every mark, or copy the
+  client's TTL. A provider that bills no 1h tokens reports `CacheWrite1h` 0, and the head is 5m.
+- `RemovalSaving` prices `Removed` tokens at that tier and at the size without the change: the billed size plus
+  the net tokens removed, rounded up. `Added` tokens (a names list) price at the billed size.
+- `Factor` is the host's tokenizer correction. The figure applies it once, to the tokens and to the size. The
+  library has no tokenizer, so the host gives it. 0 or less means 1.
+- `Unsized` prices both sides at size 0, the rate of a small request.
+- `PerTokenUSD` is the price of one removed host token (factor included) at the size without the change. A host
+  that splits a removal between names uses it. It does not depend on `Removed`, except through the size.
+- **No re-rate.** `RemovalSaving` prices the removed and the added tokens only. It does not price the tokens that
+  stay when the two sizes sit on different sides of a price line, as `Figure` does. With rates that rise with
+  size, that term is positive, so the figure is a lower bound of the full counterfactual.
+- **Rules version (R46).** `RemovalFigure.Version` is `RulesVersion`, the same number as `Result.Version`. A host
+  that records the figure stores it as `OpsVersion`. A change to the tier rule or the size rule changes it.
 
 ### 6.7 When a host books no saving
 
