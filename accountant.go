@@ -173,7 +173,21 @@ type (
 	PingInput = engine.PingInput
 	// MissInput is one cache miss on a prefix.
 	MissInput = engine.MissInput
+	// RequestCostInput is the billed usage of one request.
+	RequestCostInput = engine.RequestCostInput
+	// LatePingInput is a ping that fires after its entry expired.
+	LatePingInput = engine.LatePingInput
 )
+
+// RequestCost is the dollars of one billed request, at the rates of its prompt size. See [RequestCostInput].
+func RequestCost(in RequestCostInput, p SizedPricer) (usd float64, estimated bool) {
+	return engine.RequestCost(in, p)
+}
+
+// LatePingCost is the dollars of a ping that arrives after its entry expired: it writes the prefix. See [LatePingInput].
+func LatePingCost(in LatePingInput, p SizedPricer) (usd float64, estimated bool) {
+	return engine.LatePingCost(in, p)
+}
 
 // PingCost is the dollars of one keep-alive ping, at the rates of its own prompt size. 0 with estimated
 // true means the rate is unknown. See [PingInput].

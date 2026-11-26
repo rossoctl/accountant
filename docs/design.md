@@ -1956,14 +1956,16 @@ and the same input gives the same reason.
 
 ### 6.8 Keep-alive costs
 
-A host prices a keep-alive ping and a cache miss with these three functions. It does not write the
-formula itself. All three are pure and do no I/O. The rate table is the host's [SizedPricer] (§6.6).
+A host prices a keep-alive ping, a cache miss and a billed request with these functions. It does not write the
+formula itself. All of them are pure and do no I/O. The rate table is the host's [SizedPricer] (§6.6).
 
 | Function | Result |
 |---|---|
 | `PingCost(PingInput, p)` | `Prefix x read + FreshInput x input + Output x output`. Every rate is at the prompt size `PromptTokens`. When it is 0 or less, the tier is the one of a prompt of `Prefix + FreshInput` tokens. A tier with no tokens makes no price call. |
 | `MissCost(MissInput, p)` | `max(0, Prefix x (write - read))`. `write` is the 5-minute rate, or the 1-hour rate when `OneHour` is set. Every rate is at `PromptTokens`. When it is 0 or less, the tier is the one of a prompt of `Prefix` tokens. |
 | `AvoidedMissesUSD(n, miss)` | `n x miss`, never negative. |
+| `RequestCost(RequestCostInput, p)` | The bill of one request: `Input x input + CacheRead x read + (CacheWrite - CacheWrite1h) x write5m + CacheWrite1h x write1h + Output x output`. Every rate is at `PromptTokens`. When it is 0 or less, the tier is the one of the prompt `Input + CacheRead + CacheWrite`. It prices the tokens with the same pricer as `Figure`. |
+| `LatePingCost(LatePingInput, p)` | A ping that fires after its entry expired. It writes the prefix: `Prefix x write + FreshInput x input + Output x output`. `write` is the 5-minute rate, or the 1-hour rate when `OneHour` is set. Every rate is at `PromptTokens`, or at the tier of a prompt of `Prefix + FreshInput` tokens when it is 0 or less. |
 
 - **Unknown rate.** A model that the pricer does not know gives the pricer's dollars (0 for an unknown model) and `estimated` true. A write
   rate of 0 or less in `MissCost` is unknown too. A host reads that as "unknown", never as "free". A guard that uses the result then
