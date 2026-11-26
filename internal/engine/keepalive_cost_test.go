@@ -434,3 +434,26 @@ func TestPingCostRoundsEachProductOnItsOwn(t *testing.T) {
 		}
 	}
 }
+
+func TestMissCostHeadTail(t *testing.T) {
+	p := newTierPricer()
+	const h, tl = 20_000, 150
+	wr5, wr1, rd := 1.25e-6, 2e-6, 1e-7
+	tail := float64(float64(tl) * (wr5 - rd))
+	head := float64(float64(h) * (wr1 - rd))
+	alive, _ := MissCost(MissInput{Model: "m", Prefix: h + tl, HeadTokens: h, HeadAlive: true}, p)
+	if !near(alive, tail) {
+		t.Fatalf("head alive: got %v want %v", alive, tail)
+	}
+	gone, _ := MissCost(MissInput{Model: "m", Prefix: h + tl, HeadTokens: h}, p)
+	if !near(gone, tail+head) {
+		t.Fatalf("head expired: got %v want %v", gone, tail+head)
+	}
+	none, _ := MissCost(MissInput{Model: "m", Prefix: h + tl}, p)
+	if !near(none, float64(h+tl)*(wr5-rd)) {
+		t.Fatalf("no head: got %v", none)
+	}
+	if usd, _ := MissCost(MissInput{Model: "m", Prefix: h, HeadTokens: h + 5, HeadAlive: true}, p); usd != 0 {
+		t.Fatalf("no tail, head alive: got %v want 0", usd)
+	}
+}
