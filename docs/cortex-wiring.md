@@ -118,6 +118,7 @@ request asked for. A gateway can bill a 1h ask as 5m. When the host learns this 
 `Request.LowerTTL(5 * time.Minute)` before `Compute`. The library lowers the TTL of the facts and of every 1h
 breakpoint, in the forwarded body and in the client body, so the entry is a 5m entry (accountant#56). `LowerTTL` only lowers, and it does
 nothing before `EndRequest`. A host cannot change the record in any other way, because `Request` has no exported fields.
+A host that does not call it gets a figure that is wrong in both directions, not only high (design §4.4, cortex#2136).
 
 **Status (2026-11-26).** cortex#2140 proposes how Cortex books a detached call (W4.8 B). It is not
 merged. The plugin needs no new interface, because the pipeline knows when a report is late. The proxy has no pipeline, so it needs the
@@ -532,7 +533,18 @@ How the proxy books what passes:
   `LifetimeMinimum` when it knows the provider. With `LifetimeExact`, `TTL` is 1h only when every breakpoint
   asks for 1h. When the usage shows that a 1h ask was billed as
   5m, the proxy calls `LowerTTL(5m)` before `Compute` (#919). A store of at most 8192 entries remembers
-  each thread's billed tier (#1078).
+  each thread's billed tier (#1078). The rule (`accrec.BilledTTL`):
+  1. A response that wrote to the cache bills its tier on the tokens it wrote: 1h only when all of them are 1h
+     (`CacheWrite1h` = `CacheWrite`; check 8 refuses a larger `CacheWrite1h`). The thread remembers that tier.
+     This step needs a host that fills `CacheWrite1h` from the bill. For a host that never fills it, every write
+     looks like 5m.
+  2. A response that wrote nothing keeps the thread's last billed tier. Without this step, the read-only turn
+     after a downgraded write is priced at 1h again, and a `rescue` on it is too high.
+  3. A thread with no write yet keeps the asked tier.
+
+  **Cortex** applies the same rule in `Host.Compute` (`core/accounting/host.go`, `billedOneHour`, cortex#2142).
+  It keeps the tier in its per-thread `threadBilling` entry, with the 10,000-thread bound, and counts each
+  lowered request in `llm.cache.ttl_downgrades`. Neither host saves the tier in a snapshot.
 - **Compaction (R55).** `RequestMeta.Compaction` is `CompactionUnknown` after a compaction that the
   proxy found by phrase match. Otherwise it is empty (`proxy/agentcompaction.go`).
 - **Billing.** The proxy sets `Billing{Mode: BillingAPI}` on every request. It does not tell a
