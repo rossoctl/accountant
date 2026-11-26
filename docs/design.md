@@ -1961,7 +1961,7 @@ formula itself. All of them are pure and do no I/O. The rate table is the host's
 
 | Function | Result |
 |---|---|
-| `PingCost(PingInput, p)` | `Prefix x read + FreshInput x input + Output x output`. Every rate is at the prompt size `PromptTokens`. When it is 0 or less, the tier is the one of a prompt of `Prefix + FreshInput` tokens. A tier with no tokens makes no price call. |
+| `PingCost(PingInput, p)` | `Prefix x read + FreshInput x input + Output x output`. Every rate is at the prompt size `PromptTokens`. When it is 0 or less, the tier is the one of a prompt of `Prefix + FreshInput` tokens. A tier with no tokens makes no price call. Each product is rounded on its own, so no CPU fuses a multiply and an add. |
 | `MissCost(MissInput, p)` | `max(0, Prefix x (write - read))`. `write` is the 5-minute rate, or the 1-hour rate when `OneHour` is set. Every rate is at `PromptTokens`. When it is 0 or less, the tier is the one of a prompt of `Prefix` tokens. |
 | `AvoidedMissesUSD(n, miss)` | `n x miss`, never negative. |
 | `RequestCost(RequestCostInput, p)` | The bill of one request, with the same bits as the bill that a host stores: `Input x input + CacheRead x read + CacheWrite x write5m + Output x output`, then `+ CacheWrite1h x premium`. Every write token is priced at the 5-minute rate. The `premium` is the 1-hour rate minus the 5-minute rate, and only when it is above 0. A 1-hour rate below the 5-minute rate has no premium, so those tokens stay at the 5-minute rate. Each product is rounded on its own, so no CPU fuses a multiply and an add. Every rate is at `PromptTokens`. When it is 0 or less, the tier is the one of the prompt `Input + CacheRead + CacheWrite`. A `CacheWrite1h` above `CacheWrite` is clamped to `CacheWrite`. |

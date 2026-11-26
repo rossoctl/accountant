@@ -344,9 +344,8 @@ func (f flatSized) PriceAt(_ string, _ time.Time, t Tier, _ int64) (float64, boo
 // The guarantee rests on the Go spec: an explicit floating-point conversion forces the value to be rounded
 // to the type, so a compiler may not fuse the product into a multiply-add (FMA). storedBill and the accountant
 // both use that rule, so the same bits follow on every CPU. This test runs on the CPU of the developer or of
-// CI; on one that fuses (arm64) it fails if a product loses its conversion. The check across the two
-// repositories is the stored-bill pin in context-guru (dash, TestStoredBillIsTheSameBitsAsTheOldFormula),
-// which compares the host's old formula with this function.
+// CI; on one that fuses (arm64) it fails if a product loses its conversion. The check against a host's
+// real formula is the host's own stored-bill pin, which compares the host's old formula with this function.
 //
 // RequestCost must give the same bits as the stored bill, with a 1-hour part, with FMA-prone rates, and with
 // a 1-hour rate below the 5-minute rate (which has no premium: those tokens stay at the 5-minute rate).
