@@ -421,9 +421,12 @@ func TestOneHourWithAnUnknownRate(t *testing.T) {
 // PingCost rounds each product on its own, like the other cost functions, so FMA-prone values give the
 // same bits as the sum of explicitly rounded products on every CPU.
 func TestPingCostRoundsEachProductOnItsOwn(t *testing.T) {
-	rates := []flatSized{{in: 3e-6, read: 0.3e-6, out: 15e-6}, {in: 1.0000001e-6, read: 0.1e-6, out: 5e-6}, {in: 1.1e-6, read: 0.11e-6, out: 5.5e-6}}
+	rates := []flatSized{{in: 3e-6, read: 0.3e-6, out: 15e-6}, {in: 1.1e-6, read: 0.11e-6, out: 5.5e-6},
+		// Found by search: with these, a fused multiply-add of the fresh input on the read part gives another last bit.
+		{in: 7.0980000000000005e-06, read: 2.53e-07, out: 1e-5}, {in: 6.061e-06, read: 1.48e-07, out: 1e-5},
+		{in: 6.985e-06, read: 6.43e-07, out: 1e-5}, {in: 5.832e-06, read: 2.1100000000000002e-07, out: 1e-5}}
 	for ri, r := range rates {
-		for _, c := range [][3]int64{{123_457, 7, 1}, {98_765, 7, 16}, {271_993, 7, 1}, {54_321, 13, 3}, {999_999, 7, 1}} {
+		for _, c := range [][3]int64{{123_457, 7, 1}, {98_765, 7, 16}, {54_321, 13, 3}, {6327, 24, 1}, {6256, 20, 1}, {20245, 23, 1}, {28768, 19, 1}} {
 			want := float64(float64(c[0])*r.read) + float64(float64(c[1])*r.in) + float64(float64(c[2])*r.out)
 			got, _ := PingCost(PingInput{Model: "m", Prefix: c[0], FreshInput: c[1], Output: c[2]}, r)
 			if got != want {
