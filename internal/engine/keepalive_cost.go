@@ -161,28 +161,34 @@ type LatePingInput struct {
 // A ping is a write here, so it follows the rule of [MissCost]: a write rate of 0 or less is unknown. The
 // result is then 0 and estimated is true. A ping with no prefix writes nothing and has no such check.
 func LatePingCost(in LatePingInput, p SizedPricer) (usd float64, estimated bool) {
-	prefix, fresh := max(in.Prefix, 0), max(in.FreshInput, 0)
+	prefix, fresh, out := max(in.Prefix, 0), max(in.FreshInput, 0), max(in.Output, 0)
 	size := in.PromptTokens
 	if size <= 0 {
 		size = prefix + fresh
 	}
+	// Each tier is priced once. The sum keeps the tier order of [RequestCost]: input, write, output.
+	var write float64
 	if prefix > 0 {
 		tier := TierCacheWrite5m
 		if in.OneHour {
 			tier = TierCacheWrite1h
 		}
-		if write, _ := p.PriceAt(in.Model, in.At, tier, size); write <= 0 {
+		var we bool
+		if write, we = p.PriceAt(in.Model, in.At, tier, size); write <= 0 {
 			return 0, true
 		}
+		estimated = we
 	}
-	b := Usage{Input: tokenCount(fresh), CacheWrite: tokenCount(prefix)}
-	if in.OneHour {
-		b.CacheWrite1h = b.CacheWrite
+	if fresh > 0 {
+		r, e := p.PriceAt(in.Model, in.At, TierInput, size)
+		usd += float64(fresh) * r
+		estimated = estimated || e
 	}
-	return RequestCost(RequestCostInput{Model: in.Model, At: in.At, Billed: b, Output: tokenCount(in.Output), PromptTokens: size}, p)
+	usd += float64(prefix) * write
+	if out > 0 {
+		r, e := p.PriceAt(in.Model, in.At, TierOutput, size)
+		usd += float64(out) * r
+		estimated = estimated || e
+	}
+	return usd, estimated
 }
-
-// tokenCount converts a host's int64 count to the int that [Usage] and [TierTokens] hold. It is the one
-// place of the conversion. Those public types count tokens in int, which is 64 bits on every platform
-// that the library supports, and a count below 0 counts as 0.
-func tokenCount(n int64) int { return int(max(n, 0)) }

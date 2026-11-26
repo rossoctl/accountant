@@ -266,3 +266,38 @@ func TestLatePingCostWithHostPromptTokens(t *testing.T) {
 		t.Fatalf("default size: %v want %v", usd, want)
 	}
 }
+
+// countingPricer counts the price calls for each tier.
+type countingPricer struct {
+	inner *tierPricer
+	calls map[Tier]int
+}
+
+func (c *countingPricer) PriceAt(m string, at time.Time, t Tier, n int64) (float64, bool) {
+	c.calls[t]++
+	return c.inner.PriceAt(m, at, t, n)
+}
+
+// LatePingCost prices each tier once: the write rate that it checks is the one it uses.
+func TestLatePingCostPricesEachTierOnce(t *testing.T) {
+	for _, oneHour := range []bool{false, true} {
+		c := &countingPricer{inner: newTierPricer(), calls: map[Tier]int{}}
+		in := LatePingInput{PingInput: PingInput{Model: "m", Prefix: 100_000, FreshInput: 7, Output: 1}, OneHour: oneHour}
+		usd, _ := LatePingCost(in, c)
+		write := 1.25e-6
+		if oneHour {
+			write = 2e-6
+		}
+		if want := 100_000*write + 7*1e-6 + 5e-6; !near(usd, want) {
+			t.Fatalf("oneHour %v: got %v want %v", oneHour, usd, want)
+		}
+		for tier, n := range c.calls {
+			if n != 1 {
+				t.Errorf("oneHour %v: tier %s priced %d times, want 1", oneHour, tier, n)
+			}
+		}
+		if len(c.calls) != 3 {
+			t.Errorf("oneHour %v: %d tiers priced, want 3 (write, input, output): %v", oneHour, len(c.calls), c.calls)
+		}
+	}
+}
