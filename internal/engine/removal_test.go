@@ -105,7 +105,7 @@ func TestRemovalUnsizedAndUnknown(t *testing.T) {
 	if got := RemovalSaving(in, linePricer{unknown: true}); got.SavedUSD != 0 || !got.Estimated {
 		t.Fatalf("unknown model: %+v", got)
 	}
-	if got := RemovalSaving(RemovalInput{Model: "m", Tier: TierInput}, linePricer{}); got.PerTokenUSD != 0 || got.SavedUSD != 0 {
+	if got := RemovalSaving(RemovalInput{Model: "m", Tier: TierInput}, linePricer{}); got.SavedUSD != 0 || !near(got.PerTokenUSD, 1e-6) {
 		t.Fatalf("nothing removed: %+v", got)
 	}
 }

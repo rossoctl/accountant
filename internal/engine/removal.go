@@ -53,8 +53,9 @@ type RemovalFigure struct {
 	AddedUSD float64
 	// NetUSD is SavedUSD minus AddedUSD.
 	NetUSD float64
-	// PerTokenUSD is the price of one removed host token, the factor included: SavedUSD / Removed.
-	// A host that splits a removal between names uses it. 0 when Removed is 0.
+	// PerTokenUSD is the price of one removed host token, the factor included, at the size without the
+	// change. A host that splits a removal between names uses it. It does not depend on Removed, except
+	// through the size.
 	PerTokenUSD float64
 	// Tier is the tier the tokens were priced at.
 	Tier Tier
@@ -85,9 +86,7 @@ func RemovalSaving(in RemovalInput, p SizedPricer) RemovalFigure {
 	rs, es := p.PriceAt(in.Model, in.At, in.Tier, without)
 	out.SavedUSD = f * float64(in.Removed) * rs
 	out.Estimated = es
-	if in.Removed > 0 {
-		out.PerTokenUSD = f * rs
-	}
+	out.PerTokenUSD = f * rs
 	if in.Added > 0 {
 		ra, ea := p.PriceAt(in.Model, in.At, in.Tier, billed)
 		out.AddedUSD = f * float64(in.Added) * ra
