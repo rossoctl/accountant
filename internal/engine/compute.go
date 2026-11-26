@@ -2290,7 +2290,11 @@ func (c *calcState) price(res *Result) {
 				if sp.from.Section == SectionMessages {
 					// the size bound (§6.7) measures in the request ratio, as MessageTokens does, never in
 					// the host's tokens: dense content would else look larger than its own messages
-					switch dr := c.ratio.sizeOf(sp.before.Bytes, bm) - c.ratio.sizeOf(sp.after.Bytes, am); {
+					// the opaque price is the body's, as in MessageTokens: Size.OpaqueTokens is a host count too
+					sb, sa := sp.before, sp.after
+					sb.OpaqueTokens, sa.OpaqueTokens = 0, 0
+					bmr, amr := c.rangeMedia(k, sb, sp, true), c.rangeMedia(k, sa, sp, false)
+					switch dr := c.ratio.sizeOf(sp.before.Bytes, bmr) - c.ratio.sizeOf(sp.after.Bytes, amr); {
 					case dr > 0:
 						c.addTier(&p.SavedMessages, c.client, false, mustFlat(c.client, c.clientSide(k, sp.from)), c.bstar, c.clientBPs, dr)
 					case dr < 0:

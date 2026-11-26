@@ -155,8 +155,11 @@ type PricedOp struct {
 	Saved    TierTokens // tokens the provider did not bill, by tier; never negative
 	Caused   TierTokens // tokens the provider billed because of this operation; never negative
 	// SavedMessages and CausedMessages are the size of the spans in the messages section, counted at the
-	// request's text ratio, as MessageTokens is. They are not the host's own tokens (Size.Tokens), and so
-	// they can differ from the messages part of Saved and Caused. A removed tool declaration is in neither.
+	// request's text ratio, as MessageTokens is, and opaque bytes at the body's own price. They use no host
+	// count (Size.Tokens, Size.OpaqueTokens), so they can differ from the messages part of Saved and Caused.
+	// The tier split of CausedMessages can differ from Caused too (Caused books CacheRead for content the
+	// previous request cached). Only the sum is meaningful: the bound uses it. A removed tool declaration
+	// is in neither.
 	// [Withhold] compares them with MessageTokens, so a request that removes many tool declarations is not
 	// withheld for their size, and dense content is not withheld for its density (§6.7).
 	SavedMessages  TierTokens

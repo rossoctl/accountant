@@ -177,3 +177,29 @@ func TestOpaqueSurvivesSaveAndRestore(t *testing.T) {
 		t.Fatalf("restored Opaque = %d, cumOpaque = %d, want 3000", got.Pos[0].Opaque, got.cumOpaque(0))
 	}
 }
+
+// A host count for the removed block (Size.OpaqueTokens) is not the unit of the size bound. Here the host
+// counts 1,000 thinking tokens for a signature of 4,000 bytes. The body holds no count for it, so
+// MessageTokens prices it at the D15 price (16 tokens). The messages are about 520 tokens, so the host
+// count alone would be above them. The saving is booked, and the bound measures at the body's price.
+func TestWithholdKeepsAHostCountedSignatureOverAnUncountedBody(t *testing.T) {
+	think := thinkingBlock("t", 4000)
+	marker := []byte(`{"role":"assistant","content":[{"type":"text","text":"ok"}]}`)
+	client := [][]byte{text("m0", 2000), think}
+	fwd := [][]byte{text("m0", 2000), marker}
+	fb := NewBody(nil, nil, fwd)
+	billed := fb.cumBytes(2) / 4
+	op := Operation{ID: "o1", Kind: KindRewrite, Operator: "strip", ChangeID: "c", At: msg(1),
+		SizeBefore: Size{Bytes: len(think), OpaqueBytes: 4000, OpaqueTokens: 1000}, SizeAfter: Size{Bytes: len(marker)}}
+	res := priceBP(client, fwd, op, billed)
+	p := findOp(t, res, "o1")
+	if got := tierSum(p.Saved); got < 1000 {
+		t.Fatalf("Saved = %d, want the host's 1,000 and the text", got)
+	}
+	if got := tierSum(p.SavedMessages); got > res.MessageTokens {
+		t.Fatalf("SavedMessages = %d, MessageTokens = %d, want the saved size within the messages", got, res.MessageTokens)
+	}
+	if got := Withhold(res); got != "" {
+		t.Errorf("Withhold = %q, want \"\": a host count is not a size fault", got)
+	}
+}

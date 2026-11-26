@@ -1948,8 +1948,9 @@ body had plus the tokens they caused. `Withhold(res)` tests this bound with the 
 passes no size. Only the messages section counts:
 
 - **The unit** is the byte ratio of this request (the same ratio as check 6), on both sides. The bound
-  never uses the host's own token counts (`Size.Tokens`). A host count can be denser than the request
-  average, for example for hex or code. If one side used the host count, an honest request would be withheld.
+  never uses the host's own token counts (`Size.Tokens`, `Size.OpaqueTokens`). Opaque bytes, such as a
+  thinking block, are priced as `MessageTokens` prices them: at the count of the body, else at the D15
+  price. A host count can be denser than the request average, for example for hex or code. If one side used the host count, an honest request would be withheld.
 - **The size** is `Result.MessageTokens`: the tokens of the messages of the client body, at that ratio. It is
   0 when nothing was priced.
 - **The saved tokens** are `PricedOp.SavedMessages`: the size of the spans in the messages section, at that
