@@ -434,3 +434,92 @@ func TestPingCostRoundsEachProductOnItsOwn(t *testing.T) {
 		}
 	}
 }
+
+func TestMissCostHeadTail(t *testing.T) {
+	p := newTierPricer()
+	const h, tl = 20_000, 150
+	wr5, wr1, rd := 1.25e-6, 2e-6, 1e-7
+	tail := float64(float64(tl) * (wr5 - rd))
+	head := float64(float64(h) * (wr1 - rd))
+	alive, _ := MissCost(MissInput{Model: "m", Prefix: h + tl, HeadTokens: h, HeadAlive: true}, p)
+	if !near(alive, tail) {
+		t.Fatalf("head alive: got %v want %v", alive, tail)
+	}
+	gone, _ := MissCost(MissInput{Model: "m", Prefix: h + tl, HeadTokens: h}, p)
+	if !near(gone, tail+head) {
+		t.Fatalf("head expired: got %v want %v", gone, tail+head)
+	}
+	none, _ := MissCost(MissInput{Model: "m", Prefix: h + tl}, p)
+	if !near(none, float64(h+tl)*(wr5-rd)) {
+		t.Fatalf("no head: got %v", none)
+	}
+	if usd, _ := MissCost(MissInput{Model: "m", Prefix: h, HeadTokens: h + 5, HeadAlive: true}, p); usd != 0 {
+		t.Fatalf("no tail, head alive: got %v want 0", usd)
+	}
+}
+
+func TestMissCostHeadTailNoTailMakesNoPriceCall(t *testing.T) {
+	p := newTierPricer()
+	p.unknown = true
+	usd, est := MissCost(MissInput{Model: "m", Prefix: 20_000, HeadTokens: 20_000, HeadAlive: true}, p)
+	if usd != 0 || est || len(p.sizes) != 0 {
+		t.Fatalf("got %v %v with %d price calls, want 0 false and none", usd, est, len(p.sizes))
+	}
+	// The clamp lands here too: a head above the prefix is the whole prefix.
+	usd, est = MissCost(MissInput{Model: "m", Prefix: 20_000, HeadTokens: 30_000, HeadAlive: true}, p)
+	if usd != 0 || est || len(p.sizes) != 0 {
+		t.Fatalf("clamp: got %v %v with %d price calls", usd, est, len(p.sizes))
+	}
+}
+
+func TestMissCostHeadTailUnknownAndEstimated(t *testing.T) {
+	in := MissInput{Model: "m", Prefix: 20_150, HeadTokens: 20_000}
+	// An unknown 5-minute write rate with a tail.
+	p := newTierPricer()
+	p.rates[TierCacheWrite5m] = 0
+	for _, alive := range []bool{true, false} {
+		in.HeadAlive = alive
+		if usd, est := MissCost(in, p); usd != 0 || !est {
+			t.Errorf("5m unknown, alive=%v: got %v %v, want 0 true", alive, usd, est)
+		}
+	}
+	// An unknown 1-hour write rate with a dead head.
+	p = newTierPricer()
+	p.rates[TierCacheWrite1h] = 0
+	in.HeadAlive = false
+	if usd, est := MissCost(in, p); usd != 0 || !est {
+		t.Errorf("1h unknown, head dead: got %v %v, want 0 true", usd, est)
+	}
+	// The 1-hour rate does not matter while the head lives.
+	in.HeadAlive = true
+	if usd, est := MissCost(in, p); !near(usd, 150*(1.25e-6-1e-7)) || est {
+		t.Errorf("1h unknown, head alive: got %v %v", usd, est)
+	}
+	// An estimated rate marks the result, on each tier the cost uses.
+	for _, tier := range []Tier{TierCacheRead, TierCacheWrite5m} {
+		p = newTierPricer()
+		p.est[tier] = true
+		in.HeadAlive = true
+		if _, est := MissCost(in, p); !est {
+			t.Errorf("estimated %v, head alive: result not marked", tier)
+		}
+	}
+	p = newTierPricer()
+	p.est[TierCacheWrite1h] = true
+	in.HeadAlive = false
+	if _, est := MissCost(in, p); !est {
+		t.Error("estimated 1h rate, head dead: result not marked")
+	}
+	in.HeadAlive = true
+	if _, est := MissCost(in, p); est {
+		t.Error("estimated 1h rate, head alive: the 1h rate is not used, so it must not mark the result")
+	}
+	// OneHour does not count when HeadTokens is above 0.
+	p = newTierPricer()
+	in.HeadAlive = true
+	a, _ := MissCost(in, p)
+	in.OneHour = true
+	if b, _ := MissCost(in, p); a != b {
+		t.Errorf("OneHour changed a mixed cost: %v vs %v", a, b)
+	}
+}

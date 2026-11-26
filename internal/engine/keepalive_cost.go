@@ -67,6 +67,14 @@ type MissInput struct {
 	PromptTokens int64
 	// OneHour says that the entry was written at the 1-hour tier, so its rewrite is too.
 	OneHour bool
+	// HeadTokens is the part of Prefix that sits at the 1-hour tier in a mixed entry (a head-TTL thread: a
+	// 1-hour head, then a 5-minute tail). 0 or less means no head: the whole Prefix is one entry, as before.
+	// A value above Prefix counts as Prefix. The tail is Prefix - HeadTokens.
+	HeadTokens int64
+	// HeadAlive says that the 1-hour head still lives. It counts only when HeadTokens is above 0.
+	// While the head lives, a miss rewrites only the tail. After the head expires, a miss rewrites the head
+	// at the 1-hour rate and the tail at the 5-minute rate. OneHour does not count when HeadTokens is above 0.
+	HeadAlive bool
 }
 
 // MissCost is the extra dollars of one cache miss over a hit: the prefix at the write rate minus the
@@ -76,6 +84,12 @@ type MissInput struct {
 //
 // A write rate of 0 or less is unknown: the result is 0 and estimated is true. A write rate that is
 // not above the read rate gives 0, a miss that costs nothing extra.
+//
+// With HeadTokens above 0 the entry is mixed. While HeadAlive is set, the cost is the tail only:
+// (Prefix - HeadTokens) x (write5m - read). Otherwise it is the tail at that rate plus the head at the
+// 1-hour rate: HeadTokens x (write1h - read). Each product is rounded on its own, and the head is added
+// last. A write rate of 0 or less for a tier that the cost needs is unknown: the result is 0 and estimated is
+// true. A mixed entry with no tail costs 0 while the head lives, and makes no price call.
 func MissCost(in MissInput, p SizedPricer) (usd float64, estimated bool) {
 	prefix := in.Prefix
 	if prefix <= 0 {
@@ -84,6 +98,32 @@ func MissCost(in MissInput, p SizedPricer) (usd float64, estimated bool) {
 	size := in.PromptTokens
 	if size <= 0 {
 		size = prefix
+	}
+	if in.HeadTokens > 0 {
+		head := min(in.HeadTokens, prefix)
+		tail := prefix - head
+		if tail == 0 && in.HeadAlive {
+			return 0, false // nothing is rewritten, so no rate is needed
+		}
+		read, re := p.PriceAt(in.Model, in.At, TierCacheRead, size)
+		estimated = re
+		if tail > 0 {
+			w5, e := p.PriceAt(in.Model, in.At, TierCacheWrite5m, size)
+			if w5 <= 0 {
+				return 0, true
+			}
+			usd = max(0, float64(float64(tail)*(w5-read)))
+			estimated = estimated || e
+		}
+		if !in.HeadAlive {
+			w1, e := p.PriceAt(in.Model, in.At, TierCacheWrite1h, size)
+			if w1 <= 0 {
+				return 0, true
+			}
+			usd += max(0, float64(float64(head)*(w1-read)))
+			estimated = estimated || e
+		}
+		return usd, estimated
 	}
 	tier := TierCacheWrite5m
 	if in.OneHour {
