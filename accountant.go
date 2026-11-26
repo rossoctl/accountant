@@ -156,12 +156,15 @@ const (
 // [USDFigure] for the fields, and docs/design.md for the rules.
 func Figure(in FigureInput, p SizedPricer) USDFigure { return engine.Figure(in, p) }
 
+// RulesVersion is the version of the accountant rules (R46). Result.Version and RemovalFigure.Version carry it.
+const RulesVersion = engine.RulesVersion
+
 // HeadTier is the tier the head of a request's prefix was billed at, from its usage.
 func HeadTier(u Usage) Tier { return engine.HeadTier(u) }
 
 // RemovalSaving prices a change that took tokens out of the head of a request, such as a tool
-// declaration filter or a tool deferral. The host's tokenizer factor is applied once. See
-// [engine.RemovalSaving].
+// declaration filter or a tool deferral. The host's tokenizer factor is applied once. See docs/design.md
+// §6.6.
 func RemovalSaving(in RemovalInput, p SizedPricer) RemovalFigure { return engine.RemovalSaving(in, p) }
 
 // The reasons [Withhold] returns.

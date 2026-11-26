@@ -116,3 +116,27 @@ func TestCountedUSDIsDeltaPlusInteraction(t *testing.T) {
 		t.Fatalf("CountedUSD = %g, want 2", f.CountedUSD())
 	}
 }
+
+func TestRemovalNoPromptSizeAndAddedAboveRemoved(t *testing.T) {
+	// Prompt 0 with Removed > 0 and Unsized false: the size is the removed tokens alone. 250k removed is above the
+	// line, so the rate is 2x. (The true size is larger, so the rate can only be too low.)
+	in := RemovalInput{Model: "m", Tier: TierInput, Prompt: 0, Removed: 250_000}
+	if got := RemovalSaving(in, linePricer{}); !removalNear(got.PerTokenUSD, 2e-6) {
+		t.Fatalf("PerTokenUSD = %g, want 2e-6", got.PerTokenUSD)
+	}
+	// Added above Removed: the size without the change would be below the billed size. It clamps at 0, not below.
+	in = RemovalInput{Model: "m", Tier: TierInput, Prompt: 100, Removed: 10, Added: 1000}
+	got := RemovalSaving(in, linePricer{})
+	if !removalNear(got.SavedUSD, 10*1e-6) || !removalNear(got.AddedUSD, 1000*1e-6) || got.NetUSD >= 0 {
+		t.Fatalf("figure = %+v", got)
+	}
+}
+
+func TestRemovalFigureNamesTheRulesVersion(t *testing.T) {
+	if got := RemovalSaving(RemovalInput{Model: "m", Tier: TierInput}, linePricer{}); got.Version != RulesVersion || RulesVersion == 0 {
+		t.Fatalf("Version = %d, RulesVersion = %d", got.Version, RulesVersion)
+	}
+	if r := (Result{Version: RulesVersion}); r.Version != RemovalSaving(RemovalInput{}, linePricer{}).Version {
+		t.Fatal("Result and RemovalFigure must carry one rules version")
+	}
+}

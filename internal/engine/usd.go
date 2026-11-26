@@ -82,7 +82,8 @@ type USDEffect struct {
 }
 
 // USDFigure is the savings of one request in money. [Figure] makes it. It is the only place in which
-// the savings of a request are turned into dollars: a host maps its fields to its own rows and columns,
+// the savings of a request with a [Result] are turned into dollars. A head removal that has no Result is
+// priced by [RemovalSaving]. A host maps its fields to its own rows and columns,
 // and does not price a saving itself.
 //
 // Keys of the maps are the Operator of the operation, as the host gave it.

@@ -9,6 +9,10 @@ import (
 // read. Else any cache write means the request created it, at the one-hour rate when CacheWrite1h is
 // above 0 (CacheWrite1h is part of CacheWrite, never an addition to it). Else the head was fresh input.
 //
+// Why 1h on a mixed write: the provider requires every 1h breakpoint to come before every 5m one in prompt
+// order (tools, system, messages) and refuses a request that breaks it. So when any 1h tokens were written,
+// the first breakpoint, which ends the head, is 1h. See docs/design.md §6.6.
+//
 // A change that takes tokens out of the head, such as a tool declaration, saves them at this tier.
 func HeadTier(u Usage) Tier {
 	switch {
@@ -61,7 +65,13 @@ type RemovalFigure struct {
 	Tier Tier
 	// Estimated is true when a rate the pricer gave is an estimate.
 	Estimated bool
+	// Version is RulesVersion, the version of the rules that made the figure (R46). A host that records the
+	// figure stores it as OpsVersion.
+	Version int
 }
+
+// RulesVersion is the version of the accountant rules (R46). Result.Version and RemovalFigure.Version carry it.
+const RulesVersion = 1
 
 // RemovalSaving prices a change that took tokens out of the head of a request. It is the one formula for
 // a tool declaration filter and for tool deferral, so a host never prices such a saving itself.
@@ -82,7 +92,7 @@ func RemovalSaving(in RemovalInput, p SizedPricer) RemovalFigure {
 		billed = max(in.Prompt, 0)
 		without = max(billed+int64(math.Ceil(f*float64(in.Removed)-f*float64(in.Added))), 0)
 	}
-	out := RemovalFigure{Tier: in.Tier}
+	out := RemovalFigure{Tier: in.Tier, Version: RulesVersion}
 	rs, es := p.PriceAt(in.Model, in.At, in.Tier, without)
 	out.SavedUSD = f * float64(in.Removed) * rs
 	out.Estimated = es

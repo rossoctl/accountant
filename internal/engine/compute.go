@@ -73,7 +73,7 @@ func (r *Request) Preview(usage Usage) Result {
 // detached call). It reads and changes no ThreadState (§6.1). A spend is not priced in tokens: its
 // Call is returned for the host to price (D4). Any other kind is unpriced.
 func ComputeStandalone(ops RequestOps) Result {
-	res := Result{Version: 1, Phase: PhaseUnknown}
+	res := Result{Version: RulesVersion, Phase: PhaseUnknown}
 	for _, op := range ops.Ops {
 		res.Ops = append(res.Ops, priced(op, op.ID))
 		if op.Kind != KindSpend {
@@ -258,7 +258,7 @@ func resultUnknown(op Operation) bool {
 }
 
 func (r *Request) notEnded() Result {
-	res := Result{Version: 1, Phase: PhaseUnknown, Unpriced: []Unpriced{{Reason: ReasonEndRequestMissing}}}
+	res := Result{Version: RulesVersion, Phase: PhaseUnknown, Unpriced: []Unpriced{{Reason: ReasonEndRequestMissing}}}
 	for _, op := range r.ops {
 		res.Ops = append(res.Ops, priced(op, op.ID))
 		res.Unpriced = append(res.Unpriced, Unpriced{OpID: op.ID, Reason: ReasonEndRequestMissing})
@@ -299,7 +299,7 @@ func opSpans(op Operation) []span {
 // calc prices the request against the state s and returns the result and the next state. It
 // changes nothing it is given.
 func (r *Request) calc(s ThreadState, usage Usage) (Result, ThreadState) {
-	res := Result{Version: 1, Recomputed: s.Version != r.start.Version}
+	res := Result{Version: RulesVersion, Recomputed: s.Version != r.start.Version}
 	s, seeded := r.seededFromParent(s)
 	items := r.items(s)
 	c := r.newCalc(s, items, usage)
