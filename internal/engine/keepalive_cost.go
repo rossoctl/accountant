@@ -89,7 +89,7 @@ type MissInput struct {
 // (Prefix - HeadTokens) x (write5m - read). Otherwise it is the tail at that rate plus the head at the
 // 1-hour rate: HeadTokens x (write1h - read). Each product is rounded on its own, and the head is added
 // last. A write rate of 0 or less for a tier that the cost needs is unknown: the result is 0 and estimated is
-// true. A mixed entry with no tail costs 0 while the head lives.
+// true. A mixed entry with no tail costs 0 while the head lives, and makes no price call.
 func MissCost(in MissInput, p SizedPricer) (usd float64, estimated bool) {
 	prefix := in.Prefix
 	if prefix <= 0 {
