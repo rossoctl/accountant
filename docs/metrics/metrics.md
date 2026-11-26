@@ -92,7 +92,8 @@ A host adds one method to its `Pricer`:
   above 0, the sink calls `Price` for that side.
 - A pricer without `PriceAt` gets the same figures as before. (The sink now skips a tier with 0 tokens, so it can make fewer `Price` calls.)
 - An operation the engine does not price (`media_tokens`, `unknown_kind`) has zero `Saved` and `Caused`. The
-  derived size does not include its tokens. Near a line, the size can then fall on the lower tier.
+  derived size does not include its tokens. Near a line, the size can then fall on the lower tier. Such a
+  request is now withheld (rule 9), so the sink books none of its savings.
 - The size without the operations carries the engine's byte-to-token rounding, about one token for each span.
 - **`estimated`.** The sink adds no new `estimated` mark for the derived size. The size is arithmetic
   on billed usage and on the tokens of the operations. It is exact only as far as those tokens are. When an operation's tokens are an estimate, the operation
@@ -187,7 +188,9 @@ difference.)
 9. **Withheld requests** (design §6.7). If `accountant.Withhold` gives a reason, the sink books no saved or
    caused tokens of an operation, no cache effect and no interaction. It books the call of each `spend`, in
    tokens and in money, because that is real cost. `unpriced`, `check_failures` and `estimated` move as for
-   any request. `TokensBefore` 0 means the host does not give a size: the sink then skips the size gate only.
+   any request. `TokensBefore` 0 or less means the host does not give a size: the sink then skips the size
+   gate only. One unpriced operation (for example `size_range` or `media_tokens`) withholds the whole request:
+   the sink books none of its other operations either. Before this rule, it booked them.
 
 ## Not in this module
 

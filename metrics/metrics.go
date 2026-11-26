@@ -162,7 +162,7 @@ func (s *Sink) Observe(o Observation) {
 	money := o.Meta.Billing.Mode == accountant.BillingAPI
 	anyEstimated := !money // unknown, subscription's weights or an unset mode are all estimates
 	before := o.TokensBefore
-	if before == 0 {
+	if before <= 0 {
 		before = accountant.SizeNotGiven
 	}
 	withheld := accountant.Withhold(res, before)

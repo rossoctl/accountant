@@ -34,6 +34,24 @@ func TestWithhold(t *testing.T) {
 			saved(100),
 		}}, 1000, ""},
 		{"a check before the bound", Result{Ops: []PricedOp{saved(5000)}, Checks: check(CheckSpans)}, 1000, WithheldCheckSpans},
+		{"unknown effect kind", Result{Ops: []PricedOp{saved(100)}, CacheEffects: []CacheEffect{{Kind: "future"}}}, SizeNotGiven, WithheldUnpriced},
+		{"known effect kinds", Result{Ops: []PricedOp{saved(100)}, CacheEffects: []CacheEffect{{Kind: EffectBreak}, {Kind: EffectRescue},
+			{Kind: EffectSplit}, {Kind: EffectTTLPremium}, {Kind: EffectTTLRescue}, {Kind: EffectMarkPremium}, {Kind: EffectMarkPayback}}}, 1000, ""},
+		// more_examples.md#I44: retrieve inserts 25,000 tokens into an 8,000-token body, and cmdfilter
+		// after it removes 20,000 of them. The Result is correct: no check fails.
+		{"an operator removes what an earlier one inserted", Result{Ops: []PricedOp{
+			{Kind: KindRewrite, Operator: "context-guru.retrieve", Caused: TierTokens{CacheWrite5m: 25000}},
+			{Kind: KindRewrite, Operator: "context-guru.cmdfilter", Saved: TierTokens{CacheWrite5m: 20000}},
+		}, Unpriced: []Unpriced{{Reason: ReasonPenaltyUnknown}}}, 8000, ""},
+		{"over the bound with an insertion", Result{Ops: []PricedOp{
+			{Kind: KindRewrite, Caused: TierTokens{CacheWrite5m: 25000}},
+			{Kind: KindRewrite, Saved: TierTokens{CacheWrite5m: 33001}},
+		}}, 8000, WithheldImplausibleSize},
+		{"a dry run's insertion does not widen the bound", Result{Ops: []PricedOp{
+			{Kind: KindRewrite, DryRun: true, Caused: TierTokens{Input: 5000}},
+			saved(1001),
+		}}, 1000, WithheldImplausibleSize},
+		{"negative size other than SizeNotGiven", Result{Ops: []PricedOp{saved(100)}}, -5, WithheldSizeUnknown},
 		{"unpriced before the bound", Result{Ops: []PricedOp{saved(5000)}, Unpriced: []Unpriced{{Reason: ReasonBadUsage}}}, 1000, WithheldUnpriced},
 	} {
 		if got := Withhold(c.res, c.before); got != c.want {
@@ -42,8 +60,9 @@ func TestWithhold(t *testing.T) {
 	}
 }
 
-// Every fatal check gates: a check that becomes fatal later gets check_other until it has a name, and
-// never gates nothing.
+// Each check of this list gates exactly when it is fatal. Withhold reads Fatal, so a check that becomes
+// fatal later gates too (as check_other until it has a name). TestEveryCheckHasAFatalClass keeps the
+// class of each check decided; this list is the checks of today.
 func TestWithholdGatesEveryFatalCheck(t *testing.T) {
 	for _, name := range []string{CheckSum, CheckUniqueChange, CheckSpans, CheckConservation, CheckSharedWarm,
 		CheckBadUsage, CheckRatioRange, CheckMediaUnseen, CheckBreakpoints, CheckMediaTokens, CheckSizeTokens,

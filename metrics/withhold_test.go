@@ -86,15 +86,16 @@ func TestCleanRequestIsNotWithheld(t *testing.T) {
 	}
 }
 
-// The size bound uses the host's TokensBefore. 0 means the host does not give it: no size gate.
+// The size bound uses the host's TokensBefore, plus the tokens the operations caused. 0 means the host
+// does not give it: no size gate.
 func TestTokensBeforeGatesTheSize(t *testing.T) {
 	for _, c := range []struct {
 		before int
 		want   string
 	}{
 		{0, ""},
-		{2000, ""},
-		{1999, accountant.WithheldImplausibleSize},
+		{1990, ""}, // saved 2,000 = 1,990 before + 10 caused
+		{1989, accountant.WithheldImplausibleSize},
 	} {
 		s, r := newSink(t)
 		o := withheldObs()
@@ -131,5 +132,57 @@ func TestWithheldWithoutMoney(t *testing.T) {
 	}
 	if w := got["llm.savings.withheld"]; len(w) != 1 || w[0].attrs["reason"] != accountant.WithheldCheckSpans {
 		t.Errorf("withheld = %+v, want check_spans", w)
+	}
+}
+
+// A withheld request above a price line books no re-rate: the re-rate shares of the operations and the
+// re-rate no operation owns come from the same figure, so the sink drops them with the saving.
+func TestWithheldDropsTheReRate(t *testing.T) {
+	o := sizedObs(250_000, rewrite(50_000, 10_000))
+	saved, added := usd(t, tiered{}, o)
+	if saved <= 50_000*2e-6 {
+		t.Fatalf("saved usd = %v: the clean request must have a re-rate for this test to mean anything", saved)
+	}
+	o.Result.Checks = []accountant.CheckFailure{{Check: accountant.CheckSum}}
+	s, r := newSinkWith(t, tiered{})
+	s.Observe(o)
+	got := collect(t, r)
+	for _, name := range []string{"llm.savings.saved.usd", "llm.savings.added.usd", "llm.savings.interaction.usd"} {
+		if len(got[name]) != 0 {
+			t.Errorf("%s = %+v, want no point on a withheld request (clean: saved %v, added %v)", name, got[name], saved, added)
+		}
+	}
+}
+
+// One unpriced operation withholds the whole request: the priced operation beside it books nothing
+// (design §6.7). Before the gate, the sink booked the priced one.
+func TestOneUnpricedOpWithholdsTheRequest(t *testing.T) {
+	s, r := newSink(t)
+	o := obs("m",
+		accountant.PricedOp{OpID: "ok", Kind: accountant.KindRewrite, Operator: "h.a", Saved: accountant.TierTokens{Input: 1000}},
+		accountant.PricedOp{OpID: "bad", Kind: accountant.KindRewrite, Operator: "h.b"},
+	)
+	o.Result.Unpriced = []accountant.Unpriced{{OpID: "bad", Reason: accountant.ReasonSizeRange}}
+	s.Observe(o)
+	got := collect(t, r)
+	if len(got["llm.savings.saved.tokens"]) != 0 || len(got["llm.savings.saved.usd"]) != 0 {
+		t.Errorf("saved = %v / %v, want none", got["llm.savings.saved.tokens"], got["llm.savings.saved.usd"])
+	}
+	if w := got["llm.savings.withheld"]; len(w) != 1 || w[0].attrs["reason"] != accountant.WithheldUnpriced {
+		t.Errorf("withheld = %+v, want unpriced", w)
+	}
+	if p := got["llm.savings.requests"]; len(p) != 1 || p[0].attrs["result"] != "unpriced" {
+		t.Errorf("requests = %+v, want result unpriced (it wins over withheld)", p)
+	}
+}
+
+// A negative TokensBefore is "not given", as 0 is: the size gate is skipped.
+func TestNegativeTokensBeforeSkipsTheSizeGate(t *testing.T) {
+	s, r := newSink(t)
+	o := withheldObs()
+	o.TokensBefore = -7
+	s.Observe(o)
+	if w := collect(t, r)["llm.savings.withheld"]; len(w) != 0 {
+		t.Errorf("withheld = %+v, want none", w)
 	}
 }
