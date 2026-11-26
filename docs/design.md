@@ -1887,11 +1887,19 @@ a new fatal check gates all of them at once (§6.5). The gates, in order:
 
 | Reason | The gate that fails |
 |---|---|
-| `check_sum`, `check_unique_change`, `check_spans` | That fatal check (§6.5). The list of operations or its attribution is wrong. |
+| `check_sum`, `check_unique_change`, `check_spans` | That fatal check (§6.5). The list of operations or its attribution is wrong. A `sum` failure where no applied operation claims bytes in the section (`Got` is 0) does not gate (see below). |
 | `check_other` | A fatal check with no reason of its own. A check that becomes fatal gets it until it has a name. |
 | `unpriced` | An entry in `Result.Unpriced` with a reason other than `penalty_unknown`, or a cache effect of a kind the library does not know (§6.6 books nothing for it). `penalty_unknown` does not gate: the figure is an estimate (§6.4). |
 | `size_unknown` | The operations saved tokens, and `tokensBefore` is 0 or less, other than `SizeNotGiven`. |
 | `implausible_size` | The operations saved more tokens than `tokensBefore` plus the tokens they caused. |
+
+**An unreported change.** A host plugin can change the body and report no operation, for example a plugin
+that injects text into `system`. The `sum` check then fails for that section with `Got` 0: no applied operation
+claims bytes there. The reported operations of the other sections are still right, so `Withhold` does not gate on
+such a failure, and their savings are booked. `CheckFailure.Fatal` does not change: the failure is still fatal,
+and `Reliable` is still false. Only `Withhold` scopes it. A `sum` failure where operations claim bytes (`Got` is not
+0) still gates: two operations claim one change, as in cortex#2134, or a reported and an unreported change share
+one section, and then the library cannot tell which bytes are whose.
 
 **The size bound.** An operation receives the body that the operations before it left: the client body plus
 what the inserting operations added (check 13, §6.5). So the operations cannot save more tokens than the client

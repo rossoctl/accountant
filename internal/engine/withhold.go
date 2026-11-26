@@ -8,7 +8,7 @@ const (
 	WithheldCheckOther        = "check_other"         // a fatal check with no reason of its own
 	WithheldUnpriced          = "unpriced"            // an operation, a cache effect or the request is unpriced, for a reason other than penalty_unknown
 	WithheldSizeUnknown       = "size_unknown"        // the operations saved tokens, and the size before them is unknown
-	WithheldImplausibleSize   = "implausible_size"    // the operations saved more tokens than the request had
+	WithheldImplausibleSize   = "implausible_size"    // the operations saved more tokens than the request had plus what they caused
 )
 
 // SizeNotGiven is the tokensBefore of a host that has no measure of its own of the request size.
@@ -21,7 +21,12 @@ const SizeNotGiven = -1
 //
 // The gates, in order:
 //
-//  1. A fatal check ([CheckFailure.Fatal]). The list of operations or its attribution is wrong.
+//  1. A fatal check ([CheckFailure.Fatal]). The list of operations or its attribution is wrong. One
+//     exception: a sum failure where no applied operation claims bytes in the section (Got is 0).
+//     There, a change that no operation reported changed the section (a host plugin that rewrites the
+//     body and reports nothing). The reported operations of the other sections are still right, so
+//     their savings are booked. A sum failure where operations claim bytes (Got is not 0) gates: two
+//     operations claim one change, or a reported and an unreported change share the section.
 //  2. An entry in res.Unpriced with a reason other than [ReasonPenaltyUnknown], or a cache effect of a
 //     kind the library does not know ([Figure] lists it in USDFigure.Unpriced and books nothing for it).
 //     penalty_unknown does not gate: every operation is priced, and the figure is an estimate (§6.4).
@@ -35,7 +40,7 @@ const SizeNotGiven = -1
 //     [SizeNotGiven] skips the gate. Any other tokensBefore of 0 or less gives size_unknown.
 func Withhold(res Result, tokensBefore int) string {
 	for _, c := range res.Checks {
-		if !c.Fatal() {
+		if !c.Fatal() || unreportedChange(c) {
 			continue
 		}
 		switch c.Check {
@@ -78,4 +83,10 @@ func Withhold(res Result, tokensBefore int) string {
 		return WithheldImplausibleSize
 	}
 	return ""
+}
+
+// unreportedChange reports whether c is a sum failure of a section that no applied operation claims
+// bytes in: only a change no operation reported moved its bytes (Withhold, gate 1).
+func unreportedChange(c CheckFailure) bool {
+	return c.Check == CheckSum && c.Got != nil && *c.Got == 0
 }
