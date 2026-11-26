@@ -56,6 +56,15 @@ func TestPingCostPromptTokensPicksTheTier(t *testing.T) {
 	}
 }
 
+func TestPingCostFreeReadRateStillPricesTheOutput(t *testing.T) {
+	p := newTierPricer()
+	p.rates[TierCacheRead] = 0
+	usd, est := PingCost(PingInput{Model: "m", Prefix: 100_000, Output: 1}, p)
+	if !near(usd, 5e-6) || est {
+		t.Fatalf("got %v %v, want the output only", usd, est)
+	}
+}
+
 func TestPingCostUnknownAndEstimate(t *testing.T) {
 	p := newTierPricer()
 	p.unkown = true

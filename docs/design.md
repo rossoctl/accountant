@@ -1933,8 +1933,8 @@ formula itself. All three are pure and do no I/O. The rate table is the host's [
 | `MissCost(MissInput, p)` | `max(0, Prefix x (write - read))`. `write` is the 5-minute rate, or the 1-hour rate when `OneHour` is set. Every rate is at `PromptTokens` (0 means `Prefix`). |
 | `AvoidedMissesUSD(n, miss)` | `n x miss`, never negative. |
 
-- **Unknown rate.** A read rate (ping) or a write rate (miss) of 0 or less gives 0 dollars and
-  `estimated` true. A host reads that as "unknown", never as "free". A guard that uses the result then
+- **Unknown rate.** A model that the pricer does not know gives 0 dollars and `estimated` true. A write
+  rate of 0 or less in `MissCost` is unknown too. A host reads that as "unknown", never as "free". A guard that uses the result then
   fails open.
 - **The floor.** A miss never costs less than 0. A write rate at or below the read rate gives 0.
 - **What the host owns.** The size of the ping body (`FreshInput`) and its output budget are facts about
