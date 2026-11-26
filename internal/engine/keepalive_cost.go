@@ -117,28 +117,88 @@ type RequestCostInput struct {
 	PromptTokens int64
 }
 
-// RequestCost is the dollars of one billed request:
+// RequestCost is the dollars of one billed request, and it gives the same bits as the bill that a host
+// stores for the request:
 //
-//	Input x input + CacheRead x read + (CacheWrite - CacheWrite1h) x write5m + CacheWrite1h x write1h + Output x output
+//	Input x input + CacheRead x read + CacheWrite x write5m + Output x output + CacheWrite1h x premium
 //
-// Every rate is the rate at PromptTokens. A tier with no tokens makes no price call, so it cannot mark the
-// cost estimated. A negative count counts as 0. CacheWrite1h counts only as far as CacheWrite: a larger
-// value is clamped to CacheWrite, so the 1-hour part never exceeds the write. A model that the pricer does
-// not know gives the pricer's dollars and estimated true. It uses the same token pricer as [Figure].
+// premium is the 1-hour write rate minus the 5-minute write rate, and only when it is above 0. So every
+// write token is priced at the 5-minute rate, and a token billed at the 1-hour tier pays the premium on
+// top. A 1-hour rate below the 5-minute rate has no premium: those tokens stay at the 5-minute rate. That is
+// the rule of the stored bill. Every rate is the rate at PromptTokens. When it is 0 or less, it is the rate
+// at the prompt Input + CacheRead + CacheWrite.
+//
+// Each product is rounded on its own, with an explicit float64 conversion, and the terms are added in the
+// order above. A CPU that fuses a multiply and an add (FMA, as arm64 does) would otherwise give another
+// last bit for the same request, so a host's stored bill and this figure would differ by one unit in the last
+// place on some requests (#1128 of the host).
+//
+// A tier with no tokens makes no price call, so it cannot mark the cost estimated. A negative count counts
+// as 0. CacheWrite1h counts only as far as CacheWrite: a larger value is clamped to CacheWrite. A model that
+// the pricer does not know gives the pricer's dollars and estimated true.
 func RequestCost(in RequestCostInput, p SizedPricer) (usd float64, estimated bool) {
 	u := in.Billed
 	size := in.PromptTokens
 	if size <= 0 {
 		size = int64(max(u.Input, 0)) + int64(max(u.CacheRead, 0)) + int64(max(u.CacheWrite, 0))
 	}
-	fp := &figurePricer{p: p, model: in.Model, at: in.At}
-	w1h := min(max(u.CacheWrite1h, 0), max(u.CacheWrite, 0))
-	usd, estimated = fp.usd(TierTokens{Input: max(u.Input, 0), CacheRead: max(u.CacheRead, 0),
-		CacheWrite5m: max(u.CacheWrite, 0) - w1h, CacheWrite1h: w1h}, size)
-	if in.Output > 0 {
-		r, e := fp.rate(TierOutput, size)
-		usd += r * float64(in.Output)
+	m := &rateMemo{p: p, model: in.Model, at: in.At, size: size}
+	return m.bill(int64(max(u.Input, 0)), int64(max(u.CacheRead, 0)), int64(max(u.CacheWrite, 0)), int64(max(u.CacheWrite1h, 0)), int64(max(in.Output, 0)))
+}
+
+// rateMemo asks the pricer for each tier at most once, at one prompt size.
+type rateMemo struct {
+	p     SizedPricer
+	model string
+	at    time.Time
+	size  int64
+	rate  [5]float64
+	est   [5]bool
+	done  [5]bool
+}
+
+func (m *rateMemo) get(t Tier) (float64, bool) {
+	i := 0
+	switch t {
+	case TierCacheRead:
+		i = 1
+	case TierCacheWrite5m:
+		i = 2
+	case TierCacheWrite1h:
+		i = 3
+	case TierOutput:
+		i = 4
+	}
+	if !m.done[i] {
+		m.rate[i], m.est[i] = m.p.PriceAt(m.model, m.at, t, m.size)
+		m.done[i] = true
+	}
+	return m.rate[i], m.est[i]
+}
+
+// bill is the stored-bill formula of [RequestCost], on counts that are already clean (0 or more, and
+// write1h not above write).
+func (m *rateMemo) bill(input, read, write, write1h, output int64) (usd float64, estimated bool) {
+	write1h = min(write1h, write)
+	add := func(t Tier, n int64) {
+		if n <= 0 {
+			return
+		}
+		r, e := m.get(t)
+		usd += float64(float64(n) * r)
 		estimated = estimated || e
+	}
+	add(TierInput, input)
+	add(TierCacheRead, read)
+	add(TierCacheWrite5m, write)
+	add(TierOutput, output)
+	if write1h > 0 {
+		r1h, e1h := m.get(TierCacheWrite1h)
+		r5, _ := m.get(TierCacheWrite5m)
+		estimated = estimated || e1h
+		if prem := r1h - r5; prem > 0 {
+			usd += float64(float64(write1h) * prem)
+		}
 	}
 	return usd, estimated
 }
@@ -155,40 +215,31 @@ type LatePingInput struct {
 //
 //	Prefix x write + FreshInput x input + Output x output
 //
-// The write rate is the 5-minute rate, or the 1-hour rate when OneHour is set. Every rate is at
+// It is a [RequestCost] with the prefix as a write, so it follows the same stored-bill rule: the prefix is
+// priced at the 5-minute rate, and at the 1-hour tier (OneHour) it pays the premium on top. Every rate is at
 // PromptTokens, or at Prefix + FreshInput when it is 0 or less. A negative count counts as 0.
 //
 // A ping is a write here, so it follows the rule of [MissCost]: a write rate of 0 or less is unknown. The
-// result is then 0 and estimated is true. A ping with no prefix writes nothing and has no such check.
+// result is then 0 and estimated is true. With OneHour, the 1-hour rate is checked too. A ping with no
+// prefix writes nothing and has no such check.
 func LatePingCost(in LatePingInput, p SizedPricer) (usd float64, estimated bool) {
 	prefix, fresh, out := max(in.Prefix, 0), max(in.FreshInput, 0), max(in.Output, 0)
 	size := in.PromptTokens
 	if size <= 0 {
 		size = prefix + fresh
 	}
-	// Each tier is priced once. The sum keeps the tier order of [RequestCost]: input, write, output.
-	var write float64
+	m := &rateMemo{p: p, model: in.Model, at: in.At, size: size}
+	var w1h int64
 	if prefix > 0 {
-		tier := TierCacheWrite5m
-		if in.OneHour {
-			tier = TierCacheWrite1h
-		}
-		var we bool
-		if write, we = p.PriceAt(in.Model, in.At, tier, size); write <= 0 {
+		if r, _ := m.get(TierCacheWrite5m); r <= 0 {
 			return 0, true
 		}
-		estimated = we
+		if in.OneHour {
+			if r, _ := m.get(TierCacheWrite1h); r <= 0 {
+				return 0, true
+			}
+			w1h = prefix
+		}
 	}
-	if fresh > 0 {
-		r, e := p.PriceAt(in.Model, in.At, TierInput, size)
-		usd += float64(fresh) * r
-		estimated = estimated || e
-	}
-	usd += float64(prefix) * write
-	if out > 0 {
-		r, e := p.PriceAt(in.Model, in.At, TierOutput, size)
-		usd += float64(out) * r
-		estimated = estimated || e
-	}
-	return usd, estimated
+	return m.bill(fresh, 0, prefix, w1h, out)
 }
