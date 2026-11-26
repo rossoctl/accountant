@@ -8,9 +8,11 @@ import "fmt"
 
 func intp(n int) *int { return &n }
 
-func sumFailure(s Section, want, got int) CheckFailure {
-	f := CheckFailure{Check: CheckSum, Section: s, Want: intp(want), Got: intp(got)}
-	f.Detail = fmt.Sprintf("section=%s ops=%d bodies=%d bytes", f.Section, *f.Got, *f.Want)
+// sumFailure: want is the bytes the bodies changed in s, got the net bytes the operations claim, and
+// claims the number of spans of applied operations in s.
+func sumFailure(s Section, want, got, claims int) CheckFailure {
+	f := CheckFailure{Check: CheckSum, Section: s, Want: intp(want), Got: intp(got), Claims: intp(claims)}
+	f.Detail = fmt.Sprintf("section=%s ops=%d bodies=%d bytes claims=%d", f.Section, *f.Got, *f.Want, *f.Claims)
 	return f
 }
 

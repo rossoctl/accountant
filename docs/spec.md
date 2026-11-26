@@ -340,7 +340,7 @@ numbers are not used: those requirements were dropped.
   equals the request total. A context operation that is applied again on a later request keeps its
   context operator, so its saving stays with the same plugin.
 - <a id="r57"></a>**R57.** A host does not book a saving that the library says is wrong. `Withhold` names the first
-  gate a `Result` fails: a fatal check (but not a `sum` failure that no applied operation claims bytes in), an
+  gate a `Result` fails: a fatal check (but not a `sum` failure in a section that no applied operation claims), an
   unpriced operation (not `penalty_unknown`) or a cache effect of an unknown kind, or the size bound
   ([§6.7](design.md#67-when-a-host-books-no-saving)). For such a request the host books only the calls of its
   spends. The `metrics` sink follows the same rule.

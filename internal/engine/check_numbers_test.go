@@ -25,7 +25,7 @@ func wantNums(t *testing.T, f CheckFailure, want map[string]int) {
 	fields := map[string]*int{
 		"Index": f.Index, "Want": f.Want, "WantAfter": f.WantAfter, "Got": f.Got, "GotAfter": f.GotAfter,
 		"Limit": f.Limit, "LimitAfter": f.LimitAfter, "Tokens": f.Tokens, "TokensAfter": f.TokensAfter,
-		"Bytes": f.Bytes, "BytesAfter": f.BytesAfter,
+		"Bytes": f.Bytes, "BytesAfter": f.BytesAfter, "Claims": f.Claims,
 	}
 	for name, p := range fields {
 		w, ok := want[name]
@@ -77,7 +77,7 @@ func TestTheSumCheckCarriesItsNumbers(t *testing.T) {
 	if f.Section != SectionMessages {
 		t.Errorf("Section = %q, want messages", f.Section)
 	}
-	wantNums(t, f, map[string]int{"Want": 600, "Got": 0})
+	wantNums(t, f, map[string]int{"Want": 600, "Got": 0, "Claims": 0})
 }
 
 func TestTheSpansCheckCarriesItsNumbers(t *testing.T) {
@@ -147,7 +147,7 @@ func TestDetailIsBuiltFromTheFields(t *testing.T) {
 	}{
 		{conservationFailure(1200, 900), map[string]int{"Want": 1200, "Got": 900}, []string{"1200", "900"}},
 		{opaqueTokensFailure(500, 800, 3000, 4400), map[string]int{"Want": 500, "Got": 800}, []string{"500", "800", "3000", "4400"}},
-		{sumFailure(SectionTools, 600, 0), map[string]int{"Want": 600, "Got": 0}, []string{"tools", "600", "0"}},
+		{sumFailure(SectionTools, 600, 0, 3), map[string]int{"Want": 600, "Got": 0, "Claims": 3}, []string{"tools", "600", "0", "claims=3"}},
 		{spansFailure("p", 1, 2, 3, 4), map[string]int{"Want": 1, "WantAfter": 2, "Got": 3, "GotAfter": 4}, []string{"1/2", "3/4"}},
 		{sizeRangeFailure("p", 9, 8, 7, 6), map[string]int{"Got": 9, "GotAfter": 8, "Limit": 7, "LimitAfter": 6}, []string{"9/8", "7/6"}},
 		{sizeTokensFailure("p", Size{Tokens: 5, Bytes: 3}, Size{Tokens: 4, Bytes: 2}, true, true),

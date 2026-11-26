@@ -2402,7 +2402,7 @@ func (c *calcState) checks(res *Result) {
 		all := c.fwd.between(-1, len(c.fwd.Pos)-1)
 		res.Checks = append(res.Checks, opaqueTokensFailure(c.usage.Input+c.usage.CacheRead+c.usage.CacheWrite, all.ctok, all.counted, all.opaque))
 	}
-	var got [3]int
+	var got, claims [3]int
 	seen := map[string]bool{}
 	for _, it := range c.items {
 		if it.ended || it.bad != "" {
@@ -2433,13 +2433,14 @@ func (c *calcState) checks(res *Result) {
 		for _, sp := range it.spans {
 			if s := sectionIndex(sp.from.Section); s >= 0 {
 				got[s] += sp.before.Bytes - sp.after.Bytes
+				claims[s]++
 			}
 		}
 	}
 	for s := range 3 {
 		want := c.client.sectionBytes(s) - c.fwd.sectionBytes(s)
 		if got[s] != want {
-			res.Checks = append(res.Checks, sumFailure(sections[s], want, got[s]))
+			res.Checks = append(res.Checks, sumFailure(sections[s], want, got[s], claims[s]))
 		}
 	}
 }

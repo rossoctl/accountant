@@ -629,7 +629,7 @@ claims a change that is no longer in the body.
    saving study.
 
 The module reads the numbers from the typed fields of `CheckFailure` (#90): `Section`, `Index`, `Want`, `WantAfter`,
-`Got`, `GotAfter`, `Limit`, `LimitAfter`, `Tokens`, `TokensAfter`, `Bytes`, `BytesAfter`, `RatioMin` and `RatioMax`,
+`Got`, `GotAfter`, `Claims`, `Limit`, `LimitAfter`, `Tokens`, `TokensAfter`, `Bytes`, `BytesAfter`, `RatioMin` and `RatioMax`,
 each nil when absent, and `unit` from `CheckFailure.Unit()`. It never parses `Detail`, a formatted string whose shape
 differs for each check.
 

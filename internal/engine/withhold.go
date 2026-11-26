@@ -22,11 +22,12 @@ const SizeNotGiven = -1
 // The gates, in order:
 //
 //  1. A fatal check ([CheckFailure.Fatal]). The list of operations or its attribution is wrong. One
-//     exception: a sum failure where no applied operation claims bytes in the section (Got is 0).
+//     exception: a sum failure where no applied operation has a span in the section (Claims is 0).
 //     There, a change that no operation reported changed the section (a host plugin that rewrites the
-//     body and reports nothing). The reported operations of the other sections are still right, so
-//     their savings are booked. A sum failure where operations claim bytes (Got is not 0) gates: two
-//     operations claim one change, or a reported and an unreported change share the section.
+//     body and reports nothing, or a change the lost thread state no longer applies). The reported
+//     operations of the other sections are still right, so their savings are booked. A sum failure in a
+//     section that operations claim (Claims above 0) gates, also when their bytes cancel to Got 0: two
+//     operations claim one change, a claim is false, or a reported and an unreported change share it.
 //  2. An entry in res.Unpriced with a reason other than [ReasonPenaltyUnknown], or a cache effect of a
 //     kind the library does not know ([Figure] lists it in USDFigure.Unpriced and books nothing for it).
 //     penalty_unknown does not gate: every operation is priced, and the figure is an estimate (§6.4).
@@ -85,8 +86,9 @@ func Withhold(res Result, tokensBefore int) string {
 	return ""
 }
 
-// unreportedChange reports whether c is a sum failure of a section that no applied operation claims
-// bytes in: only a change no operation reported moved its bytes (Withhold, gate 1).
+// unreportedChange reports whether c is a sum failure of a section that no applied operation claims:
+// only a change no operation reported moved its bytes (Withhold, gate 1). It reads Claims, not Got: Got
+// is a net, and a false claim that cancels a real one gives Got 0 too.
 func unreportedChange(c CheckFailure) bool {
-	return c.Check == CheckSum && c.Got != nil && *c.Got == 0
+	return c.Check == CheckSum && c.Claims != nil && *c.Claims == 0
 }
