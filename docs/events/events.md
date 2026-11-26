@@ -572,7 +572,7 @@ What the numbers are, for each check that has them:
 
 | Check | `unit` | `want` (`want_after`) | `got` (`got_after`) | Other fields |
 |---|---|---|---|---|
-| `sum` | bytes | Bytes the bodies changed in `section` | Bytes the operations claim for `section` | `section` |
+| `sum` | bytes | Bytes the bodies changed in `section` | Bytes the operations claim for `section`, as a net | `section`, `claims` (the spans of applied operations in `section`) |
 | `conservation` | tokens | The bill difference | Tokens the operations claim | |
 | `spans` | bytes | Span bytes before (after) the change | The operation's bytes before (after) | |
 | `size_range` | bytes | — | The bytes before (after) of the operation, or of its span, that is over the limit | `limit`, `limit_after`. A limit is a rule, not a claim, so it is not in `want`. |
