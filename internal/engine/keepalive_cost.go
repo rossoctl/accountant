@@ -30,6 +30,9 @@ type PingInput struct {
 // estimated true, because the pricer must mark an unknown model as an estimate. The host reads 0 with
 // estimated true as "unknown", never as free. A rate that the pricer marks as an estimate makes
 // estimated true. A tier with no tokens makes no price call, so it cannot mark the cost estimated.
+//
+// Each product is rounded on its own, with an explicit float64 conversion, as in [RequestCost]: no CPU
+// fuses a multiply and an add, so every cost function of this file gives the same bits on every CPU.
 func PingCost(in PingInput, p SizedPricer) (usd float64, estimated bool) {
 	prefix, fresh, out := max(in.Prefix, 0), max(in.FreshInput, 0), max(in.Output, 0)
 	size := in.PromptTokens
@@ -39,16 +42,16 @@ func PingCost(in PingInput, p SizedPricer) (usd float64, estimated bool) {
 	if prefix > 0 {
 		read, est := p.PriceAt(in.Model, in.At, TierCacheRead, size)
 		estimated = est
-		usd = float64(prefix) * read
+		usd = float64(float64(prefix) * read)
 	}
 	if fresh > 0 {
 		r, e := p.PriceAt(in.Model, in.At, TierInput, size)
-		usd += float64(fresh) * r
+		usd += float64(float64(fresh) * r)
 		estimated = estimated || e
 	}
 	if out > 0 {
 		r, e := p.PriceAt(in.Model, in.At, TierOutput, size)
-		usd += float64(out) * r
+		usd += float64(float64(out) * r)
 		estimated = estimated || e
 	}
 	return usd, estimated
@@ -176,8 +179,8 @@ func (m *rateMemo) get(t Tier) (float64, bool) {
 	return m.rate[i], m.est[i]
 }
 
-// bill is the stored-bill formula of [RequestCost], on counts that are already clean (0 or more, and
-// write1h not above write).
+// bill is the stored-bill formula of [RequestCost], on counts that are 0 or more. write1h may arrive above
+// write: it is clamped to write here.
 func (m *rateMemo) bill(input, read, write, write1h, output int64) (usd float64, estimated bool) {
 	write1h = min(write1h, write)
 	add := func(t Tier, n int64) {

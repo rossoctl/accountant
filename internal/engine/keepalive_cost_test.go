@@ -156,7 +156,8 @@ func TestRequestCost(t *testing.T) {
 	p := newTierPricer()
 	u := Usage{Input: 100, CacheRead: 8000, CacheWrite: 1200, CacheWrite1h: 1000}
 	usd, est := RequestCost(RequestCostInput{Model: "m", Billed: u, Output: 50}, p)
-	want := 100*1e-6 + 8000*1e-7 + 200*1.25e-6 + 1000*2e-6 + 50*5e-6
+	// Every write token at the 5-minute rate, then the 1-hour premium on the 1-hour part.
+	want := 100*1e-6 + 8000*1e-7 + 1200*1.25e-6 + 50*5e-6 + 1000*(2e-6-1.25e-6)
 	if !near(usd, want) || est {
 		t.Fatalf("got %v %v, want %v false", usd, est, want)
 	}
@@ -211,7 +212,7 @@ func TestLatePingCost(t *testing.T) {
 		t.Fatalf("5m: %v %v want %v", usd, est, want)
 	}
 	in.OneHour = true
-	if usd, _ = LatePingCost(in, p); !near(usd, 100_000*2e-6+7*1e-6+5e-6) {
+	if usd, _ = LatePingCost(in, p); !near(usd, 100_000*1.25e-6+7*1e-6+5e-6+100_000*(2e-6-1.25e-6)) { // the prefix at 5m, plus the premium
 		t.Fatalf("1h: %v", usd)
 	}
 	// Tier line: prefix 199,995 + 7 fresh = 200,002 is above it.
@@ -340,6 +341,13 @@ func (f flatSized) PriceAt(_ string, _ time.Time, t Tier, _ int64) (float64, boo
 	return 0, true
 }
 
+// The guarantee rests on the Go spec: an explicit floating-point conversion forces the value to be rounded
+// to the type, so a compiler may not fuse the product into a multiply-add (FMA). storedBill and the accountant
+// both use that rule, so the same bits follow on every CPU. This test runs on the CPU of the developer or of
+// CI; on one that fuses (arm64) it fails if a product loses its conversion. The check across the two
+// repositories is the stored-bill pin in context-guru (dash, TestStoredBillIsTheSameBitsAsTheOldFormula),
+// which compares the host's old formula with this function.
+//
 // RequestCost must give the same bits as the stored bill, with a 1-hour part, with FMA-prone rates, and with
 // a 1-hour rate below the 5-minute rate (which has no premium: those tokens stay at the 5-minute rate).
 func TestRequestCostIsTheStoredBillBitForBit(t *testing.T) {
@@ -375,9 +383,6 @@ func TestRequestCostIsTheStoredBillBitForBit(t *testing.T) {
 				if c[2] == 0 {
 					continue // no prefix: nothing is written, and the write rate is not checked
 				}
-				if one && r.w1h <= 0 || r.w5 <= 0 {
-					continue
-				}
 				if lgot != lwant || est {
 					t.Errorf("late ping rates %d counts %d oneHour %v: got %v want %v", ri, ci, one, lgot, lwant)
 				}
@@ -392,5 +397,38 @@ func TestRequestCostOneHourBelowFiveMinute(t *testing.T) {
 	usd, _ := RequestCost(RequestCostInput{Model: "m", Billed: Usage{CacheWrite: 1000, CacheWrite1h: 600}}, r)
 	if want := 1000 * 4e-6; !near(usd, want) {
 		t.Fatalf("got %v want %v: all 1000 write tokens at the 5-minute rate", usd, want)
+	}
+}
+
+// An unknown 5-minute rate makes a 1-hour late ping unknown, even when the 1-hour rate is known. A 1-hour
+// part with an unknown 1-hour rate is priced at the 5-minute rate, and the result is an estimate.
+func TestOneHourWithAnUnknownRate(t *testing.T) {
+	p := newTierPricer()
+	p.rates[TierCacheWrite5m] = 0
+	in := LatePingInput{PingInput: PingInput{Model: "m", Prefix: 1000, FreshInput: 7, Output: 1}, OneHour: true}
+	if usd, est := LatePingCost(in, p); usd != 0 || !est {
+		t.Fatalf("5m unknown, 1h known: %v %v, want 0 true", usd, est)
+	}
+	p = newTierPricer()
+	p.rates[TierCacheWrite1h] = 0
+	p.est[TierCacheWrite1h] = true
+	usd, est := RequestCost(RequestCostInput{Model: "m", Billed: Usage{CacheWrite: 1000, CacheWrite1h: 600}}, p)
+	if want := 1000 * 1.25e-6; !near(usd, want) || !est {
+		t.Fatalf("1h unknown: %v %v, want %v true: every write token at the 5-minute rate, marked estimated", usd, est, want)
+	}
+}
+
+// PingCost rounds each product on its own, like the other cost functions, so FMA-prone values give the
+// same bits as the sum of explicitly rounded products on every CPU.
+func TestPingCostRoundsEachProductOnItsOwn(t *testing.T) {
+	rates := []flatSized{{in: 3e-6, read: 0.3e-6, out: 15e-6}, {in: 1.0000001e-6, read: 0.1e-6, out: 5e-6}, {in: 1.1e-6, read: 0.11e-6, out: 5.5e-6}}
+	for ri, r := range rates {
+		for _, c := range [][3]int64{{123_457, 7, 1}, {98_765, 7, 16}, {271_993, 7, 1}, {54_321, 13, 3}, {999_999, 7, 1}} {
+			want := float64(float64(c[0])*r.read) + float64(float64(c[1])*r.in) + float64(float64(c[2])*r.out)
+			got, _ := PingCost(PingInput{Model: "m", Prefix: c[0], FreshInput: c[1], Output: c[2]}, r)
+			if got != want {
+				t.Errorf("rates %d counts %v: got %v want %v (diff %g)", ri, c, got, want, got-want)
+			}
+		}
 	}
 }
