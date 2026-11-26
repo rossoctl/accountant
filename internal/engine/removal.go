@@ -9,8 +9,8 @@ import (
 // read. Else any cache write means the request created it, at the one-hour rate when CacheWrite1h is
 // above 0 (CacheWrite1h is part of CacheWrite, never an addition to it). Else the head was fresh input.
 //
-// Why 1h on a mixed write: the provider requires every 1h breakpoint to come before every 5m one in prompt
-// order (tools, system, messages) and refuses a request that breaks it. So when any 1h tokens were written,
+// Why 1h on a mixed write: the provider's constraint is that longer lifetimes come before shorter ones in
+// prompt order (tools, system, messages; docs/cached-prefix.md). So when any 1h tokens were written,
 // the first breakpoint, which ends the head, is 1h. See docs/design.md §6.6.
 //
 // A change that takes tokens out of the head, such as a tool declaration, saves them at this tier.
