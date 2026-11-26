@@ -339,6 +339,10 @@ numbers are not used: those requirements were dropped.
   the items attributed to nobody (a cache break with no plugin cause, R31, and the interaction, [§6.2](design.md#62-tier-rule))
   equals the request total. A context operation that is applied again on a later request keeps its
   context operator, so its saving stays with the same plugin.
+- <a id="r57"></a>**R57.** A host does not book a saving that the library says is wrong. `Withhold` names the first
+  gate a `Result` fails: a fatal check, an unpriced operation (not `penalty_unknown`), or the size bound
+  ([§6.7](design.md#67-when-a-host-books-no-saving)). For such a request the host books only the calls of its
+  spends. The `metrics` sink follows the same rule.
 - <a id="r53"></a>**R53.** Two requests of one thread can run at the same time (a retry, parallel calls of one agent).
   A subagent is not one of them: it is its own thread, with its own Tracker. A keep-alive ping and a
   detached call are not either: each is a standalone `RequestOps`, which reads and writes no

@@ -152,6 +152,26 @@ const (
 // [USDFigure] for the fields, and docs/design.md for the rules.
 func Figure(in FigureInput, p SizedPricer) USDFigure { return engine.Figure(in, p) }
 
+// The reasons [Withhold] returns.
+const (
+	WithheldCheckSum          = engine.WithheldCheckSum
+	WithheldCheckUniqueChange = engine.WithheldCheckUniqueChange
+	WithheldCheckSpans        = engine.WithheldCheckSpans
+	WithheldCheckOther        = engine.WithheldCheckOther
+	WithheldUnpriced          = engine.WithheldUnpriced
+	WithheldSizeUnknown       = engine.WithheldSizeUnknown
+	WithheldImplausibleSize   = engine.WithheldImplausibleSize
+
+	// SizeNotGiven is the tokensBefore of a host with no measure of the request size: [Withhold] skips
+	// the size gate.
+	SizeNotGiven = engine.SizeNotGiven
+)
+
+// Withhold returns the first gate a [Result] fails, or "" when a host may book its savings. With a
+// reason, the host books no saving for the request, only the calls of its spends. tokensBefore is the
+// size of the body the client sent, by the host's own measure, or [SizeNotGiven]. See docs/design.md §6.7.
+func Withhold(res Result, tokensBefore int) string { return engine.Withhold(res, tokensBefore) }
+
 // What a host reports.
 type (
 	RequestMeta = engine.RequestMeta

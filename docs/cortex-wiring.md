@@ -463,6 +463,14 @@ the checks and `Recomputed` (`proxy/accountant_shadow.go`). A request whose `Com
 9. `figure_without_row`, `duplicate_name`, `acted_without_figure`: the figure and the component rows do
    not match.
 
+Gates 6 to 8 are `accountant.Withhold` (design §6.7). Gate 7 includes a cache effect of an unknown kind.
+The size bound adds the tokens the operations caused, because an operation can remove what an earlier one
+inserted. The library has them, so the `metrics` sink gates a
+request the same way: it books only the spends of a withheld request, and counts it in
+`llm.savings.withheld`. The proxy's size bound leaves out some operators, and `Withhold` does not. So the
+proxy passes `SizeNotGiven` to `Withhold` and keeps its own bound. Cortex uses gates 6 to 8, with its own
+size measure: the billed prompt, scaled by the bytes of the client and forwarded bodies.
+
 How the proxy books what passes:
 
 - It skips `DryRun` operations and `spend` operations. The first operation that has a `ChangeID` owns it.
