@@ -122,8 +122,9 @@ type RequestCostInput struct {
 //	Input x input + CacheRead x read + (CacheWrite - CacheWrite1h) x write5m + CacheWrite1h x write1h + Output x output
 //
 // Every rate is the rate at PromptTokens. A tier with no tokens makes no price call, so it cannot mark the
-// cost estimated. A negative count counts as 0. A model that the pricer does not know gives the pricer's
-// dollars and estimated true. It uses the same token pricer as [Figure].
+// cost estimated. A negative count counts as 0. CacheWrite1h counts only as far as CacheWrite: a larger
+// value is clamped to CacheWrite, so the 1-hour part never exceeds the write. A model that the pricer does
+// not know gives the pricer's dollars and estimated true. It uses the same token pricer as [Figure].
 func RequestCost(in RequestCostInput, p SizedPricer) (usd float64, estimated bool) {
 	u := in.Billed
 	size := in.PromptTokens
@@ -156,15 +157,32 @@ type LatePingInput struct {
 //
 // The write rate is the 5-minute rate, or the 1-hour rate when OneHour is set. Every rate is at
 // PromptTokens, or at Prefix + FreshInput when it is 0 or less. A negative count counts as 0.
+//
+// A ping is a write here, so it follows the rule of [MissCost]: a write rate of 0 or less is unknown. The
+// result is then 0 and estimated is true. A ping with no prefix writes nothing and has no such check.
 func LatePingCost(in LatePingInput, p SizedPricer) (usd float64, estimated bool) {
 	prefix, fresh := max(in.Prefix, 0), max(in.FreshInput, 0)
 	size := in.PromptTokens
 	if size <= 0 {
 		size = prefix + fresh
 	}
-	b := Usage{Input: int(fresh), CacheWrite: int(prefix)}
-	if in.OneHour {
-		b.CacheWrite1h = int(prefix)
+	if prefix > 0 {
+		tier := TierCacheWrite5m
+		if in.OneHour {
+			tier = TierCacheWrite1h
+		}
+		if write, _ := p.PriceAt(in.Model, in.At, tier, size); write <= 0 {
+			return 0, true
+		}
 	}
-	return RequestCost(RequestCostInput{Model: in.Model, At: in.At, Billed: b, Output: int(max(in.Output, 0)), PromptTokens: size}, p)
+	b := Usage{Input: tokenCount(fresh), CacheWrite: tokenCount(prefix)}
+	if in.OneHour {
+		b.CacheWrite1h = b.CacheWrite
+	}
+	return RequestCost(RequestCostInput{Model: in.Model, At: in.At, Billed: b, Output: tokenCount(in.Output), PromptTokens: size}, p)
 }
+
+// tokenCount converts a host's int64 count to the int that [Usage] and [TierTokens] hold. It is the one
+// place of the conversion. Those public types count tokens in int, which is 64 bits on every platform
+// that the library supports, and a count below 0 counts as 0.
+func tokenCount(n int64) int { return int(max(n, 0)) }

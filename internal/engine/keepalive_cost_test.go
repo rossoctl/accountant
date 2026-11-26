@@ -225,3 +225,44 @@ func TestLatePingCost(t *testing.T) {
 		t.Fatalf("late %v below read %v", lt, rd)
 	}
 }
+
+func TestLatePingCostUnknownWriteRate(t *testing.T) {
+	in := LatePingInput{PingInput: PingInput{Model: "m", Prefix: 1000, FreshInput: 7, Output: 1}}
+	p := newTierPricer()
+	p.rates[TierCacheWrite5m] = 0
+	if usd, est := LatePingCost(in, p); usd != 0 || !est {
+		t.Fatalf("5m write rate 0: %v %v, want 0 true", usd, est)
+	}
+	p = newTierPricer()
+	p.rates[TierCacheWrite1h] = 0
+	in.OneHour = true
+	if usd, est := LatePingCost(in, p); usd != 0 || !est {
+		t.Fatalf("1h write rate 0: %v %v, want 0 true", usd, est)
+	}
+	// A 5-minute ping does not read the 1-hour rate.
+	in.OneHour = false
+	if usd, _ := LatePingCost(in, p); usd == 0 {
+		t.Fatal("a 5-minute ping must not depend on the 1-hour rate")
+	}
+	// A ping with no prefix writes nothing: no write check.
+	p = newTierPricer()
+	p.rates[TierCacheWrite5m] = 0
+	in.Prefix = 0
+	if usd, est := LatePingCost(in, p); !near(usd, 7*1e-6+5e-6) || est {
+		t.Fatalf("no prefix: %v %v", usd, est)
+	}
+}
+
+// A host that prices the rewrite inside a larger request gives that request's size.
+func TestLatePingCostWithHostPromptTokens(t *testing.T) {
+	in := LatePingInput{PingInput: PingInput{Model: "m", Prefix: 150_000, FreshInput: 7, Output: 1, PromptTokens: 250_000}}
+	usd, _ := LatePingCost(in, newTierPricer())
+	if want := 2 * (150_000*1.25e-6 + 7*1e-6 + 5e-6); !near(usd, want) {
+		t.Fatalf("got %v want %v: the host size 250,000 picks the upper tier", usd, want)
+	}
+	in.PromptTokens = 0 // Prefix + FreshInput = 150,007: the lower tier
+	usd, _ = LatePingCost(in, newTierPricer())
+	if want := 150_000*1.25e-6 + 7*1e-6 + 5e-6; !near(usd, want) {
+		t.Fatalf("default size: %v want %v", usd, want)
+	}
+}

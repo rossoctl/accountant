@@ -167,7 +167,8 @@ func HeadTier(u Usage) Tier { return engine.HeadTier(u) }
 // §6.6.
 func RemovalSaving(in RemovalInput, p SizedPricer) RemovalFigure { return engine.RemovalSaving(in, p) }
 
-// Keep-alive costs. A host prices a ping and a cache miss with these, and never with its own formula.
+// Keep-alive costs. A host prices a ping, a cache miss, a billed request and a late ping with these, and
+// never with its own formula.
 type (
 	// PingInput is one keep-alive ping: the prefix it reads, the fresh input it carries and its output.
 	PingInput = engine.PingInput
