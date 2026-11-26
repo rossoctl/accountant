@@ -1849,9 +1849,34 @@ An effect is **counted** when it is in the bill difference. A break the client b
 counted operation made, and an effect of an unknown kind are not counted: they are not booked and their Caused
 tokens stay.
 
-**What stays in the host.** Which components have a row, how a request is gated or held back (a held
-lower bound, a fallback reason), and the names of rows. These are host policy. The figure gives a host the
+**What stays in the host.** Which components have a row, how a request is held back (a held lower bound),
+the gates of its own (§6.7), and the names of rows. These are host policy. The figure gives a host the
 numbers it needs for them (`ByComponentSaved`, `ByComponentSavedAsRead`) and no more.
+
+### 6.7 When a host books no saving
+
+Some figures must not be booked. `Withhold(res, tokensBefore)` returns the first gate that a `Result` fails,
+or `""`. The gates are in the library, so every host and the `metrics` sink gate a request the same way, and
+a new fatal check gates all of them at once (§6.5). The gates, in order:
+
+| Reason | The gate that fails |
+|---|---|
+| `check_sum`, `check_unique_change`, `check_spans` | That fatal check (§6.5). The list of operations or its attribution is wrong. |
+| `check_other` | A fatal check with no reason of its own. A check that becomes fatal gets it until it has a name. |
+| `unpriced` | An entry in `Result.Unpriced` with a reason other than `penalty_unknown`. `penalty_unknown` does not gate: the figure is an estimate (§6.4). |
+| `size_unknown` | The operations saved tokens, and `tokensBefore` is 0 or less. |
+| `implausible_size` | The operations saved more tokens than `tokensBefore`. |
+
+**The size bound.** A request cannot remove more tokens than it had. The bound adds the `Saved` tokens of each
+operation that is not `DryRun` and not a `spend`, in every tier. It is tested only when they are above 0.
+`tokensBefore` is the prompt size of the body the client sent, by the host's own measure. The library cannot
+give it: the size without the operations (§6.6) is the billed size plus the saved tokens, so a bound on it
+never fails. A host with no measure passes `SizeNotGiven`, and the bound is not tested.
+
+**What a host books for a withheld request.** No saved or caused tokens of an operation, no cache effect and
+no interaction. The call of each `spend` is real cost, so the host books it. A host can have more gates of
+its own, for example a figure with no row (`cortex-wiring.md` W6.5). `Withhold` is pure: it does no I/O,
+and the same input gives the same reason.
 
 ## 7. Billing plans
 

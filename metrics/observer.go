@@ -12,6 +12,10 @@ type Observation struct {
 	// toward the prompt size.
 	Output int
 	Result accountant.Result
+	// TokensBefore is the prompt size, in tokens, of the body the client sent, by the host's own
+	// measure. The sink gives it to [accountant.Withhold] for the size bound. 0 means the host does not
+	// give it, and the sink skips that one gate.
+	TokensBefore int
 }
 
 // Observer receives each [Observation]. The host calls it after Compute, once for each request or

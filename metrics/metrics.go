@@ -95,6 +95,7 @@ type Sink struct {
 	effectUSD                metric.Float64Counter
 	requests, unpriced       metric.Int64Counter
 	estimated, checkFailures metric.Int64Counter
+	withheld                 metric.Int64Counter
 
 	interactionUSD metric.Float64Counter
 
@@ -137,6 +138,7 @@ func New(m metric.Meter, p Pricer, opts ...Option) (*Sink, error) {
 	i64(&s.unpriced, "llm.savings.unpriced", "Operations the accountant did not price, by reason.")
 	i64(&s.estimated, "llm.savings.estimated", "Requests whose figure is marked estimated.")
 	i64(&s.checkFailures, "llm.savings.check_failures", "Failed accountant checks.")
+	i64(&s.withheld, "llm.savings.withheld", "Requests whose savings the sink did not book, because the figure failed a gate, by reason.")
 	if err != nil {
 		return nil, err
 	}
@@ -150,11 +152,20 @@ func New(m metric.Meter, p Pricer, opts ...Option) (*Sink, error) {
 // Token counters always move. An unknown request counts as estimated.
 //
 // Every dollar comes from [accountant.Figure]. The sink only maps its lines to counters and labels.
+//
+// A request that fails a gate of [accountant.Withhold] books no saving: no saved or caused tokens of an
+// operation, no cache effect and no interaction. The calls of its spends are real cost, so they are
+// booked. The request adds 1 to llm.savings.withheld with the reason.
 func (s *Sink) Observe(o Observation) {
 	ctx := context.Background()
 	res := o.Result
 	money := o.Meta.Billing.Mode == accountant.BillingAPI
 	anyEstimated := !money // unknown, subscription's weights or an unset mode are all estimates
+	before := o.TokensBefore
+	if before == 0 {
+		before = accountant.SizeNotGiven
+	}
+	withheld := accountant.Withhold(res, before)
 
 	// A spend whose call the library refused to price must not book that call's usage.
 	refused := map[string]bool{}
@@ -171,8 +182,10 @@ func (s *Sink) Observe(o Observation) {
 		}
 		priced++
 		attrs := func(t Tier) attribute.Set { return s.opAttrs(op.Kind, t, op.Operator) }
-		s.bookTokens(ctx, s.saved, tiers(op.Saved), attrs)
-		s.bookTokens(ctx, s.added, tiers(op.Caused), attrs)
+		if withheld == "" {
+			s.bookTokens(ctx, s.saved, tiers(op.Saved), attrs)
+			s.bookTokens(ctx, s.added, tiers(op.Caused), attrs)
+		}
 		if op.Kind == accountant.KindSpend && op.Call != nil && !refused[op.OpID] {
 			s.bookTokens(ctx, s.added, callTiers(op.Call.Usage), attrs)
 		}
@@ -183,6 +196,9 @@ func (s *Sink) Observe(o Observation) {
 			Model: o.Meta.Model, At: o.Meta.At, Billed: o.Usage, Output: o.Output, Result: res, Unsized: s.sized == nil,
 		}, pricerAt{p: s.pricer, s: s.sized})
 		anyEstimated = anyEstimated || fig.Estimated
+		if withheld != "" {
+			fig = spendsOnly(fig)
+		}
 		s.bookFigure(ctx, fig)
 	}
 
@@ -192,6 +208,9 @@ func (s *Sink) Observe(o Observation) {
 	for _, c := range res.Checks {
 		s.checkFailures.Add(ctx, 1, metric.WithAttributes(attribute.String("check", c.Check)))
 	}
+	if withheld != "" {
+		s.withheld.Add(ctx, 1, metric.WithAttributes(attribute.String("reason", withheld)))
+	}
 	if anyEstimated {
 		s.estimated.Add(ctx, 1)
 	}
@@ -199,10 +218,25 @@ func (s *Sink) Observe(o Observation) {
 	switch {
 	case len(res.Unpriced) > 0:
 		result = "unpriced"
+	case withheld != "":
+		result = "withheld"
 	case priced == 0:
 		result = "skipped"
 	}
 	s.requests.Add(ctx, 1, metric.WithAttributes(attribute.String("result", result)))
+}
+
+// spendsOnly is the part of fig a withheld request books: the call of each spend. The operations'
+// tokens, their re-rate shares, the cache effects and the interaction come from a figure that failed a
+// gate, so they are dropped.
+func spendsOnly(fig accountant.USDFigure) accountant.USDFigure {
+	var lines []accountant.USDLine
+	for _, l := range fig.Lines {
+		if l.Kind == accountant.KindSpend && !l.ReRate {
+			lines = append(lines, l)
+		}
+	}
+	return accountant.USDFigure{Lines: lines}
 }
 
 func (s *Sink) opAttrs(k accountant.Kind, t Tier, operator string) attribute.Set {

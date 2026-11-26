@@ -10,7 +10,8 @@ That spec is not in this repository. This page is the contract of the code.
 ## How a host uses it
 
 1. Build the sink once: `metrics.New(meter, pricer, opts...)`.
-2. After `Compute`, call `sink.Observe(metrics.Observation{Meta, Usage, Result})`.
+2. After `Compute`, call `sink.Observe(metrics.Observation{Meta, Usage, Result})`. Set `TokensBefore`, the
+   prompt size of the body the client sent by the host's own measure, to get the size gate (rule 9).
 3. Use `metrics.Multi` to give the same observation to several observers.
 
 The hook lives in this module, not in the root. `Observer` is a one-method interface,
@@ -109,7 +110,8 @@ OTel names use dots. The collector converts them to Prometheus names (`llm_savin
 | `llm.savings.added.usd` | `kind`, `tier`, `component` | The added tokens, priced. |
 | `llm.savings.cache_effect.usd` | `effect`, `cause`, `direction` | Cache effects, in money. Not in saved or added. **Add it** for the net saving (see below). |
 | `llm.savings.interaction.usd` | `direction` | The net value of `Result.Interaction` minus `Result.InteractionCaused` (design §6.2), and the re-rate when no operation owns it. Not in saved or added. **Add it** for the net saving (see below). |
-| `llm.savings.requests` | `result` | `priced`, `unpriced` or `skipped`. |
+| `llm.savings.requests` | `result` | `priced`, `unpriced`, `withheld` or `skipped`. `unpriced` wins over `withheld`. |
+| `llm.savings.withheld` | `reason` | Requests that failed a gate of `accountant.Withhold` (rule 9). The reason is the gate. |
 | `llm.savings.unpriced` | `reason` | Operations the library did not price: `Result.Unpriced`, as the library lists it. It does not move with the billing mode. The extra entries of `Figure.Unpriced` (an effect of an unknown kind, a call on an op that is not a spend) are not counted here: they are host-side findings, and only a money request has them. |
 | `llm.savings.check_failures` | `check` | Failed library checks. |
 | `llm.savings.estimated` | none | Requests with an estimated figure. |
@@ -182,6 +184,10 @@ difference.)
    `other`.
 8. **Cause label.** `model_changed` when the library names it. `ended_change` for a break with no `ChangeID`.
    Otherwise `none`.
+9. **Withheld requests** (design §6.7). If `accountant.Withhold` gives a reason, the sink books no saved or
+   caused tokens of an operation, no cache effect and no interaction. It books the call of each `spend`, in
+   tokens and in money, because that is real cost. `unpriced`, `check_failures` and `estimated` move as for
+   any request. `TokensBefore` 0 means the host does not give a size: the sink then skips the size gate only.
 
 ## Not in this module
 
