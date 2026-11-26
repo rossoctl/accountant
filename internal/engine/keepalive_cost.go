@@ -66,7 +66,8 @@ type MissInput struct {
 }
 
 // MissCost is the extra dollars of one cache miss over a hit: the prefix at the write rate minus the
-// prefix at the read rate. It is never negative. The write rate is the 5-minute rate, or the 1-hour rate
+// prefix at the read rate. It is never negative. When PromptTokens is 0, the tier is the one of a prompt
+// of Prefix tokens. The write rate is the 5-minute rate, or the 1-hour rate
 // when OneHour is set. Both rates are the rates at PromptTokens.
 //
 // A write rate of 0 or less is unknown: the result is 0 and estimated is true. A write rate that is

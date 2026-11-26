@@ -1930,7 +1930,7 @@ formula itself. All three are pure and do no I/O. The rate table is the host's [
 | Function | Result |
 |---|---|
 | `PingCost(PingInput, p)` | `Prefix x read + FreshInput x input + Output x output`. Every rate is the rate at the prompt size `Prefix + FreshInput`. |
-| `MissCost(MissInput, p)` | `max(0, Prefix x (write - read))`. `write` is the 5-minute rate, or the 1-hour rate when `OneHour` is set. Every rate is at `PromptTokens` (0 means `Prefix`). |
+| `MissCost(MissInput, p)` | `max(0, Prefix x (write - read))`. `write` is the 5-minute rate, or the 1-hour rate when `OneHour` is set. Every rate is at `PromptTokens`. When it is 0, the tier is the one of a prompt of `Prefix` tokens. |
 | `AvoidedMissesUSD(n, miss)` | `n x miss`, never negative. |
 
 - **Unknown rate.** A model that the pricer does not know gives 0 dollars and `estimated` true. A write

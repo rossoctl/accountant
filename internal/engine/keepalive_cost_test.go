@@ -103,6 +103,10 @@ func TestMissCostFloorAndUnknown(t *testing.T) {
 	if usd, _ := MissCost(MissInput{Model: "m", Prefix: 1000}, p); usd != 0 {
 		t.Fatalf("a write rate below the read rate must floor at 0, got %v", usd)
 	}
+	p.rates[TierCacheWrite5m] = 1e-7 // equal to the read rate
+	if usd, _ := MissCost(MissInput{Model: "m", Prefix: 1000}, p); usd != 0 {
+		t.Fatalf("a write rate equal to the read rate must give 0, got %v", usd)
+	}
 	p = newTierPricer()
 	p.unkown = true
 	if usd, est := MissCost(MissInput{Model: "m", Prefix: 1000}, p); usd != 0 || !est {
