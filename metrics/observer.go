@@ -16,8 +16,6 @@ type Observation struct {
 	// measure. Above 0, the sink gives it to [accountant.Withhold] for the size bound, which then counts
 	// every operation. 0 or less means the host does not give it, and the sink calls Withhold with no size:
 	// the library's own measure of the client messages decides.
-	//
-	// Deprecated: leave it 0. The library measures the client messages itself (design §6.7).
 	TokensBefore int
 }
 
