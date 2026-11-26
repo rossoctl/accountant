@@ -117,7 +117,7 @@ type USDFigure struct {
 	// UnownedMarkUSD is the value of the markPremium and markPayback effects that no counted operation
 	// owns. Counted in DeltaUSD. The host chooses its row.
 	UnownedMarkUSD float64
-	// UnownedReRateUSD is the re-rate when no operation has a net saving to own it. Counted in DeltaUSD.
+	// UnownedReRateUSD is the re-rate when no operation moved the size to own it. Counted in DeltaUSD.
 	UnownedReRateUSD float64
 	// InteractionUSD is the net value of Result.Interaction minus Result.InteractionCaused, at the size
 	// without the operations. Signed. Counted in TotalUSD, not in DeltaUSD.
@@ -157,9 +157,12 @@ func (f USDFigure) TotalUSD() float64 {
 // line (the re-rate). Per tier the amount is stay x (rate without - rate billed). Stay is the billed
 // tokens of the tier, minus the tokens the counted operations caused, minus the tokens the counted
 // effects caused (an effect prices its own whole difference). The output tier counts too, with
-// FigureInput.Output: all of it stays. The re-rate can be negative. Each operation takes a share in
-// proportion to its net saved tokens (saved minus caused, only above 0), so the components add up to the
-// request total. With no such operation the re-rate is UnownedReRateUSD.
+// FigureInput.Output: all of it stays. The re-rate can be negative. The operations that moved the size
+// own it. If the operations made the prompt smaller, each operation with net saved tokens (saved minus
+// caused, above 0) takes a share in proportion to them. If they made it larger, each operation with net
+// added tokens takes a share in proportion to those. So the components add up to the request total, and
+// an operation that pushes a prompt over a price line pays the premium of the tokens that stay. With no
+// such operation the re-rate is UnownedReRateUSD.
 //
 // A spend call is priced at its own model, and at the size of its own usage.
 func Figure(in FigureInput, p SizedPricer) USDFigure {
@@ -221,7 +224,7 @@ func Figure(in FigureInput, p SizedPricer) USDFigure {
 		if refused[op.OpID] && op.Saved.IsZero() && op.Caused.IsZero() {
 			continue
 		}
-		if n := tierSum(op.Saved) - tierSum(op.Caused); n > 0 {
+		if n := tierSum(op.Saved) - tierSum(op.Caused); n != 0 {
 			shares = append(shares, opShare{op.Operator, op.Kind, n})
 		}
 		saved, sEst := fp.lines(&f, op, op.Saved, DirSaved, base)
@@ -330,7 +333,8 @@ func knownEffect(k CacheEffectKind) bool {
 	return false
 }
 
-// opShare is a counted operation with a net saving: it owns a part of the re-rate.
+// opShare is a counted operation with a net change of tokens: net saved, so net > 0, or net added, so
+// net < 0. The operations on the side the size moved own the re-rate.
 type opShare struct {
 	op   string
 	kind Kind
@@ -403,10 +407,22 @@ func (f *USDFigure) reRate(fp *figurePricer, in FigureInput, shares []opShare, e
 	if len(amount) == 0 {
 		return
 	}
+	// The size moved by the sum of the nets. The operations that moved it that way own the re-rate, by
+	// their tokens: the net savers when the size went down, the net adders when it went up.
+	sum := 0
+	for _, s := range shares {
+		sum += s.net
+	}
+	var owners []opShare
 	total := 0
 	for _, s := range shares {
-		total += s.net
+		if (sum > 0 && s.net > 0) || (sum < 0 && s.net < 0) {
+			s.net = max(s.net, -s.net)
+			owners = append(owners, s)
+			total += s.net
+		}
 	}
+	shares = owners
 	if total == 0 {
 		for _, t := range tierOrder {
 			f.UnownedReRateUSD += amount[t]

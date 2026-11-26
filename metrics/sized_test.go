@@ -224,41 +224,36 @@ func TestReRateSplitsByNetSavedTokens(t *testing.T) {
 }
 
 // The sent request is above the line and the request without the operations is not. The re-rate is
-// negative: it books to added.usd, and the component's net goes below 0.
+// negative: it books to added.usd of the operation that made the prompt larger. The one that saved keeps
+// its saving.
 func TestNegativeReRate(t *testing.T) {
 	// billed 285,000. A saves 5,000. B caused 40,000. Base = 250,000. Stay = 245,000.
 	s, r := newSinkWith(t, tiered{})
 	s.Observe(sizedObs(285_000, named("a", 5_000, 0), named("b", 0, 40_000)))
 	g := collect(t, r)
 	saved, added := byComponent(g["llm.savings.saved.usd"]), byComponent(g["llm.savings.added.usd"])
-	if !near(saved["a"]-added["a"], 5_000*1e-6-245_000*1e-6) {
-		t.Errorf("a net = %v, want %v", saved["a"]-added["a"], 5_000*1e-6-245_000*1e-6)
+	if !near(saved["a"]-added["a"], 5_000*1e-6) {
+		t.Errorf("a net = %v, want its saving %v", saved["a"]-added["a"], 5_000*1e-6)
+	}
+	if want := -40_000*2e-6 - 245_000*1e-6; !near(saved["b"]-added["b"], want) {
+		t.Errorf("b net = %v, want %v (its tokens and the re-rate)", saved["b"]-added["b"], want)
 	}
 	if net, want := sumF(g["llm.savings.saved.usd"])-sumF(g["llm.savings.added.usd"]), 250_000*1e-6-285_000*2e-6; !near(net, want) {
 		t.Errorf("net = %v, want the bill difference %v", net, want)
 	}
-	if net := saved["a"] - added["a"]; net >= 0 {
-		t.Errorf("a net = %v, want below 0", net)
-	}
 }
 
-// No operation has a net saving: nobody owns the re-rate. It books to interaction.usd.
-func TestReRateWithNoSavingOpIsUnattributed(t *testing.T) {
+// No operation has a net saving: the operation that made the prompt larger owns the re-rate, and nothing
+// books to interaction.usd.
+func TestReRateOfAnAddGoesToTheAdder(t *testing.T) {
 	s, r := newSinkWith(t, tiered{})
 	s.Observe(sizedObs(285_000, named("b", 0, 40_000))) // base 245,000, stay 245,000
 	g := collect(t, r)
-	var dir string
-	for _, p := range g["llm.savings.interaction.usd"] {
-		dir = p.attrs["direction"]
-		if !near(p.f, 245_000*1e-6) {
-			t.Errorf("interaction usd = %v, want 0.245", p.f)
-		}
+	if n := len(g["llm.savings.interaction.usd"]); n != 0 {
+		t.Errorf("interaction.usd has %d points, want 0", n)
 	}
-	if dir != "added" {
-		t.Errorf("direction = %q, want added", dir)
-	}
-	if added := sumF(g["llm.savings.added.usd"]); !near(added, 40_000*2e-6) {
-		t.Errorf("added usd = %v, want 0.08", added)
+	if added := sumF(g["llm.savings.added.usd"]); !near(added, 40_000*2e-6+245_000*1e-6) {
+		t.Errorf("added usd = %v, want 0.325", added)
 	}
 }
 
