@@ -5,7 +5,8 @@
 OpenTelemetry API only. The SDK, the exporter and the collector settings belong to the host.
 
 The names and labels follow the metrics spec of the host project (context-guru issue #886, section 5.2).
-That spec is not in this repository. This page is the contract of the code.
+That spec is not in this repository. This page is the contract of the code. Code comments cite the spec
+by id (R34, R45, R47, §5.2, §5.7). [The spec ids](#the-spec-ids) below state each one.
 
 ## How a host uses it
 
@@ -201,6 +202,20 @@ difference.)
    request. Before this rule, the sink skipped the size gate in that case. One unpriced operation (for example
    `size_range` or `media_tokens`) withholds the whole request: the sink books none of its other
    operations either. Before this rule, it booked them.
+
+## The spec ids
+
+Comments in `metrics/metrics.go` cite these ids. Each entry states the rule that the code relies on.
+
+- **R34, price class.** A `Tier` is a price class of tokens: `input`, `cache_read`, `cache_write_5m`,
+  `cache_write_1h` or `output`. It is an alias of `accountant.Tier` (see "The `Pricer`").
+- **R45, a spend books as added.** The usage of a `spend` call books to `added` tokens and `added.usd`, never to
+  `saved`. The 5m cache write of a call is `CacheWrite` minus `CacheWrite1h` (see "Counters").
+- **R47, the host prices.** The module knows no price. The host gives it a `Pricer` (see "The `Pricer`").
+- **§5.2, the counter set.** The `Sink` is the OpenTelemetry `Observer` that records the counters in the
+  "Counters" table.
+- **§5.7, bounded labels.** The label `component` has a bounded set of values. With `WithComponents`, any other
+  name becomes `other`. Without it, the first 64 names are kept (rule 7).
 
 ## Not in this module
 
