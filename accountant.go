@@ -67,7 +67,7 @@ type (
 	Request = engine.Request
 	// Result is what [Request.Compute] returns.
 	Result = engine.Result
-	// Ratio is the request's own tokens-per-byte ratio: see [NewRatio] and [Result].Ratio.
+	// Ratio is the request's own tokens-per-byte ratio: see [NewRatio] and [Result].Ratio. Result.Ratio is nil when nothing was priced, and also when the ratio is not in range.
 	Ratio = engine.Ratio
 )
 

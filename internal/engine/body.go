@@ -380,10 +380,14 @@ type Ratio struct{ r ratio }
 
 // NewRatio builds the ratio of a body that the provider billed for billed prompt tokens (fresh input
 // plus cache read plus cache write). It is the ratio Compute builds for the request.
-func NewRatio(billed int, forwarded Body) Ratio {
-	r := newRatio(billed, forwarded)
-	if r.tokens < 0 || r.bytes < 0 || r.tokens > maxRatioCount || r.bytes > maxRatioCount {
-		return Ratio{ratio{capped: true}} // out of range: converts 0, an estimate, and Tokens cannot overflow
+func NewRatio(billed int, forwarded Body) Ratio { return exportRatio(newRatio(billed, forwarded)) }
+
+// exportRatio wraps the engine ratio for a host: the one constructor for NewRatio and Result.Ratio. A count above
+// maxRatioCount gives a ratio that converts 0 and is capped, so Tokens cannot overflow for any Ratio. newRatio never
+// returns a negative count, so there is no negative branch here (RatioFromText has one: its input is the host's).
+func exportRatio(r ratio) Ratio {
+	if r.tokens > maxRatioCount || r.bytes > maxRatioCount {
+		return Ratio{ratio{capped: true}}
 	}
 	return Ratio{r}
 }

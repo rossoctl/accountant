@@ -1541,8 +1541,9 @@ type Result struct {
                             // this request, and 0 when nothing is active
     MessageTokens int       // the client messages in tokens, at this request's byte ratio; 0 when nothing
                             // was priced. The size bound reads it (§6.7)
-    Ratio *Ratio            // the request ratio that priced it (§4.2 rule 7); nil when nothing was priced or the
-                            // ratio is out of range (check 9). Not marshaled
+    Ratio *Ratio            // the request ratio that priced it (§4.2 rule 7); nil when nothing was priced, or when the
+                            // request was priced but its ratio is not in range (no text bytes, or a count above the
+                            // bound); MessageTokens can be above 0 then. Not marshaled
 }
 
 // ActiveOps and OldestActiveTurns change no figure. They are for the host's events (events.md §6.8).
