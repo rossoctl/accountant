@@ -72,7 +72,7 @@ type RemovalFigure struct {
 	PerTokenUSD float64
 	// Tier is the tier the tokens were priced at.
 	Tier Tier
-	// Estimated is true when a rate the pricer gave is an estimate.
+	// Estimated is true when a rate the pricer gave is an estimate, or the Ratio is capped.
 	Estimated bool
 	// Version is RulesVersion, the version of the rules that made the figure (R46). A host that records the
 	// figure stores it as OpsVersion.

@@ -73,7 +73,7 @@ type (
 
 // NewRatio builds the ratio of a body that the provider billed for billed prompt tokens (input plus cache
 // read plus cache write). It is the ratio [Request.Compute] builds for the request, so a host never
-// writes the conversion again. See docs/design.md §6.6.
+// writes the conversion again. See docs/design.md §4.2 rule 7.
 func NewRatio(billed int, forwarded Body) Ratio { return engine.NewRatio(billed, forwarded) }
 
 // RatioFromText rebuilds a text [Ratio] from the counts [Ratio.Text] and [Ratio.Capped] returned, such as

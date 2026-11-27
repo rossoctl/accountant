@@ -380,13 +380,19 @@ type Ratio struct{ r ratio }
 
 // NewRatio builds the ratio of a body that the provider billed for billed prompt tokens (fresh input
 // plus cache read plus cache write). It is the ratio Compute builds for the request.
-func NewRatio(billed int, forwarded Body) Ratio { return Ratio{newRatio(billed, forwarded)} }
+func NewRatio(billed int, forwarded Body) Ratio {
+	r := newRatio(billed, forwarded)
+	if r.tokens < 0 || r.bytes < 0 || r.tokens > maxRatioCount || r.bytes > maxRatioCount {
+		return Ratio{ratio{capped: true}} // out of range: converts 0, an estimate, and Tokens cannot overflow
+	}
+	return Ratio{r}
+}
 
 // RatioFromText rebuilds a text ratio from the two counts that [Ratio.Text] returned and the flag that
 // [Ratio.Capped] returned, for example from a stored row. Only the text conversion is rebuilt: media and
 // opaque bytes are not priced by it.
 //
-// A count that is negative or above maxRatioCount (2^31, far above any request) is not a ratio: the result converts
+// A count that is negative or above maxRatioCount (2^31-1, far above any request) is not a ratio: the result converts
 // every byte to 0 tokens and is marked capped, so a figure that uses it is an estimate. This keeps the integer
 // math of [Ratio.Tokens] inside int64.
 func RatioFromText(tokens, bytes int, capped bool) Ratio {
@@ -397,7 +403,7 @@ func RatioFromText(tokens, bytes int, capped bool) Ratio {
 }
 
 // maxRatioCount bounds the counts of a rebuilt Ratio and the bytes Tokens converts, so tokens x bytes fits in int64.
-const maxRatioCount = 1 << 31
+const maxRatioCount = math.MaxInt32
 
 // Tokens converts bytes of text to tokens with the request ratio, with the same integer math as Compute.
 // It is 0 when the request had no text bytes.

@@ -209,17 +209,49 @@ func TestNoTextRatioIsNotExported(t *testing.T) {
 
 // Counts above the bound are not a ratio: no overflow, no tokens, and a capped (estimate) mark.
 func TestRatioFromTextRejectsHugeCounts(t *testing.T) {
-	for _, c := range [][2]int{{1 << 62, 1000}, {1000, 1 << 62}, {-1, 5}, {5, -1}} {
+	maxInt := int(^uint(0) >> 1) // 2^63-1 on 64-bit, 2^31-1 on 32-bit
+	for _, c := range [][2]int{{maxInt, 1000}, {1000, maxInt}, {-1, 5}, {5, -1}} {
 		r := RatioFromText(c[0], c[1], false)
-		if got := r.Tokens(1 << 30); got != 0 || !r.Capped() {
+		if got := r.Tokens(1000); got != 0 || !r.Capped() {
 			t.Errorf("RatioFromText(%d, %d): Tokens = %d capped = %v, want 0 and capped", c[0], c[1], got, r.Capped())
 		}
 	}
-	r := RatioFromText(1<<31, 1<<31, false)
-	if got := r.Tokens(1 << 31); got != 1<<31 {
-		t.Errorf("at the bound Tokens = %d, want %d", got, 1<<31)
+	r := RatioFromText(maxRatioCount, maxRatioCount, false)
+	if got := r.Tokens(maxRatioCount); got != maxRatioCount {
+		t.Errorf("at the bound Tokens = %d, want %d", got, maxRatioCount)
 	}
-	if got := r.Tokens(1<<31 + 1); got != 0 {
-		t.Errorf("above the bound Tokens = %d, want 0", got)
+	if maxInt > maxRatioCount {
+		above := maxRatioCount
+		above++
+		if got := r.Tokens(above); got != 0 {
+			t.Errorf("above the bound Tokens = %d, want 0", got)
+		}
+	}
+}
+
+// NewRatio with a bill above the bound is out of range too: converts 0, capped, no overflow.
+func TestNewRatioClampsAHugeBill(t *testing.T) {
+	maxInt := int(^uint(0) >> 1)
+	if maxInt <= maxRatioCount {
+		t.Skip("a 32-bit int cannot hold a count above the bound")
+	}
+	r := NewRatio(maxInt/2, mk(nil, nil, msgs(2, 100)))
+	if !r.Capped() || r.Tokens(maxRatioCount) != 0 || r.InRange() {
+		t.Fatalf("huge bill: capped=%v tokens=%d inrange=%v", r.Capped(), r.Tokens(maxRatioCount), r.InRange())
+	}
+}
+
+// A request whose media price is above the bill gets a capped Result.Ratio, and a figure that uses it is estimated.
+func TestComputeSetsACappedResultRatio(t *testing.T) {
+	body := [][]byte{imageBlock(400000), text("t", 400)}
+	op := Operation{ID: "o1", Kind: KindRewrite, Operator: "mask", ChangeID: "mk", At: msg(1),
+		SizeBefore: Size{Bytes: 400}, SizeAfter: Size{Bytes: 400}}
+	res, _ := priceOne(t, body, body, op, Usage{Input: 200})
+	if res.Ratio == nil || !res.Ratio.Capped() {
+		t.Fatalf("Result.Ratio = %+v, want a capped ratio (checks %+v)", res.Ratio, res.Checks)
+	}
+	got := RemovalSaving(RemovalInput{Model: "m", At: t0, Tier: TierInput, Prompt: 200, RemovedBytes: 40, Ratio: res.Ratio}, linePricer{})
+	if !got.Estimated {
+		t.Fatal("a figure with the capped Result.Ratio is not Estimated")
 	}
 }
