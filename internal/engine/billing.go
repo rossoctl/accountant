@@ -6,7 +6,7 @@ import (
 )
 
 // BillingFrom reads the client's upstream credential header and returns the billing mode it
-// implies (accountant design §7.1, Cortex spec §5.7). It reads only the credential's TYPE: it
+// implies (accountant design §7.1). It reads only the credential's TYPE: it
 // never returns, stores or logs any part of the credential itself (R2).
 //
 // Rule, in order:

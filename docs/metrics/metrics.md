@@ -5,7 +5,8 @@
 OpenTelemetry API only. The SDK, the exporter and the collector settings belong to the host.
 
 The names and labels follow the metrics spec of the host project (context-guru issue #886, section 5.2).
-That spec is not in this repository. This page is the contract of the code.
+That spec is not in this repository. This page is the contract of the code. Code comments cite the spec
+by id (R34, R45, R47, §5.2, §5.7). [The spec ids](#the-spec-ids) below state each one.
 
 ## How a host uses it
 
@@ -201,6 +202,28 @@ difference.)
    request. Before this rule, the sink skipped the size gate in that case. One unpriced operation (for example
    `size_range` or `media_tokens`) withholds the whole request: the sink books none of its other
    operations either. Before this rule, it booked them.
+
+## The spec ids
+
+Comments in `metrics/metrics.go` cite these ids. They come from the metrics spec (context-guru
+`docs/metrics/spec.md`). Each entry states what that spec says and where this module applies it.
+
+- **R34, tiers.** Tokens by tier use the values `input` (uncached input), `cache_read`, `cache_write_5m`,
+  `cache_write_1h` and `output`. The two write tiers stay apart because they have different prices. `Tier` in
+  this module is an alias of `accountant.Tier`.
+- **R45, a component's own call.** The cost of an LLM call that a component makes itself, such as compaction,
+  is booked as `added` (cost and tokens) under that component's `component` label. There is no separate
+  counter, so the net is always `saved - added`. In this module, a `spend` change carries such a call. Its usage
+  books to `added` (Counters table), and rule 2 prices it with its own `Call.Model`.
+- **R47, each host keeps its rates.** Each host keeps its own rate table. The module takes a `Pricer` from the
+  host and shares no rates. A `usd` figure belongs to one host. A rate from a fallback is marked `estimated`.
+- **§5.2, the savings metrics.** The savings metrics come from the `accountant` result. The counters, their
+  labels (`kind`, `tier`, `component`) and their meaning are in the "Counters" table. The `Sink` is the
+  OpenTelemetry `Observer` that records them.
+- **§5.7, the cardinality budget.** The spec budgets the series of one machine (target: under 2,000). The
+  `component` label is the part that can grow, and the spec assumes about 30 values. That is why the module
+  bounds it: with `WithComponents`, any other name becomes `other`. Without it, the first 64 names are kept
+  (rule 7).
 
 ## Not in this module
 

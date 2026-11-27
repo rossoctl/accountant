@@ -15,3 +15,6 @@ __pycache__/
 # Claude Code
 .claude/worktrees/
 .worktrees/
+
+# Review tools
+.glm-cc/

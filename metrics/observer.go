@@ -19,7 +19,7 @@ type Observation struct {
 	//
 	// Deprecated: the sink uses the library's own size bound when TokensBefore is 0 or less. A positive
 	// value still selects the legacy host bound until the field is removed
-	// (https://github.com/rossoctl/context-guru/issues/1523).
+	// (docs/metrics/metrics.md).
 	TokensBefore int
 }
 

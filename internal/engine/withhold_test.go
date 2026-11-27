@@ -13,7 +13,7 @@ func TestWithhold(t *testing.T) {
 	}{
 		{"clean", Result{Ops: []PricedOp{saved(100)}}, 1000, ""},
 		{"sum", Result{Checks: check(CheckSum)}, 1000, WithheldCheckSum},
-		// Two operations claim one removal: ops claim 8,128 bytes, the bodies lost 4,064 (cortex#2134).
+		// Two operations claim one removal: ops claim 8,128 bytes, the bodies lost 4,064 (design §6.7).
 		{"sum, ops claim bytes", Result{Ops: []PricedOp{saved(100)},
 			Checks: []CheckFailure{sumFailure(SectionTools, 4064, 8128, 2)}}, 1000, WithheldCheckSum},
 		// A plugin appends to system and reports nothing. A reported op in tools is still right.
@@ -119,7 +119,7 @@ func TestWithholdKeepsAReportedOpBesideAnUnreportedChange(t *testing.T) {
 	}
 }
 
-// End to end: two operations claim the same removal (cortex#2134). The sum check fails with Got above
+// End to end: two operations claim the same removal (design §6.7). The sum check fails with Got above
 // Want, and Withhold gates.
 func TestWithholdGatesADoubleClaim(t *testing.T) {
 	client := mk([]blk{b("t0", 1000), b("t1", 1000)}, nil, msgs(2, 1000))
@@ -190,7 +190,7 @@ func TestWithholdOwnSizeBound(t *testing.T) {
 	}
 }
 
-// End to end, the deferral case (context-guru#907): the operator removes 8 of 10 tool declarations
+// End to end, the deferral case (design §6.7): the operator removes 8 of 10 tool declarations
 // (24,000 tokens) from a request whose messages are 1,000 tokens. The request is healthy. The old bound,
 // fed the message size, withholds it only because it counted the tool tokens.
 func TestWithholdKeepsALargeToolRemoval(t *testing.T) {

@@ -7,13 +7,13 @@ import (
 	"testing"
 )
 
-// TestBillingFrom pins the header-to-mode table of accountant design §7.1 and Cortex spec §5.7.
+// TestBillingFrom pins the header-to-mode table of accountant design §7.1.
 // Exact prefixes:
 //   - "sk-ant-api" (Anthropic API key, e.g. sk-ant-api03-...) and the generic OpenAI "sk-" /
 //     "sk-proj-" prefixes are documented at https://docs.anthropic.com/en/api/getting-started and
 //     https://platform.openai.com/docs/api-reference/authentication.
 //   - "sk-ant-oat" is the prefix Claude Code's OAuth access token uses for a subscription login
-//     (observed in Claude Code's own credential files; also named in Cortex spec §5.7).
+//     (observed in Claude Code's own credential files; also named in design §7.1).
 //   - A ChatGPT login sends a JWT access token: three dot-separated base64url segments
 //     (RFC 7519 §3), which carries no recognizable "sk-" prefix.
 func TestBillingFrom(t *testing.T) {

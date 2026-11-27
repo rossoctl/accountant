@@ -102,7 +102,7 @@ type Thread struct {
 type Operation struct {
 	ID       string `json:"id,omitempty"` // unique inside the request only; across requests, use ChangeID (R6)
 	Kind     Kind   `json:"kind"`
-	Operator string `json:"operator,omitempty"` // "context-guru.mask", "tool-prune"
+	Operator string `json:"operator,omitempty"` // "<host>.mask", "tool-prune"
 	DryRun   bool   `json:"dryRun,omitempty"`   // set by the framework: computed but not sent (R12)
 
 	At         Position `json:"at"`              // first position touched, in this operator's output
