@@ -43,6 +43,14 @@ type Result struct {
 	// message tokens against (§6.7). The tool declarations and the system are not in it. 0 when nothing
 	// was priced (no usage, or a usage that failed a check).
 	MessageTokens int
+	// Ratio is the request ratio that priced this result (§5.3). A host converts the bytes of a text it
+	// removed with it, and stores [Ratio.Text] and [Ratio.Capped]. nil in two cases: nothing was priced (no usage, or
+	// a usage that failed a check), or the request was priced but its ratio is not in range ([Ratio.InRange]): no text
+	// bytes, or a count above the bound of a Ratio. MessageTokens can be above 0 while Ratio is nil.
+	//
+	// Not marshaled: a Ratio holds only unexported fields, so JSON would show an empty object and change the digest
+	// of every stored Result. A host stores [Ratio.Text] and [Ratio.Capped], and rebuilds it with [RatioFromText].
+	Ratio *Ratio `json:"-"`
 }
 
 // CompactionRecord is what the library recorded for a client compaction.

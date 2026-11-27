@@ -371,3 +371,66 @@ func extentWith(b Body, r ratio, tokens int, candidates []bp, p Provider) int {
 	}
 	return best
 }
+
+// Ratio is the request ratio that [Compute] used: the provider's billed tokens of the forwarded
+// text, against its bytes (§5.3). A host that prices bytes of text outside a Result, such as a removed
+// tool declaration, converts them with it. It wraps the one engine ratio: there is no second copy of
+// the rule. The zero value converts every byte to 0 tokens.
+type Ratio struct{ r ratio }
+
+// NewRatio builds the ratio of a body that the provider billed for billed prompt tokens (fresh input
+// plus cache read plus cache write). It is the ratio Compute builds for the request.
+func NewRatio(billed int, forwarded Body) Ratio { return exportRatio(newRatio(billed, forwarded)) }
+
+// exportRatio wraps the engine ratio for a host: the one constructor for NewRatio and Result.Ratio. A count above
+// maxRatioCount gives a ratio that converts 0 and is capped, so Tokens cannot overflow for any Ratio. newRatio never
+// returns a negative count, so there is no negative branch here (RatioFromText has one: its input is the host's).
+func exportRatio(r ratio) Ratio {
+	if r.tokens > maxRatioCount || r.bytes > maxRatioCount {
+		return Ratio{ratio{capped: true}}
+	}
+	return Ratio{r}
+}
+
+// RatioFromText rebuilds a text ratio from the two counts that [Ratio.Text] returned and the flag that
+// [Ratio.Capped] returned, for example from a stored row. Only the text conversion is rebuilt: media and
+// opaque bytes are not priced by it.
+//
+// A count that is negative or above maxRatioCount (2^31-1, far above any request) is not a ratio: the result converts
+// every byte to 0 tokens and is marked capped, so a figure that uses it is an estimate. This keeps the integer
+// math of [Ratio.Tokens] inside int64.
+func RatioFromText(tokens, bytes int, capped bool) Ratio {
+	if tokens < 0 || bytes < 0 || tokens > maxRatioCount || bytes > maxRatioCount {
+		return Ratio{ratio{capped: true}}
+	}
+	return Ratio{ratio{tokens: tokens, bytes: bytes, capped: capped}}
+}
+
+// maxRatioCount bounds the counts of every exported Ratio (NewRatio, RatioFromText and Result.Ratio) and the bytes
+// Tokens converts, so tokens x bytes fits in int64.
+const maxRatioCount = math.MaxInt32
+
+// Tokens converts bytes of text to tokens with the request ratio, with the same integer math as Compute.
+// It is 0 when the request had no text bytes.
+func (x Ratio) Tokens(textBytes int) int {
+	if textBytes < 0 || textBytes > maxRatioCount {
+		return 0 // outside any real body: not converted, and no overflow
+	}
+	return x.r.of(textBytes)
+}
+
+// Text returns the tokens and the bytes of the text of the forwarded body, after the media and the
+// opaque bytes were priced apart.
+func (x Ratio) Text() (tokens, bytes int) { return x.r.tokens, x.r.bytes }
+
+// Capped says that the media price was above the bill and was cut to fit it (§5.3). The text ratio is
+// then at its floor, so a figure that uses it is the lowest it can be.
+func (x Ratio) Capped() bool { return x.r.capped }
+
+// InRange says whether the text ratio is inside the limits of check 9 (§6.5): from 0.05 to 2.0 tokens a byte. A
+// host that builds a Ratio before Compute (with [NewRatio]) uses it to keep only a ratio that Compute would
+// accept. Compute sets [Result].Ratio only for such a ratio, so a Result's ratio is always in range.
+func (x Ratio) InRange() bool {
+	t, n := float64(x.r.tokens), float64(x.r.bytes)
+	return t > 0 && n > 0 && t >= minTokensPerByte*n && t <= maxTokensPerByte*n
+}

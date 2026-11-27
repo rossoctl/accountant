@@ -313,6 +313,11 @@ func (r *Request) calc(s ThreadState, usage Usage) (Result, ThreadState) {
 	c.price(&res)
 	if !c.skipsPricing() {
 		res.MessageTokens = c.ratio.between(c.client, c.client.Start[2]-1, len(c.client.Pos)-1)
+		// Only a ratio in range: a hand-built body with no text bytes can pass check 9 with 0 tokens over 0 bytes, a
+		// ratio that converts nothing. The same constructor as NewRatio, so the bound of maxRatioCount holds here too.
+		if r := exportRatio(c.ratio); r.InRange() {
+			res.Ratio = &r
+		}
 	}
 	c.checks(&res)
 	c.checkUsage(&res)

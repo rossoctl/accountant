@@ -44,6 +44,14 @@ type RemovalInput struct {
 	// host's. The figure applies it once, to Removed and to Added, in size and in dollars. 0 or less
 	// means 1. The library knows no tokenizer, so the host gives it.
 	Factor float64
+	// RemovedBytes and AddedBytes are the bytes of text the change took out and put back. They are used
+	// only when Ratio is set.
+	RemovedBytes, AddedBytes int
+	// Ratio is the request ratio of the request sent: [Result.Ratio], or one rebuilt with
+	// [RatioFromText]. When it is set, Removed and Added are Ratio.Tokens of the two byte counts, in the
+	// provider's own tokens, the same conversion as [Compute]. Removed, Added and Factor are then
+	// ignored: the factor is 1. A rebuilt ratio ([RatioFromText]) prices TEXT bytes only: it holds no media or opaque state, so pass the bytes of text. A capped ratio makes the figure Estimated. When it is nil, nothing changes: Removed, Added and Factor apply.
+	Ratio *Ratio
 	// Unsized says that the host has no prompt size. The pricer then gets size 0, the rate of a small
 	// request, for both sides.
 	Unsized bool
@@ -57,26 +65,29 @@ type RemovalFigure struct {
 	AddedUSD float64
 	// NetUSD is SavedUSD minus AddedUSD.
 	NetUSD float64
-	// PerTokenUSD is the price of one removed host token, the factor included, at the size without the
-	// change. A host that splits a removal between names uses it. It does not depend on Removed, except
+	// PerTokenUSD is the price of one removed token at the size without the
+	// change. With a nil Ratio it is the host's token with the factor included. With a Ratio it is the provider's
+	// token and the factor is 1. A host that splits a removal between names uses it. It does not depend on Removed, except
 	// through the size.
 	PerTokenUSD float64
 	// Tier is the tier the tokens were priced at.
 	Tier Tier
-	// Estimated is true when a rate the pricer gave is an estimate.
+	// Estimated is true when a rate the pricer gave is an estimate, or the Ratio is capped.
 	Estimated bool
 	// Version is RulesVersion, the version of the rules that made the figure (R46). A host that records the
 	// figure stores it as OpsVersion.
 	Version int
 }
 
-// RulesVersion is the version of the accountant rules (R46). Result.Version and RemovalFigure.Version carry it.
+// RulesVersion is the version of the accountant rules (R46). Result.Version and RemovalFigure.Version carry it. It stays 1
+// with the Ratio API: the Ratio path is opt-in, and a nil Ratio changes no figure.
 const RulesVersion = 1
 
 // RemovalSaving prices a change that took tokens out of the head of a request. It is the one formula for
 // a tool declaration filter and for tool deferral, so a host never prices such a saving itself.
 //
-// The tokens are Removed times Factor. They are priced at the tier the head was billed at. The size
+// The tokens are Removed times Factor. With a Ratio, they are the Ratio's tokens of RemovedBytes, and the
+// factor is 1. They are priced at the tier the head was billed at. The size
 // that picks the rate is the billed size plus the net tokens removed, rounded up: the request without
 // the change. Rounding up errs to the larger size, so a token at a price line is never put in the
 // cheaper side. Added tokens price at the billed size, because the request sent carried them.
@@ -86,6 +97,9 @@ func RemovalSaving(in RemovalInput, p SizedPricer) RemovalFigure {
 	f := in.Factor
 	if f <= 0 {
 		f = 1
+	}
+	if in.Ratio != nil {
+		in.Removed, in.Added, f = in.Ratio.Tokens(in.RemovedBytes), in.Ratio.Tokens(in.AddedBytes), 1
 	}
 	var billed, without int64
 	if !in.Unsized {
@@ -101,6 +115,9 @@ func RemovalSaving(in RemovalInput, p SizedPricer) RemovalFigure {
 		ra, ea := p.PriceAt(in.Model, in.At, in.Tier, billed)
 		out.AddedUSD = f * float64(in.Added) * ra
 		out.Estimated = out.Estimated || ea
+	}
+	if in.Ratio != nil && in.Ratio.Capped() {
+		out.Estimated = true // a capped ratio is a floor (§5.3): the tokens it gives are an estimate
 	}
 	out.NetUSD = out.SavedUSD - out.AddedUSD
 	return out

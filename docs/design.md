@@ -300,6 +300,11 @@ and can be reported as unpriced ([R19](spec.md#r19)).
    cache write). The provider bills the forwarded body, so the ratio is taken on it. If the request has no usage, the library uses a fixed fallback ratio. The library
    marks every priced result that uses this conversion as `Estimated`. No operator names a tokenizer,
    so two operators give the same tokens for the same bytes.
+   The ratio is part of the API. `Result.Ratio` is the ratio that priced the request, and `NewRatio(billed, forwarded)`
+   builds the same one. `Ratio.Tokens(textBytes)` is the conversion `Compute` uses for text. `Ratio.Text()`
+   gives its tokens and bytes, and `Ratio.Capped()` says that the media price was cut to the bill. `Ratio.InRange()` is check 9 on the text ratio; `Result.Ratio` is set only for a ratio in range. A host that
+   prices bytes of text outside a `Result`, such as a removed tool declaration (§6.6), uses this and never writes
+   the conversion again. `RatioFromText(tokens, bytes, capped)` rebuilds the text ratio from stored counts. A rebuilt ratio prices **text bytes only**: it has no media or opaque state, so a host passes bytes of text. For text bytes it gives exactly what the live ratio gives.
    Three exceptions keep the ratio true (accountant#11, accountant#73):
    - **Base64 media stays out of the ratio.** `NewBody` first skips, by a byte scan, a position that cannot hold media (no `base64` in any case, no `\u` escape that could spell a marker, none of the Gemini, audio or Bedrock key pairs); the count is the same as a full parse. It parses each remaining position and counts the `data`
      of an image or document block whose source has `type: base64`, and the payload of a `data:...;base64,` URL
@@ -1536,6 +1541,9 @@ type Result struct {
                             // this request, and 0 when nothing is active
     MessageTokens int       // the client messages in tokens, at this request's byte ratio; 0 when nothing
                             // was priced. The size bound reads it (§6.7)
+    Ratio *Ratio            // the request ratio that priced it (§4.2 rule 7); nil when nothing was priced, or when the
+                            // request was priced but its ratio is not in range (no text bytes, or a count above the
+                            // bound); MessageTokens can be above 0 then. Not marshaled
 }
 
 // ActiveOps and OldestActiveTurns change no figure. They are for the host's events (events.md §6.8).
@@ -1905,16 +1913,20 @@ func RemovalSaving(in RemovalInput, p SizedPricer) RemovalFigure
   client's TTL. A provider that bills no 1h tokens reports `CacheWrite1h` 0, and the head is 5m.
 - `RemovalSaving` prices `Removed` tokens at that tier and at the size without the change: the billed size plus
   the net tokens removed, rounded up. `Added` tokens (a names list) price at the billed size.
-- `Factor` is the host's tokenizer correction. The figure applies it once, to the tokens and to the size. The
+- **`Ratio` replaces the tokenizer factor.** With `RemovalInput.Ratio` set (`Result.Ratio`, or one rebuilt with
+  `RatioFromText`), the library converts the bytes: `Removed` is `Ratio.Tokens(RemovedBytes)` and `Added` is
+  `Ratio.Tokens(AddedBytes)`, the conversion of §4.2 rule 7. These are the provider's own tokens, so the factor is
+  1 and `Removed`, `Added` and `Factor` are ignored. The bytes are bytes of text. A capped ratio makes `RemovalFigure.Estimated` true. With `Ratio` nil, nothing changes.
+- `Factor` is the host's tokenizer correction. It applies only when `Ratio` is nil. The figure applies it once, to the tokens and to the size. The
   library has no tokenizer, so the host gives it. 0 or less means 1.
 - `Unsized` prices both sides at size 0, the rate of a small request.
-- `PerTokenUSD` is the price of one removed host token (factor included) at the size without the change. A host
+- `PerTokenUSD` is the price of one removed token at the size without the change: the host's token with the factor included when `Ratio` is nil, the provider's token (factor 1) with a `Ratio`. A host
   that splits a removal between names uses it. It does not depend on `Removed`, except through the size.
 - **No re-rate.** `RemovalSaving` prices the removed and the added tokens only. It does not price the tokens that
   stay when the two sizes sit on different sides of a price line, as `Figure` does. With rates that rise with
   size, that term is positive, so the figure is a lower bound of the full counterfactual.
 - **Rules version (R46).** `RemovalFigure.Version` is `RulesVersion`, the same number as `Result.Version`. A host
-  that records the figure stores it as `OpsVersion`. A change to the tier rule or the size rule changes it.
+  that records the figure stores it as `OpsVersion`. A change to the tier rule or the size rule changes it. It stays 1 with the `Ratio` API: that path is opt-in and a nil `Ratio` changes no figure.
 
 ### 6.7 When a host books no saving
 

@@ -67,7 +67,20 @@ type (
 	Request = engine.Request
 	// Result is what [Request.Compute] returns.
 	Result = engine.Result
+	// Ratio is the request's own tokens-per-byte ratio: see [NewRatio] and [Result].Ratio. Result.Ratio is nil when nothing was priced, and also when the ratio is not in range.
+	Ratio = engine.Ratio
 )
+
+// NewRatio builds the ratio of a body that the provider billed for billed prompt tokens (input plus cache
+// read plus cache write). It is the ratio [Request.Compute] builds for the request, so a host never
+// writes the conversion again. See docs/design.md §4.2 rule 7.
+func NewRatio(billed int, forwarded Body) Ratio { return engine.NewRatio(billed, forwarded) }
+
+// RatioFromText rebuilds a text [Ratio] from the counts [Ratio.Text] and [Ratio.Capped] returned, such as
+// a host stored.
+func RatioFromText(tokens, bytes int, capped bool) Ratio {
+	return engine.RatioFromText(tokens, bytes, capped)
+}
 
 // NewTrackers returns an empty set: every thread starts with no history.
 func NewTrackers() *Trackers { return engine.NewTrackers() }
@@ -156,15 +169,16 @@ const (
 // [USDFigure] for the fields, and docs/design.md for the rules.
 func Figure(in FigureInput, p SizedPricer) USDFigure { return engine.Figure(in, p) }
 
-// RulesVersion is the version of the accountant rules (R46). Result.Version and RemovalFigure.Version carry it.
+// RulesVersion is the version of the accountant rules (R46). Result.Version and RemovalFigure.Version carry it. It stays 1
+// with the Ratio API: the Ratio path is opt-in, and a nil Ratio changes no figure.
 const RulesVersion = engine.RulesVersion
 
 // HeadTier is the tier the head of a request's prefix was billed at, from its usage.
 func HeadTier(u Usage) Tier { return engine.HeadTier(u) }
 
 // RemovalSaving prices a change that took tokens out of the head of a request, such as a tool
-// declaration filter or a tool deferral. The host's tokenizer factor is applied once. See docs/design.md
-// §6.6.
+// declaration filter or a tool deferral. The host's tokenizer factor is applied once when Ratio is nil. With a
+// Ratio the tokens are the provider's, the factor is 1 and Factor is ignored. See docs/design.md §6.6.
 func RemovalSaving(in RemovalInput, p SizedPricer) RemovalFigure { return engine.RemovalSaving(in, p) }
 
 // Keep-alive costs. A host prices a ping, a cache miss, a billed request and a late ping with these, and
