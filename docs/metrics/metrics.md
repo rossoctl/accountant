@@ -213,8 +213,8 @@ Comments in `metrics/metrics.go` cite these ids. They come from the metrics spec
   this module is an alias of `accountant.Tier`.
 - **R45, a component's own call.** The cost of an LLM call that a component makes itself, such as compaction,
   is booked as `added` (cost and tokens) under that component's `component` label. There is no separate
-  counter, so the net is always `saved - added`. In this module, a `spend` change carries such a call (rule 3
-  and the Counters table).
+  counter, so the net is always `saved - added`. In this module, a `spend` change carries such a call. Its usage
+  books to `added` (Counters table), and rule 2 prices it with its own `Call.Model`.
 - **R47, each host keeps its rates.** Each host keeps its own rate table. The module takes a `Pricer` from the
   host and shares no rates. A `usd` figure belongs to one host. A rate from a fallback is marked `estimated`.
 - **§5.2, the savings metrics.** The savings metrics come from the `accountant` result. The counters, their
