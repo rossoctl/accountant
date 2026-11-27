@@ -1648,7 +1648,7 @@ func (c *calcState) itemsAt(at int) []int {
 // breakItemAt is the index of the operation that a break at the first changed position is charged to. When
 // several operations cover the position, the one whose change is new in this request pays: an earlier
 // operation that forwards the same bytes as the previous request (a fold that the host applies again) cannot
-// move the first difference, so it never causes the miss (context-guru#1351). The earlier operation pays
+// move the first difference, so it never causes the miss (docs/design.md §5.2). The earlier operation pays
 // only when no new change covers the position. It is -1 when nothing covers it.
 func (c *calcState) breakItemAt(at int) int {
 	ks := c.itemsAt(at)
@@ -2580,7 +2580,7 @@ func (c *calcState) splitDelivered() bool {
 // moved, the client body would have missed from the system block on, and the forwarded body read only the
 // stable half. A read that comes within the tolerance of the previous extent (a short turn adds less than one read
 // step, 128 tokens by default, plus 2%) is then no proof that nothing broke: the read is the stable half, and the extent is the
-// whole previous entry (context-guru#909).
+// whole previous entry (docs/issue_cases.md, cachesplit on a short conversation).
 //
 // A read that passes the forwarded first difference is different. It read text the hashes call changed, so
 // the hash difference moved no content (a cache mark moved onto the block). The exception does not apply,

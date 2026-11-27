@@ -103,8 +103,7 @@ func PingWindowID(thread string, start time.Time) string { return engine.PingWin
 // request arrived, before any plugin rewrites it) and returns the [Billing] it implies: an API key
 // gives [BillingAPI]; an OAuth token from a subscription login gives [BillingSubscription]; anything
 // else, or no credential, gives [BillingUnknown]. It reads only the credential's type and returns no
-// part of the credential (R2). Cortex and the context-guru proxy both call this, so the two hosts
-// share one rule (design §7.1).
+// part of the credential (R2). Every host calls this, so the hosts share one rule (design §7.1).
 func BillingFrom(h http.Header) Billing { return engine.BillingFrom(h) }
 
 // SharedWarmFrom returns the [EntryFacts].SharedWarm of a request that forwarded fwd: the last

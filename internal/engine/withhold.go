@@ -37,7 +37,7 @@ const SizeNotGiven = -1
 //     itself ([Result.MessageTokens]), so a host gives no size. The bound adds the SavedMessages and the
 //     CausedMessages of each operation that is not DryRun and not a spend, in every tier. Tokens of a tool
 //     declaration or of the system are not counted: they are not in the messages, and a deferral removes
-//     thousands of them (context-guru#907). It is tested only when the saved message tokens are above 0.
+//     thousands of them (docs/design.md §6.7). It is tested only when the saved message tokens are above 0.
 //
 // Legacy form: a host can give tokensBefore, the prompt size of the body the client sent by its own measure.
 // The bound then counts the Saved and the Caused tokens of every operation, and tokensBefore of 0 or less

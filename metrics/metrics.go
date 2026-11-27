@@ -6,7 +6,7 @@
 // in-memory counters. It makes no network call and takes a lock only to add one of the first
 // maxComponents names, so it adds a small fixed time to the request path.
 //
-// The module knows no price. The host gives it a [Pricer] (metrics spec R47, context-guru#886), so
+// The module knows no price. The host gives it a [Pricer] (metrics spec R47), so
 // each proxy keeps its own rate table.
 package metrics
 
@@ -22,7 +22,7 @@ import (
 	"go.opentelemetry.io/otel/metric"
 )
 
-// Tier is a price class of tokens (metrics spec R34, context-guru#886). It is [accountant.Tier].
+// Tier is a price class of tokens (metrics spec R34). It is [accountant.Tier].
 type Tier = accountant.Tier
 
 const (
@@ -65,7 +65,7 @@ func (a pricerAt) PriceAt(model string, at time.Time, t Tier, size int64) (float
 	return a.p.Price(model, at, t)
 }
 
-// maxComponents bounds the label `component` when the host gives no list (metrics spec 5.7, context-guru#886).
+// maxComponents bounds the label `component` when the host gives no list (metrics spec 5.7).
 const maxComponents = 64
 
 // other is the value of `component` for a name outside the list.
@@ -85,7 +85,7 @@ func WithComponents(names ...string) Option {
 	}
 }
 
-// Sink is the OpenTelemetry [Observer] for the savings set (metrics spec 5.2, context-guru#886).
+// Sink is the OpenTelemetry [Observer] for the savings set (metrics spec 5.2).
 type Sink struct {
 	pricer Pricer
 	sized  SizedPricer // pricer, when it also implements SizedPricer; else nil
@@ -296,7 +296,7 @@ func (s *Sink) bookFigure(ctx context.Context, fig accountant.USDFigure) {
 	}
 }
 
-// component strips the host prefix ("context-guru.mask" gives "mask") and bounds the value.
+// component strips the host prefix ("<host>.mask" gives "mask") and bounds the value.
 func (s *Sink) component(operator string) string {
 	name := operator
 	if i := strings.LastIndexByte(name, '.'); i >= 0 {

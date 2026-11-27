@@ -4,7 +4,7 @@
 // Context operators report what they changed as facts (RequestOps, Operation). Compute turns
 // those facts and the provider's cache state into tokens. The host turns tokens into money.
 //
-// The module imports only the standard library, so context-guru, Cortex and any other AI framework
+// The module imports only the standard library, so any host and any other AI framework
 // can use it (docs/spec.md R3, docs/design.md D7). boundary_test.go in the module root enforces that.
 //
 // # Implementation decisions
