@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// context-guru#1351: a fold that the host applies again, with the same bytes, never causes a miss. When a
+// Design §5.2: a fold that the host applies again, with the same bytes, never causes a miss. When a
 // new change cuts the same message, the new change pays for the rewrite. The first changed position is
 // covered by both, and the earlier fold used to win.
 func TestARewriteIsChargedToTheNewChangeNotTheRepeatedOne(t *testing.T) {
