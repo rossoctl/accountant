@@ -13,6 +13,7 @@ That spec is not in this repository. This page is the contract of the code.
 2. After `Compute`, call `sink.Observe(metrics.Observation{Meta, Usage, Result})`. The sink applies the size
    gate with the library's own measure (rule 9). Set `TokensBefore`, the prompt size of the body the client
    sent by the host's own measure, only to replace that measure.
+   `TokensBefore` is deprecated (rossoctl/context-guru#1523).
 3. Use `metrics.Multi` to give the same observation to several observers.
 
 The hook lives in this module, not in the root. `Observer` is a one-method interface,
