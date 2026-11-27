@@ -207,13 +207,25 @@ func TestNoTextRatioIsNotExported(t *testing.T) {
 	}
 }
 
-// Counts above the bound are not a ratio: no overflow, no tokens, and a capped (estimate) mark.
+// Counts above the bound are not a ratio: no overflow, no tokens, and a capped (estimate) mark. On a 32-bit int the
+// bound is MaxInt, so no int is above it: there the counts are a ratio, and Tokens clamps to int.
 func TestRatioFromTextRejectsHugeCounts(t *testing.T) {
 	maxInt := int(^uint(0) >> 1) // 2^63-1 on 64-bit, 2^31-1 on 32-bit
-	for _, c := range [][2]int{{maxInt, 1000}, {1000, maxInt}, {-1, 5}, {5, -1}} {
+	cases := [][2]int{{-1, 5}, {5, -1}}
+	if maxInt > maxRatioCount {
+		cases = append(cases, [2]int{maxInt, 1000}, [2]int{1000, maxInt})
+	}
+	for _, c := range cases {
 		r := RatioFromText(c[0], c[1], false)
 		if got := r.Tokens(1000); got != 0 || !r.Capped() {
 			t.Errorf("RatioFromText(%d, %d): Tokens = %d capped = %v, want 0 and capped", c[0], c[1], got, r.Capped())
+		}
+	}
+	if maxInt == maxRatioCount {
+		// The largest int is the bound: it is a ratio, and its conversion is exact or clamped, never wrapped.
+		r := RatioFromText(maxInt, 1000, false)
+		if got, want := r.Tokens(1000), refMulDiv(1000, maxInt, 1000); r.Capped() || got != want {
+			t.Errorf("RatioFromText(%d, 1000): Tokens = %d capped = %v, want %d and not capped", maxInt, got, r.Capped(), want)
 		}
 	}
 	r := RatioFromText(maxRatioCount, maxRatioCount, false)

@@ -469,6 +469,7 @@ func RatioFromText(tokens, bytes int, capped bool) Ratio {
 
 // maxRatioCount bounds the counts of every exported Ratio (NewRatio, RatioFromText and Result.Ratio) and the bytes
 // Tokens converts, so tokens x bytes fits in int64.
+// On a 32-bit int the bound is MaxInt, so no count is above it: the conversion clamps to int instead (mulDiv).
 const maxRatioCount = math.MaxInt32
 
 // Tokens converts bytes of text to tokens with the request ratio, with the same integer math as Compute.
