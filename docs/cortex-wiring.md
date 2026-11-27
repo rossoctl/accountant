@@ -488,11 +488,12 @@ the checks and `Recomputed` (`proxy/accountant_shadow.go`). A request whose `Com
 7. `unpriced`: an unpriced operation or cache effect. The exception is `ReasonPenaltyUnknown`. It does
    not fail the gate. The figure is marked estimated and held in `EstimatedSavedUSD`, outside every total
    (#915).
-8. `implausible_size`: the library saved more tokens than the request had. A host gives no size, so the
-   library measures it. The bound leaves out the
-   operations of `toolfilter`, `toolschema`, `expand`, `adjudicate` and `tooldefer`, because
-   the size counts message text only (#907). It leaves them out by operator, so the `tooldefer`
-   operations on messages are left out too.
+8. `implausible_size`: the library saved more message tokens than the request's messages had. The
+   context-guru proxy gives no size, so the library measures it. The bound counts message tokens only: the
+   `SavedMessages` and `CausedMessages` of every operation that is not `DryRun` and not a spend. An
+   operation on tool declarations or on the system (`toolfilter`, `toolschema`, `expand`, `adjudicate`)
+   holds no message tokens, so it cannot trip the bound (#907). An operation of any kind that rewrites
+   messages, `tooldefer` too, counts with both its saved and its caused message tokens.
 9. `figure_without_row`, `duplicate_name`, `acted_without_figure`: the figure and the component rows do
    not match.
 
