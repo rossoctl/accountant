@@ -303,7 +303,12 @@ func newRatio(billed int, b Body) ratio {
 // figure as int64(a)*int64(b)/int64(c). A quotient outside int is clamped to the nearest int limit.
 func mulDiv(a, b, c int) int {
 	if uint64(a) <= math.MaxInt32 && uint64(b) <= math.MaxInt32 {
-		return int(int64(a) * int64(b) / int64(c)) // the product is below 2^62: plain int64 math, the common case
+		// The product is below 2^62: plain int64 math, the common case. The quotient can still be above int
+		// on a 32-bit build, so it is clamped there (the compare is removed on a 64-bit build).
+		if q := int64(a) * int64(b) / int64(c); q <= math.MaxInt {
+			return int(q)
+		}
+		return math.MaxInt
 	}
 	return mulDivWide(a, b, c)
 }

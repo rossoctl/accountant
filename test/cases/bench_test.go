@@ -1,6 +1,8 @@
 package cases
 
 import (
+	"io"
+	"log/slog"
 	"testing"
 
 	"github.com/rossoctl/accountant"
@@ -9,6 +11,9 @@ import (
 // BenchmarkComputeAllCases replays every case fixture through Compute, as TestComputeMeetsEveryCase does. It
 // measures the whole path that the ratio conversion is on.
 func BenchmarkComputeAllCases(b *testing.B) {
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil))) // the cases log the failed checks they test
+	defer slog.SetDefault(prev)
 	all := All()
 	b.ReportAllocs()
 	b.ResetTimer()

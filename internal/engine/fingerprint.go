@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"math"
+	"math/bits"
 	"strings"
 	"time"
 )
@@ -311,9 +312,12 @@ func SplitOpaqueTokens(opaques []string, tokens int) []int {
 	rem := make([]int64, len(w))
 	given := 0
 	for i := range w {
-		q := int64(tokens) * w[i]
-		out[i] = int(q / total)
-		rem[i] = q % total
+		// tokens x w[i] is a 128-bit product: the tokens come from the host, and a body can be 4 GB. w[i] is at most
+		// total, so the quotient is at most tokens and the division cannot overflow.
+		hi, lo := bits.Mul64(uint64(tokens), uint64(w[i]))
+		q, r := bits.Div64(hi, lo, uint64(total))
+		out[i] = int(q)
+		rem[i] = int64(r)
 		given += out[i]
 	}
 	for ; given < tokens; given++ {

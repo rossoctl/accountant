@@ -483,8 +483,8 @@ func (c *calcState) rangeMedia(k int, s Size, sp span, isBefore bool) nonText {
 		}
 		if body.opaque > 0 && body.counted > 0 {
 			share := min(nt.opaque, body.opaque)
-			nt.counted = int(int64(body.counted) * int64(share) / int64(body.opaque))
-			nt.ctok = int(int64(body.ctok) * int64(share) / int64(body.opaque))
+			nt.counted = mulDiv(body.counted, share, body.opaque)
+			nt.ctok = mulDiv(body.ctok, share, body.opaque)
 		}
 	}
 	if s.OpaqueTokens > 0 && nt.opaque > 0 {

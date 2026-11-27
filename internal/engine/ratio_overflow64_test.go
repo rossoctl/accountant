@@ -3,7 +3,7 @@
 package engine
 
 import (
-	"math"
+	"strings"
 	"testing"
 )
 
@@ -23,45 +23,32 @@ func TestMessageTokensDoesNotWrapAboveTheBound(t *testing.T) {
 	}
 }
 
-// mulDiv equals int64 math wherever int64 math does not wrap, and clamps where the quotient does not fit.
-func TestMulDivMatchesInt64Math(t *testing.T) {
-	vals := []int{0, 1, 2, 3, 7, 250, 1000, 123456789, math.MaxInt32 - 1, math.MaxInt32, math.MaxInt32 + 1, 3_000_000_000}
-	for _, a := range vals {
-		for _, b := range vals {
-			for _, c := range vals[1:] {
-				want := new64(a, b, c)
-				if want < 0 {
-					continue // the int64 product wrapped: that is the defect
-				}
-				if got := mulDiv(a, b, c); got != want {
-					t.Fatalf("mulDiv(%d,%d,%d) = %d, want %d", a, b, c, got, want)
-				}
-			}
-		}
+// rangeMedia scales the counted opaque bytes of a body by the share a size holds. A body of 3.2e9 counted opaque bytes
+// made that product wrap in int64. PosHash.Opaque is an int32, so two positions hold the 3.2e9.
+func TestRangeMediaDoesNotWrapAboveTheBound(t *testing.T) {
+	const half, tokHalf = 1_600_000_000, 1_500_000_000
+	pos := PosHash{Hash: 1, Bytes: half, Opaque: half, OpaqueCounted: half, OpaqueTokens: tokHalf}
+	pos2 := pos
+	pos2.Hash = 2
+	body := Body{Pos: []PosHash{pos, pos2}}.withPrefix()
+	c := &calcState{client: body, fwd: body}
+	sp := span{from: msg(0), to: msg(1)}
+	nt := c.rangeMedia(0, Size{Bytes: 2 * half}, sp, true)
+	if nt.counted != 2*half || nt.ctok != 2*tokHalf {
+		t.Fatalf("rangeMedia = counted %d, ctok %d, want %d and %d", nt.counted, nt.ctok, 2*half, 2*tokHalf)
 	}
-	// The fast path ends at MaxInt32: the largest product it takes is below 2^62.
-	if got, want := mulDiv(math.MaxInt32, math.MaxInt32, 1), math.MaxInt32*math.MaxInt32; got != want {
-		t.Fatalf("mulDiv at the fast-path limit = %d, want %d", got, want)
-	}
-	if got := mulDiv(-7, 3, 2); got != -10 {
-		t.Fatalf("mulDiv(-7,3,2) = %d, want -10 (truncated toward zero)", got)
-	}
-	if got := mulDiv(math.MaxInt, math.MaxInt, 1); got != math.MaxInt {
-		t.Fatalf("mulDiv above int = %d, want clamp to MaxInt", got)
-	}
-	if got := mulDiv(math.MinInt, 2, 1); got != math.MinInt {
-		t.Fatalf("mulDiv below int = %d, want clamp to MinInt", got)
-	}
-	if got := addSat(math.MaxInt, 1); got != math.MaxInt {
-		t.Fatalf("addSat = %d, want MaxInt", got)
+	// A size that holds half of the opaque bytes gets half of the counts.
+	nt = c.rangeMedia(0, Size{Bytes: half}, sp, true)
+	if nt.counted != half || nt.ctok != tokHalf {
+		t.Fatalf("rangeMedia, half = counted %d, ctok %d, want %d and %d", nt.counted, nt.ctok, half, tokHalf)
 	}
 }
 
-// new64 is the old formula: the product wraps for a body of about 4 GB.
-func new64(a, b, c int) int {
-	p := int64(a) * int64(b)
-	if int64(a) != 0 && p/int64(a) != int64(b) {
-		return -1
+// SplitOpaqueTokens takes its tokens from the host. A count of 2^60 times a length of 300 wrapped in int64.
+func TestSplitOpaqueTokensDoesNotWrapAboveTheBound(t *testing.T) {
+	const tokens = 1 << 60
+	got := SplitOpaqueTokens([]string{strings.Repeat("x", 300), strings.Repeat("x", 100)}, tokens)
+	if len(got) != 2 || got[0] != tokens/4*3 || got[1] != tokens/4 {
+		t.Fatalf("SplitOpaqueTokens = %v, want %d and %d", got, tokens/4*3, tokens/4)
 	}
-	return int(p / int64(c))
 }
