@@ -2,6 +2,7 @@ package engine
 
 import (
 	"math"
+	"math/bits"
 	"sort"
 )
 
@@ -297,11 +298,71 @@ func newRatio(billed int, b Body) ratio {
 	return r
 }
 
+// mulDiv is a*b/c with a 128-bit product, truncated toward zero, for c > 0. Every ratio conversion uses it, so no
+// product of two large counts can wrap (a body of about 4 GB). For a product that fits in int64 it gives the same
+// figure as int64(a)*int64(b)/int64(c). A quotient outside int is clamped to the nearest int limit.
+func mulDiv(a, b, c int) int {
+	if uint64(a) <= math.MaxInt32 && uint64(b) <= math.MaxInt32 {
+		// The product is below 2^62: plain int64 math, the common case. The quotient can still be above int
+		// on a 32-bit build, so it is clamped there (the compare is removed on a 64-bit build).
+		if q := int64(a) * int64(b) / int64(c); q <= math.MaxInt {
+			return int(q)
+		}
+		return math.MaxInt
+	}
+	return mulDivWide(a, b, c)
+}
+
+// mulDivWide is the 128-bit path of mulDiv.
+func mulDivWide(a, b, c int) int {
+	neg := (a < 0) != (b < 0)
+	hi, lo := bits.Mul64(absU(a), absU(b))
+	d := uint64(c)
+	if hi >= d {
+		return clampSigned(math.MaxUint64, neg)
+	}
+	q, _ := bits.Div64(hi, lo, d)
+	return clampSigned(q, neg)
+}
+
+func absU(x int) uint64 {
+	if x < 0 {
+		return -uint64(x)
+	}
+	return uint64(x)
+}
+
+// clampSigned applies the sign to q, and clamps it to the range of int.
+func clampSigned(q uint64, neg bool) int {
+	if neg {
+		if q > uint64(math.MaxInt)+1 {
+			return math.MinInt
+		}
+		return int(-q)
+	}
+	if q > math.MaxInt {
+		return math.MaxInt
+	}
+	return int(q)
+}
+
+// addSat is a+b, clamped to the range of int.
+func addSat(a, b int) int {
+	s := a + b
+	if a > 0 && b > 0 && s < 0 {
+		return math.MaxInt
+	}
+	if a < 0 && b < 0 && s >= 0 {
+		return math.MinInt
+	}
+	return s
+}
+
 func (r ratio) of(bytes int) int {
 	if r.bytes <= 0 {
 		return 0
 	}
-	return int(int64(bytes) * int64(r.tokens) / int64(r.bytes))
+	return mulDiv(bytes, r.tokens, r.bytes)
 }
 
 // mediaOf is the tokens of media bytes of base64 text.
@@ -309,7 +370,7 @@ func (r ratio) mediaOf(media int) int {
 	if r.mediaPer <= 0 {
 		return 0
 	}
-	return int(int64(media) * int64(r.mediaTok) / int64(r.mediaPer))
+	return mulDiv(media, r.mediaTok, r.mediaPer)
 }
 
 // opaqueOf is the tokens of the opaque bytes of nt: the host's tokens for the counted bytes when the
@@ -324,13 +385,13 @@ func (r ratio) opaqueOf(nt nonText) int {
 	if r.opqPer <= 0 {
 		return tokens
 	}
-	return tokens + int(int64(max(fixed, 0))*int64(r.opqTok)/int64(r.opqPer))
+	return addSat(tokens, mulDiv(max(fixed, 0), r.opqTok, r.opqPer))
 }
 
 // tokensOf converts the bytes of p: the text with the ratio, the media with the media price, and the
 // opaque bytes with the opaque price.
 func (r ratio) tokensOf(p parts) int {
-	return r.of(p.bytes-p.media-p.opaque) + r.mediaOf(p.media) + r.opaqueOf(p.nonText)
+	return addSat(addSat(r.of(p.bytes-p.media-p.opaque), r.mediaOf(p.media)), r.opaqueOf(p.nonText))
 }
 
 // sizeOf converts the bytes of a size whose non-text bytes are nt.
@@ -408,6 +469,7 @@ func RatioFromText(tokens, bytes int, capped bool) Ratio {
 
 // maxRatioCount bounds the counts of every exported Ratio (NewRatio, RatioFromText and Result.Ratio) and the bytes
 // Tokens converts, so tokens x bytes fits in int64.
+// On a 32-bit int the bound is MaxInt, so no count is above it: the conversion clamps to int instead (mulDiv).
 const maxRatioCount = math.MaxInt32
 
 // Tokens converts bytes of text to tokens with the request ratio, with the same integer math as Compute.

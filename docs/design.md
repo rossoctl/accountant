@@ -1219,6 +1219,9 @@ Both hosts send bytes for each forwarded position (`Body`) and for each operatio
 library converts both with the request's own ratio (billed prompt tokens ÷ body bytes), as
 `pricing.EstimateTokensFromBytes` does today. Results that use the ratio are marked `Estimated`.
 A host may also send a token count in `Size.Tokens` (§4.2 rule 7).
+The ratio math multiplies two counts, such as bytes and tokens. It does so in 128 bits when the product could pass
+`int64`, and it clamps a figure outside `int`. So a body of about 4 GB does not wrap. The same holds for the share
+of counted opaque bytes and for the split of thinking tokens between blocks.
 The same tokens in both hosts holds whenever the two hosts receive the same bodies, the same operations and send the same token counts.
 
 **The forwarded `Body` is the prompt the provider bills.** A tool that the host defers with `defer_loading` stays in the
