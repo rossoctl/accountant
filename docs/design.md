@@ -302,7 +302,7 @@ and can be reported as unpriced ([R19](spec.md#r19)).
    so two operators give the same tokens for the same bytes.
    The ratio is part of the API. `Result.Ratio` is the ratio that priced the request, and `NewRatio(billed, forwarded)`
    builds the same one. `Ratio.Tokens(textBytes)` is the conversion `Compute` uses for text. `Ratio.Text()`
-   gives its tokens and bytes, and `Ratio.Capped()` says that the media price was cut to the bill. A host that
+   gives its tokens and bytes, and `Ratio.Capped()` says that the media price was cut to the bill. `Ratio.InRange()` is check 9 on the text ratio; `Result.Ratio` is set only for a ratio in range. A host that
    prices bytes of text outside a `Result`, such as a removed tool declaration (§6.6), uses this and never writes
    the conversion again. `RatioFromText(tokens, bytes, capped)` rebuilds the text ratio from stored counts.
    Three exceptions keep the ratio true (accountant#11, accountant#73):

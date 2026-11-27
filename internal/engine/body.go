@@ -400,3 +400,11 @@ func (x Ratio) Text() (tokens, bytes int) { return x.r.tokens, x.r.bytes }
 // Capped says that the media price was above the bill and was cut to fit it (§5.3). The text ratio is
 // then at its floor, so a figure that uses it is the lowest it can be.
 func (x Ratio) Capped() bool { return x.r.capped }
+
+// InRange says whether the text ratio is inside the limits of check 9 (§6.5): from 0.05 to 2.0 tokens a byte. A
+// host that builds a Ratio before Compute (with [NewRatio]) uses it to keep only a ratio that Compute would
+// accept. Compute sets [Result].Ratio only for such a ratio, so a Result's ratio is always in range.
+func (x Ratio) InRange() bool {
+	t, n := float64(x.r.tokens), float64(x.r.bytes)
+	return t > 0 && n > 0 && t >= minTokensPerByte*n && t <= maxTokensPerByte*n
+}

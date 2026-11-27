@@ -115,3 +115,24 @@ func TestRemovalWithoutRatioIsUnchanged(t *testing.T) {
 		t.Fatalf("PerTokenUSD = %g, want %g", got.PerTokenUSD, want)
 	}
 }
+
+// InRange is check 9 on the text ratio: Compute sets Result.Ratio only for a ratio that is in range.
+func TestRatioInRangeIsCheckNine(t *testing.T) {
+	body := mk(nil, nil, msgs(4, 1000)) // 4000 bytes
+	for _, c := range []struct {
+		billed int
+		want   bool
+	}{{199, false}, {200, true}, {1600, true}, {8000, true}, {8001, false}, {0, false}} {
+		if got := NewRatio(c.billed, body).InRange(); got != c.want {
+			t.Errorf("billed %d over 4000 bytes: InRange = %v, want %v", c.billed, got, c.want)
+		}
+	}
+	if (Ratio{}).InRange() {
+		t.Error("the zero Ratio is in range")
+	}
+	// A request that fails check 9 has no Result.Ratio.
+	res := req{at: t0, client: body, fwd: body, facts: exact5m, usage: Usage{Input: 10}}.run(NewTrackers())
+	if res.Ratio != nil {
+		t.Errorf("a request with 0.0025 tokens a byte has Ratio %+v, want nil", res.Ratio)
+	}
+}
