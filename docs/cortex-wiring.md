@@ -488,10 +488,10 @@ the checks and `Recomputed` (`proxy/accountant_shadow.go`). A request whose `Com
 7. `unpriced`: an unpriced operation or cache effect. The exception is `ReasonPenaltyUnknown`. It does
    not fail the gate. The figure is marked estimated and held in `EstimatedSavedUSD`, outside every total
    (#915).
-8. `size_unknown`: `TokensBefore` is 0, so the plausibility bound cannot be checked.
-   `implausible_size`: the library saved more tokens than the request had. The bound leaves out the
+8. `implausible_size`: the library saved more tokens than the request had. A host gives no size, so the
+   library measures it. The bound leaves out the
    operations of `toolfilter`, `toolschema`, `expand`, `adjudicate` and `tooldefer`, because
-   `TokensBefore` counts message text only (#907). It leaves them out by operator, so the `tooldefer`
+   the size counts message text only (#907). It leaves them out by operator, so the `tooldefer`
    operations on messages are left out too.
 9. `figure_without_row`, `duplicate_name`, `acted_without_figure`: the figure and the component rows do
    not match.
@@ -506,12 +506,10 @@ request the same way: it books only the spends of a withheld request, and counts
 does not trip the bound (design §6.7). A host that has no better measure calls `Withhold(res)`. Cortex uses
 gates 6 to 8, with its own size measure: the billed prompt, scaled by the bytes of the client and forwarded
 bodies. It passes that size as the legacy argument. The context-guru proxy has two paths:
-- **The dashboard and /stats gate** (`accrec.Gate`) passes `SizeNotGiven` and keeps its own size bound.
-  It moves to `Withhold(res)` in context-guru step 2 (#1519).
+- **The dashboard and /stats gate** (`accrec.Gate`) calls `Withhold(res)`. It has no host size bound
+  (context-guru #1529).
 - **The metrics push** sends an `Observation` with no `TokensBefore`. The sink then calls `Withhold(res)`.
   So the library bound applies to the push as soon as the proxy uses this release.
-
-Until step 2, the two bounds can differ for one request.
 
 How the proxy books what passes:
 
