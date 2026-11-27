@@ -79,9 +79,9 @@ func TestHostPathMatcher(t *testing.T) {
 // hostNameAllowed lists the Go files that may name a host outside the rule above, each with its reason. It is empty.
 var hostNameAllowed = map[string]string{}
 
-// goFiles returns the Go files of the module: the files that git tracks, the new files that git does not
-// ignore yet, or, when git is not available,
-// every .go file outside the directories whose name starts with a dot.
+// goFiles returns the Go files of the module. With git, it returns the files that git tracks and the new
+// files that git does not ignore. Without git, it returns every .go file outside the directories whose name
+// starts with a dot.
 func goFiles(t *testing.T) []string {
 	t.Helper()
 	if out, err := exec.Command("git", "ls-files", "--cached", "--others", "--exclude-standard", "*.go").Output(); err == nil && len(out) > 0 {
