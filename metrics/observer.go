@@ -16,6 +16,10 @@ type Observation struct {
 	// measure. Above 0, the sink gives it to [accountant.Withhold] for the size bound, which then counts
 	// every operation. 0 or less means the host does not give it, and the sink calls Withhold with no size:
 	// the library's own measure of the client messages decides.
+	//
+	// Deprecated: the sink uses the library's own size bound when TokensBefore is 0 or less. A positive
+	// value still selects the legacy host bound until the field is removed
+	// (https://github.com/rossoctl/context-guru/issues/1523).
 	TokensBefore int
 }
 

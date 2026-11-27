@@ -161,7 +161,8 @@ func (s *Sink) Observe(o Observation) {
 	res := o.Result
 	money := o.Meta.Billing.Mode == accountant.BillingAPI
 	anyEstimated := !money // unknown, subscription's weights or an unset mode are all estimates
-	// A host that gives TokensBefore keeps its own bound. With none, the library's own measure decides.
+	// A positive TokensBefore selects the deprecated host bound (kept until the field is removed). With none, the
+	// library's own measure decides.
 	var withheld string
 	if o.TokensBefore > 0 {
 		withheld = accountant.Withhold(res, o.TokensBefore)
