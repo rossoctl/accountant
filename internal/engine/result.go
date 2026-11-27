@@ -46,7 +46,10 @@ type Result struct {
 	// Ratio is the request ratio that priced this result (§5.3). A host converts the bytes of a text it
 	// removed with it, and stores [Ratio.Text] and [Ratio.Capped]. nil when nothing was priced, as for
 	// MessageTokens.
-	Ratio *Ratio
+	//
+	// Not marshaled: a Ratio holds only unexported fields, so JSON would show an empty object and change the digest
+	// of every stored Result. A host stores [Ratio.Text] and [Ratio.Capped], and rebuilds it with [RatioFromText].
+	Ratio *Ratio `json:"-"`
 }
 
 // CompactionRecord is what the library recorded for a client compaction.

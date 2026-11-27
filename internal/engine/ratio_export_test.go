@@ -1,6 +1,8 @@
 package engine
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -134,5 +136,22 @@ func TestRatioInRangeIsCheckNine(t *testing.T) {
 	res := req{at: t0, client: body, fwd: body, facts: exact5m, usage: Usage{Input: 10}}.run(NewTrackers())
 	if res.Ratio != nil {
 		t.Errorf("a request with 0.0025 tokens a byte has Ratio %+v, want nil", res.Ratio)
+	}
+}
+
+// Result.Ratio is not part of the marshaled Result: a host that digests or stores a Result sees no change.
+func TestResultRatioIsNotMarshaled(t *testing.T) {
+	body := [][]byte{text("m0", 400), text("m1", 400), text("m2", 400)}
+	res := priceBP(body, body,
+		Operation{ID: "o1", Kind: KindRewrite, Operator: "mask", ChangeID: "c", At: msg(1), SizeBefore: Size{Bytes: 400}, SizeAfter: Size{Bytes: 400}}, 300)
+	if res.Ratio == nil {
+		t.Fatalf("the fixture was not priced: %+v", res.Checks)
+	}
+	raw, err := json.Marshal(res)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), `"Ratio"`) {
+		t.Fatalf("Result.Ratio was marshaled: %s", raw)
 	}
 }
