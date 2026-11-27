@@ -304,7 +304,7 @@ and can be reported as unpriced ([R19](spec.md#r19)).
    builds the same one. `Ratio.Tokens(textBytes)` is the conversion `Compute` uses for text. `Ratio.Text()`
    gives its tokens and bytes, and `Ratio.Capped()` says that the media price was cut to the bill. `Ratio.InRange()` is check 9 on the text ratio; `Result.Ratio` is set only for a ratio in range. A host that
    prices bytes of text outside a `Result`, such as a removed tool declaration (§6.6), uses this and never writes
-   the conversion again. `RatioFromText(tokens, bytes, capped)` rebuilds the text ratio from stored counts.
+   the conversion again. `RatioFromText(tokens, bytes, capped)` rebuilds the text ratio from stored counts. A rebuilt ratio prices **text bytes only**: it has no media or opaque state, so a host passes bytes of text. For text bytes it gives exactly what the live ratio gives.
    Three exceptions keep the ratio true (accountant#11, accountant#73):
    - **Base64 media stays out of the ratio.** `NewBody` first skips, by a byte scan, a position that cannot hold media (no `base64` in any case, no `\u` escape that could spell a marker, none of the Gemini, audio or Bedrock key pairs); the count is the same as a full parse. It parses each remaining position and counts the `data`
      of an image or document block whose source has `type: base64`, and the payload of a `data:...;base64,` URL
@@ -1913,7 +1913,7 @@ func RemovalSaving(in RemovalInput, p SizedPricer) RemovalFigure
 - **`Ratio` replaces the tokenizer factor.** With `RemovalInput.Ratio` set (`Result.Ratio`, or one rebuilt with
   `RatioFromText`), the library converts the bytes: `Removed` is `Ratio.Tokens(RemovedBytes)` and `Added` is
   `Ratio.Tokens(AddedBytes)`, the conversion of §4.2 rule 7. These are the provider's own tokens, so the factor is
-  1 and `Removed`, `Added` and `Factor` are ignored. The bytes are bytes of text. With `Ratio` nil, nothing changes.
+  1 and `Removed`, `Added` and `Factor` are ignored. The bytes are bytes of text. A capped ratio makes `RemovalFigure.Estimated` true. With `Ratio` nil, nothing changes.
 - `Factor` is the host's tokenizer correction. It applies only when `Ratio` is nil. The figure applies it once, to the tokens and to the size. The
   library has no tokenizer, so the host gives it. 0 or less means 1.
 - `Unsized` prices both sides at size 0, the rate of a small request.

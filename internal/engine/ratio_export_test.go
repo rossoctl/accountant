@@ -155,3 +155,41 @@ func TestResultRatioIsNotMarshaled(t *testing.T) {
 		t.Fatalf("Result.Ratio was marshaled: %s", raw)
 	}
 }
+
+// A rebuilt ratio gives exactly the live ratio's tokens for text bytes, at every size, rounding edges included.
+func TestRebuiltRatioEqualsTheLiveRatioForText(t *testing.T) {
+	for _, billed := range []int{1600, 1601, 1777, 3333} {
+		live := NewRatio(billed, mk(nil, nil, msgs(4, 999)))
+		tok, by := live.Text()
+		again := RatioFromText(tok, by, live.Capped())
+		for n := 0; n <= 5000; n++ {
+			if g, w := again.Tokens(n), live.Tokens(n); g != w {
+				t.Fatalf("billed %d: Tokens(%d) = %d, live %d", billed, n, g, w)
+			}
+		}
+		for _, n := range []int{by - 1, by, by + 1, 1<<31 - 1} {
+			if g, w := again.Tokens(n), live.Tokens(n); g != w {
+				t.Fatalf("billed %d: Tokens(%d) = %d, live %d", billed, n, g, w)
+			}
+		}
+	}
+}
+
+// A capped ratio keeps its estimate meaning in RemovalSaving, and the Factor stays ignored with a Ratio.
+func TestRemovalWithACappedRatioIsEstimated(t *testing.T) {
+	capped := NewRatio(100, NewBody(nil, nil, [][]byte{imageBlock(400000), text("t", 40)}))
+	if !capped.Capped() {
+		t.Fatal("fixture is not capped")
+	}
+	in := RemovalInput{Model: "m", At: t0, Tier: TierCacheRead, Prompt: 10_000, RemovedBytes: 40, Ratio: &capped, Factor: 5}
+	if got := RemovalSaving(in, linePricer{}); !got.Estimated {
+		t.Fatal("a capped ratio gave Estimated false")
+	}
+	live := RatioFromText(3000, 6000, false)
+	in.Ratio = &live
+	a := RemovalSaving(in, linePricer{})
+	in.Factor = 1
+	if b := RemovalSaving(in, linePricer{}); a.Estimated || a != b {
+		t.Fatalf("Factor changed a figure with a Ratio, or an uncapped ratio is Estimated: %+v vs %+v", a, b)
+	}
+}

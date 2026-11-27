@@ -50,7 +50,7 @@ type RemovalInput struct {
 	// Ratio is the request ratio of the request sent: [Result.Ratio], or one rebuilt with
 	// [RatioFromText]. When it is set, Removed and Added are Ratio.Tokens of the two byte counts, in the
 	// provider's own tokens, the same conversion as [Compute]. Removed, Added and Factor are then
-	// ignored: the factor is 1. When it is nil, nothing changes: Removed, Added and Factor apply.
+	// ignored: the factor is 1. A rebuilt ratio ([RatioFromText]) prices TEXT bytes only: it holds no media or opaque state, so pass the bytes of text. A capped ratio makes the figure Estimated. When it is nil, nothing changes: Removed, Added and Factor apply.
 	Ratio *Ratio
 	// Unsized says that the host has no prompt size. The pricer then gets size 0, the rate of a small
 	// request, for both sides.
@@ -113,6 +113,9 @@ func RemovalSaving(in RemovalInput, p SizedPricer) RemovalFigure {
 		ra, ea := p.PriceAt(in.Model, in.At, in.Tier, billed)
 		out.AddedUSD = f * float64(in.Added) * ra
 		out.Estimated = out.Estimated || ea
+	}
+	if in.Ratio != nil && in.Ratio.Capped() {
+		out.Estimated = true // a capped ratio is a floor (§5.3): the tokens it gives are an estimate
 	}
 	out.NetUSD = out.SavedUSD - out.AddedUSD
 	return out
