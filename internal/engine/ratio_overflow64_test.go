@@ -25,7 +25,7 @@ func TestMessageTokensDoesNotWrapAboveTheBound(t *testing.T) {
 
 // mulDiv equals int64 math wherever int64 math does not wrap, and clamps where the quotient does not fit.
 func TestMulDivMatchesInt64Math(t *testing.T) {
-	vals := []int{0, 1, 2, 3, 7, 250, 1000, 123456789, math.MaxInt32, 3_000_000_000}
+	vals := []int{0, 1, 2, 3, 7, 250, 1000, 123456789, math.MaxInt32 - 1, math.MaxInt32, math.MaxInt32 + 1, 3_000_000_000}
 	for _, a := range vals {
 		for _, b := range vals {
 			for _, c := range vals[1:] {
@@ -38,6 +38,10 @@ func TestMulDivMatchesInt64Math(t *testing.T) {
 				}
 			}
 		}
+	}
+	// The fast path ends at MaxInt32: the largest product it takes is below 2^62.
+	if got, want := mulDiv(math.MaxInt32, math.MaxInt32, 1), math.MaxInt32*math.MaxInt32; got != want {
+		t.Fatalf("mulDiv at the fast-path limit = %d, want %d", got, want)
 	}
 	if got := mulDiv(-7, 3, 2); got != -10 {
 		t.Fatalf("mulDiv(-7,3,2) = %d, want -10 (truncated toward zero)", got)

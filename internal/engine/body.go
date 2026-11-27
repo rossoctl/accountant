@@ -302,6 +302,14 @@ func newRatio(billed int, b Body) ratio {
 // product of two large counts can wrap (a body of about 4 GB). For a product that fits in int64 it gives the same
 // figure as int64(a)*int64(b)/int64(c). A quotient outside int is clamped to the nearest int limit.
 func mulDiv(a, b, c int) int {
+	if uint64(a) <= math.MaxInt32 && uint64(b) <= math.MaxInt32 {
+		return int(int64(a) * int64(b) / int64(c)) // the product is below 2^62: plain int64 math, the common case
+	}
+	return mulDivWide(a, b, c)
+}
+
+// mulDivWide is the 128-bit path of mulDiv.
+func mulDivWide(a, b, c int) int {
 	neg := (a < 0) != (b < 0)
 	hi, lo := bits.Mul64(absU(a), absU(b))
 	d := uint64(c)
