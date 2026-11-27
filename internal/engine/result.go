@@ -43,6 +43,10 @@ type Result struct {
 	// message tokens against (§6.7). The tool declarations and the system are not in it. 0 when nothing
 	// was priced (no usage, or a usage that failed a check).
 	MessageTokens int
+	// Ratio is the request ratio that priced this result (§5.3). A host converts the bytes of a text it
+	// removed with it, and stores [Ratio.Text] and [Ratio.Capped]. nil when nothing was priced, as for
+	// MessageTokens.
+	Ratio *Ratio
 }
 
 // CompactionRecord is what the library recorded for a client compaction.

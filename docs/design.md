@@ -300,6 +300,11 @@ and can be reported as unpriced ([R19](spec.md#r19)).
    cache write). The provider bills the forwarded body, so the ratio is taken on it. If the request has no usage, the library uses a fixed fallback ratio. The library
    marks every priced result that uses this conversion as `Estimated`. No operator names a tokenizer,
    so two operators give the same tokens for the same bytes.
+   The ratio is part of the API. `Result.Ratio` is the ratio that priced the request, and `NewRatio(billed, forwarded)`
+   builds the same one. `Ratio.Tokens(textBytes)` is the conversion `Compute` uses for text. `Ratio.Text()`
+   gives its tokens and bytes, and `Ratio.Capped()` says that the media price was cut to the bill. A host that
+   prices bytes of text outside a `Result`, such as a removed tool declaration (§6.6), uses this and never writes
+   the conversion again. `RatioFromText(tokens, bytes, capped)` rebuilds the text ratio from stored counts.
    Three exceptions keep the ratio true (accountant#11, accountant#73):
    - **Base64 media stays out of the ratio.** `NewBody` first skips, by a byte scan, a position that cannot hold media (no `base64` in any case, no `\u` escape that could spell a marker, none of the Gemini, audio or Bedrock key pairs); the count is the same as a full parse. It parses each remaining position and counts the `data`
      of an image or document block whose source has `type: base64`, and the payload of a `data:...;base64,` URL
@@ -1905,7 +1910,11 @@ func RemovalSaving(in RemovalInput, p SizedPricer) RemovalFigure
   client's TTL. A provider that bills no 1h tokens reports `CacheWrite1h` 0, and the head is 5m.
 - `RemovalSaving` prices `Removed` tokens at that tier and at the size without the change: the billed size plus
   the net tokens removed, rounded up. `Added` tokens (a names list) price at the billed size.
-- `Factor` is the host's tokenizer correction. The figure applies it once, to the tokens and to the size. The
+- **`Ratio` replaces the tokenizer factor.** With `RemovalInput.Ratio` set (`Result.Ratio`, or one rebuilt with
+  `RatioFromText`), the library converts the bytes: `Removed` is `Ratio.Tokens(RemovedBytes)` and `Added` is
+  `Ratio.Tokens(AddedBytes)`, the conversion of §4.2 rule 7. These are the provider's own tokens, so the factor is
+  1 and `Removed`, `Added` and `Factor` are ignored. The bytes are bytes of text. With `Ratio` nil, nothing changes.
+- `Factor` is the host's tokenizer correction. It applies only when `Ratio` is nil. The figure applies it once, to the tokens and to the size. The
   library has no tokenizer, so the host gives it. 0 or less means 1.
 - `Unsized` prices both sides at size 0, the rate of a small request.
 - `PerTokenUSD` is the price of one removed host token (factor included) at the size without the change. A host

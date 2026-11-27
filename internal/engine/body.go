@@ -371,3 +371,32 @@ func extentWith(b Body, r ratio, tokens int, candidates []bp, p Provider) int {
 	}
 	return best
 }
+
+// Ratio is the request ratio that [Compute] used: the provider's billed tokens of the forwarded
+// text, against its bytes (§5.3). A host that prices bytes of text outside a Result, such as a removed
+// tool declaration, converts them with it. It wraps the one engine ratio: there is no second copy of
+// the rule. The zero value converts every byte to 0 tokens.
+type Ratio struct{ r ratio }
+
+// NewRatio builds the ratio of a body that the provider billed for billed prompt tokens (fresh input
+// plus cache read plus cache write). It is the ratio Compute builds for the request.
+func NewRatio(billed int, forwarded Body) Ratio { return Ratio{newRatio(billed, forwarded)} }
+
+// RatioFromText rebuilds a text ratio from the two counts that [Ratio.Text] returned and the flag that
+// [Ratio.Capped] returned, for example from a stored row. Only the text conversion is rebuilt: media and
+// opaque bytes are not priced by it.
+func RatioFromText(tokens, bytes int, capped bool) Ratio {
+	return Ratio{ratio{tokens: tokens, bytes: bytes, capped: capped}}
+}
+
+// Tokens converts bytes of text to tokens with the request ratio, with the same integer math as Compute.
+// It is 0 when the request had no text bytes.
+func (x Ratio) Tokens(textBytes int) int { return x.r.of(textBytes) }
+
+// Text returns the tokens and the bytes of the text of the forwarded body, after the media and the
+// opaque bytes were priced apart.
+func (x Ratio) Text() (tokens, bytes int) { return x.r.tokens, x.r.bytes }
+
+// Capped says that the media price was above the bill and was cut to fit it (§5.3). The text ratio is
+// then at its floor, so a figure that uses it is the lowest it can be.
+func (x Ratio) Capped() bool { return x.r.capped }

@@ -313,6 +313,7 @@ func (r *Request) calc(s ThreadState, usage Usage) (Result, ThreadState) {
 	c.price(&res)
 	if !c.skipsPricing() {
 		res.MessageTokens = c.ratio.between(c.client, c.client.Start[2]-1, len(c.client.Pos)-1)
+		res.Ratio = &Ratio{c.ratio}
 	}
 	c.checks(&res)
 	c.checkUsage(&res)

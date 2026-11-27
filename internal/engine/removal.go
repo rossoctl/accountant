@@ -44,6 +44,14 @@ type RemovalInput struct {
 	// host's. The figure applies it once, to Removed and to Added, in size and in dollars. 0 or less
 	// means 1. The library knows no tokenizer, so the host gives it.
 	Factor float64
+	// RemovedBytes and AddedBytes are the bytes of text the change took out and put back. They are used
+	// only when Ratio is set.
+	RemovedBytes, AddedBytes int
+	// Ratio is the request ratio of the request sent: [Result.Ratio], or one rebuilt with
+	// [RatioFromText]. When it is set, Removed and Added are Ratio.Tokens of the two byte counts, in the
+	// provider's own tokens, the same conversion as [Compute]. Removed, Added and Factor are then
+	// ignored: the factor is 1. When it is nil, nothing changes: Removed, Added and Factor apply.
+	Ratio *Ratio
 	// Unsized says that the host has no prompt size. The pricer then gets size 0, the rate of a small
 	// request, for both sides.
 	Unsized bool
@@ -76,7 +84,8 @@ const RulesVersion = 1
 // RemovalSaving prices a change that took tokens out of the head of a request. It is the one formula for
 // a tool declaration filter and for tool deferral, so a host never prices such a saving itself.
 //
-// The tokens are Removed times Factor. They are priced at the tier the head was billed at. The size
+// The tokens are Removed times Factor. With a Ratio, they are the Ratio's tokens of RemovedBytes, and the
+// factor is 1. They are priced at the tier the head was billed at. The size
 // that picks the rate is the billed size plus the net tokens removed, rounded up: the request without
 // the change. Rounding up errs to the larger size, so a token at a price line is never put in the
 // cheaper side. Added tokens price at the billed size, because the request sent carried them.
@@ -86,6 +95,9 @@ func RemovalSaving(in RemovalInput, p SizedPricer) RemovalFigure {
 	f := in.Factor
 	if f <= 0 {
 		f = 1
+	}
+	if in.Ratio != nil {
+		in.Removed, in.Added, f = in.Ratio.Tokens(in.RemovedBytes), in.Ratio.Tokens(in.AddedBytes), 1
 	}
 	var billed, without int64
 	if !in.Unsized {

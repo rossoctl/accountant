@@ -67,7 +67,20 @@ type (
 	Request = engine.Request
 	// Result is what [Request.Compute] returns.
 	Result = engine.Result
+	// Ratio is the request's own tokens-per-byte ratio: see [NewRatio] and [Result].Ratio.
+	Ratio = engine.Ratio
 )
+
+// NewRatio builds the ratio of a body that the provider billed for billed prompt tokens (input plus cache
+// read plus cache write). It is the ratio [Request.Compute] builds for the request, so a host never
+// writes the conversion again. See docs/design.md §6.6.
+func NewRatio(billed int, forwarded Body) Ratio { return engine.NewRatio(billed, forwarded) }
+
+// RatioFromText rebuilds a text [Ratio] from the counts [Ratio.Text] and [Ratio.Capped] returned, such as
+// a host stored.
+func RatioFromText(tokens, bytes int, capped bool) Ratio {
+	return engine.RatioFromText(tokens, bytes, capped)
+}
 
 // NewTrackers returns an empty set: every thread starts with no history.
 func NewTrackers() *Trackers { return engine.NewTrackers() }
