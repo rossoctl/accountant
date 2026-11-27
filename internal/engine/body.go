@@ -385,13 +385,28 @@ func NewRatio(billed int, forwarded Body) Ratio { return Ratio{newRatio(billed, 
 // RatioFromText rebuilds a text ratio from the two counts that [Ratio.Text] returned and the flag that
 // [Ratio.Capped] returned, for example from a stored row. Only the text conversion is rebuilt: media and
 // opaque bytes are not priced by it.
+//
+// A count that is negative or above maxRatioCount (2^31, far above any request) is not a ratio: the result converts
+// every byte to 0 tokens and is marked capped, so a figure that uses it is an estimate. This keeps the integer
+// math of [Ratio.Tokens] inside int64.
 func RatioFromText(tokens, bytes int, capped bool) Ratio {
+	if tokens < 0 || bytes < 0 || tokens > maxRatioCount || bytes > maxRatioCount {
+		return Ratio{ratio{capped: true}}
+	}
 	return Ratio{ratio{tokens: tokens, bytes: bytes, capped: capped}}
 }
 
+// maxRatioCount bounds the counts of a rebuilt Ratio and the bytes Tokens converts, so tokens x bytes fits in int64.
+const maxRatioCount = 1 << 31
+
 // Tokens converts bytes of text to tokens with the request ratio, with the same integer math as Compute.
 // It is 0 when the request had no text bytes.
-func (x Ratio) Tokens(textBytes int) int { return x.r.of(textBytes) }
+func (x Ratio) Tokens(textBytes int) int {
+	if textBytes < 0 || textBytes > maxRatioCount {
+		return 0 // outside any real body: not converted, and no overflow
+	}
+	return x.r.of(textBytes)
+}
 
 // Text returns the tokens and the bytes of the text of the forwarded body, after the media and the
 // opaque bytes were priced apart.

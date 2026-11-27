@@ -1541,6 +1541,8 @@ type Result struct {
                             // this request, and 0 when nothing is active
     MessageTokens int       // the client messages in tokens, at this request's byte ratio; 0 when nothing
                             // was priced. The size bound reads it (§6.7)
+    Ratio *Ratio            // the request ratio that priced it (§4.2 rule 7); nil when nothing was priced or the
+                            // ratio is out of range (check 9). Not marshaled
 }
 
 // ActiveOps and OldestActiveTurns change no figure. They are for the host's events (events.md §6.8).
@@ -1917,13 +1919,13 @@ func RemovalSaving(in RemovalInput, p SizedPricer) RemovalFigure
 - `Factor` is the host's tokenizer correction. It applies only when `Ratio` is nil. The figure applies it once, to the tokens and to the size. The
   library has no tokenizer, so the host gives it. 0 or less means 1.
 - `Unsized` prices both sides at size 0, the rate of a small request.
-- `PerTokenUSD` is the price of one removed host token (factor included) at the size without the change. A host
+- `PerTokenUSD` is the price of one removed token at the size without the change: the host's token with the factor included when `Ratio` is nil, the provider's token (factor 1) with a `Ratio`. A host
   that splits a removal between names uses it. It does not depend on `Removed`, except through the size.
 - **No re-rate.** `RemovalSaving` prices the removed and the added tokens only. It does not price the tokens that
   stay when the two sizes sit on different sides of a price line, as `Figure` does. With rates that rise with
   size, that term is positive, so the figure is a lower bound of the full counterfactual.
 - **Rules version (R46).** `RemovalFigure.Version` is `RulesVersion`, the same number as `Result.Version`. A host
-  that records the figure stores it as `OpsVersion`. A change to the tier rule or the size rule changes it.
+  that records the figure stores it as `OpsVersion`. A change to the tier rule or the size rule changes it. It stays 1 with the `Ratio` API: that path is opt-in and a nil `Ratio` changes no figure.
 
 ### 6.7 When a host books no saving
 

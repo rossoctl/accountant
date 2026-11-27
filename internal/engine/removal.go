@@ -65,8 +65,9 @@ type RemovalFigure struct {
 	AddedUSD float64
 	// NetUSD is SavedUSD minus AddedUSD.
 	NetUSD float64
-	// PerTokenUSD is the price of one removed host token, the factor included, at the size without the
-	// change. A host that splits a removal between names uses it. It does not depend on Removed, except
+	// PerTokenUSD is the price of one removed token at the size without the
+	// change. With a nil Ratio it is the host's token with the factor included. With a Ratio it is the provider's
+	// token and the factor is 1. A host that splits a removal between names uses it. It does not depend on Removed, except
 	// through the size.
 	PerTokenUSD float64
 	// Tier is the tier the tokens were priced at.
@@ -78,7 +79,8 @@ type RemovalFigure struct {
 	Version int
 }
 
-// RulesVersion is the version of the accountant rules (R46). Result.Version and RemovalFigure.Version carry it.
+// RulesVersion is the version of the accountant rules (R46). Result.Version and RemovalFigure.Version carry it. It stays 1
+// with the Ratio API: the Ratio path is opt-in, and a nil Ratio changes no figure.
 const RulesVersion = 1
 
 // RemovalSaving prices a change that took tokens out of the head of a request. It is the one formula for

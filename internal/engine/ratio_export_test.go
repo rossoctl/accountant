@@ -193,3 +193,33 @@ func TestRemovalWithACappedRatioIsEstimated(t *testing.T) {
 		t.Fatalf("Factor changed a figure with a Ratio, or an uncapped ratio is Estimated: %+v vs %+v", a, b)
 	}
 }
+
+// A hand-built body with no text bytes, billed at or below the media price, passes check 9 with 0 tokens over 0
+// bytes. That ratio is out of range, and Compute sets no Result.Ratio for it.
+func TestNoTextRatioIsNotExported(t *testing.T) {
+	b := Body{Start: [3]int{0, 0, 0}, Pos: []PosHash{{Hash: 1, Bytes: 2500, Media: 2500}}}
+	if r := NewRatio(10, b); r.InRange() {
+		t.Fatalf("a ratio of 0 tokens over 0 bytes is in range: %+v", r)
+	}
+	res := req{at: t0, client: b, fwd: b, facts: exact5m, usage: Usage{Input: 10}}.run(NewTrackers())
+	if res.Ratio != nil {
+		t.Fatalf("Result.Ratio = %+v for a body with no text, want nil (checks %+v)", res.Ratio, res.Checks)
+	}
+}
+
+// Counts above the bound are not a ratio: no overflow, no tokens, and a capped (estimate) mark.
+func TestRatioFromTextRejectsHugeCounts(t *testing.T) {
+	for _, c := range [][2]int{{1 << 62, 1000}, {1000, 1 << 62}, {-1, 5}, {5, -1}} {
+		r := RatioFromText(c[0], c[1], false)
+		if got := r.Tokens(1 << 30); got != 0 || !r.Capped() {
+			t.Errorf("RatioFromText(%d, %d): Tokens = %d capped = %v, want 0 and capped", c[0], c[1], got, r.Capped())
+		}
+	}
+	r := RatioFromText(1<<31, 1<<31, false)
+	if got := r.Tokens(1 << 31); got != 1<<31 {
+		t.Errorf("at the bound Tokens = %d, want %d", got, 1<<31)
+	}
+	if got := r.Tokens(1<<31 + 1); got != 0 {
+		t.Errorf("above the bound Tokens = %d, want 0", got)
+	}
+}
